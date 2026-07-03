@@ -50,6 +50,15 @@ ce contexte ; en dépendre = couplage caché. Les principes d'ingénierie OSS su
 plugin s'appuie sont donc **extraits et de-personnalisés** dans le plugin lui-même (voir §7bis),
 en distinguant *principe universel* (encodé) de *préférence personnelle* (exclue).
 
+**Contrainte dure — aucune mention de la source dans les artefacts livrés.** `slurm_exporter`
+(et toute identité de mainteneur / chemin perso) ne doit apparaître **nulle part** dans les
+composants chargés/livrés du plugin : `SKILL.md`, `references/`, `assets/` (templates),
+`commands/`, `agents/`, `README.md`, `CLAUDE.md` racine. Le plugin est générique et autonome.
+`slurm_exporter` ne peut être nommé **que** dans ce design doc (`docs/design/`), qui est
+l'historique de *création*, pas un composant du plugin.
+**Vérification automatisable :** `grep -ri -e slurm -e <maintainer-handle>` sur l'arbre du
+plugin **hors `docs/design/`** doit retourner **0 résultat**.
+
 **Principe container-first (important).** Tout l'outillage de dev — build, test, race, lint,
 vuln, sécurité, report — s'exécute **dans un conteneur** (image `*-tools` à versions d'outils
 **pinnées**), jamais sur des outils hôte par défaut. Bénéfice : reproductibilité + dernières
@@ -260,9 +269,12 @@ Fichiers à écrire pour le dépôt du plugin lui-même :
 - **CLAUDE.md** — règles de contribution au plugin, **de-personnalisées** (§7bis) : convention
   de commits, **anglais pour tout artefact public**, pas de code mort (`make deadcode`-style),
   règle des deux phases pour refactoring à risque, discipline [G]/[S], comment tester
-  (`claude plugin validate`, `--plugin-dir`, `/reload-plugins`), et la **règle de re-sync**
-  (les assets sont dérivés des fichiers réels de `slurm_exporter` ; procédure pour
-  re-synchroniser quand le repo de référence évolue).
+  (`claude plugin validate`, `--plugin-dir`, `/reload-plugins`), la **règle de re-sync**
+  formulée **génériquement** (« re-dériver les templates depuis une implémentation de référence
+  de production quand les pratiques évoluent » — **sans nommer aucune source**), et le rappel de
+  la contrainte « zéro mention de source » (§2) avec sa vérif grep.
+  *(La correspondance concrète source→template reste dans ce design doc uniquement — §6.4,
+  §11.2.)*
 - **ROADMAP.md** — jalons : v0.1 (MVP : skill + `/new-prometheus-exporter` produisant un dépôt
   qui `make build` + `make check` verts avec 1 collector d'exemple) → v0.2 (variantes
   cache/background + reviewer) → v1.0 (marketplace + doc complète).
@@ -356,6 +368,8 @@ Déclencheurs : « créer / scaffolder / durcir / auditer un exporter Prometheus
 - `claude plugin validate .` passe ; le plugin est chargeable via `--plugin-dir`.
 - **Auto-portance** : le plugin ne dépend d'aucun `CLAUDE.md`/profil personnel ; les principes
   OSS universels sont encodés (§7bis), les préférences personnelles exclues.
+- **Zéro mention de source** : `grep -ri -e slurm -e <maintainer-handle>` sur l'arbre du plugin
+  hors `docs/design/` retourne 0 (contrainte §2).
 - Rien n'est committé dans le repo `slurm_exporter`.
 
 ---
