@@ -179,8 +179,10 @@ prometheus-exporter-plugin/               # racine du dépôt (git)
                     .dockerignore, systemd.service.tmpl
         docs/       README.md.tmpl, CONTRIBUTING.md.tmpl (Definition of Done),
                     SECURITY.md.tmpl, CHANGELOG.md.tmpl,
-                    docs/{metrics,configuration,validation-checklist}.md.tmpl
-        monitoring/ alerts.rules.yml.tmpl (santé Prometheus), health-dashboard.json.tmpl (Grafana, self-instrumentation), README.md.tmpl
+                    docs/{configuration,development,release-process,validation-checklist}.md.tmpl
+                    # metrics.md + metrics-examples.md = GÉNÉRÉS/validés depuis le code (docs-check), pas templatés
+        monitoring/ prometheus/{alerts.yml.tmpl (santé + métier), rules.yml.tmpl (recording rules)},
+                    grafana/{health-dashboard.json.tmpl (self-instrumentation)}, README.md.tmpl
         licenses/   LICENSE-apache-2.0.txt, LICENSE-mit.txt, LICENSE-gpl-3.0.txt, LICENSE-bsd-3.txt
         github/     ISSUE_TEMPLATE/{bug_report,feature_request,question}.yml,
                     pull_request_template.md
@@ -253,8 +255,10 @@ Guide de **design d'architecture** de l'exporter (§9 étape 0) :
   dépendance injectable pour la testabilité.
 - **Découpe en collectors** + **budget de cardinalité** (quelles séries, combien, quels flags
   de réduction) — avant d'écrire une ligne.
-Sortie de l'étape : saveur d'I/O, liste de collectors, modèle single/multi-target → inputs du
-scaffold.
+- **Alertes métier candidates** : pour chaque collector, quelles conditions fonctionnelles
+  alerter (« ce que fait l'appli ») — matérialisées ensuite par `/add-collector` (§6.9).
+Sortie de l'étape : saveur d'I/O, liste de collectors, modèle single/multi-target, alertes
+candidates → inputs du scaffold.
 
 ### 6.1 `prometheus-principles.md` [G]
 Source **context7 d'abord** (`prometheus.io` *Writing Exporters* + *Metric and label naming*).
@@ -339,6 +343,12 @@ règles universelles d'exporter) :
   distroless, compose durci).
 
 ### 6.8 `docs-and-governance.md` [G]
+**Répartition template vs généré** (analyse de la source) : **templatés** (structure [G] forte)
+= `development.md` (make targets identiques), `release-process.md` (flow tag→GoReleaser→RC→CI),
+`validation-checklist.md` (structure Command/Expected/If-fails + étapes génériques),
+`configuration.md` (sections communes exporter-toolkit) ; **générés+validés depuis le code** =
+`metrics.md` et `metrics-examples.md` (via `docs-check` / capture `/metrics` du golden test) ;
+**stub** = `roadmap.md`, `CHANGELOG.md`.
 Docs **en lockstep avec `/metrics`** (`metrics.md`, `configuration.md`,
 `validation-checklist.md` copiable). README structuré (+ section Security & supply chain avec
 recettes cosign/SBOM/distroless). **`CONTRIBUTING.md` = Definition of Done** (build → test
@@ -357,16 +367,30 @@ Intégré à la Definition of Done, au golden test du plugin (§11) et vérifié
 
 ### 6.9 `dashboards-and-alerts.md` [G]
 **Frontière affichée : alerting = Prometheus (cœur) ; dashboards = Grafana (extension).**
-- **Alerting Prometheus (v0.1)** : `monitoring/alerts.rules.yml` — règles de **santé**
-  génériques basées sur la self-instrumentation présente dans tout exporter : `up == 0`,
-  `@@NAMESPACE@@_exporter_collector_success == 0`, durée de scrape anormale, `scrape` errors.
-  + emplacements commentés pour les alertes **métier**. PromQL validée contre des métriques
-  **existantes** (même exigence anti-mensonge que les docs).
-- **Dashboard de santé Grafana (v0.1)** : `monitoring/health-dashboard.json` — templatable car
-  la self-instrumentation est identique d'un exporter à l'autre (seul le namespace/job varie).
-- **Dashboard métier (v0.2)** : via `/generate-dashboard` (§8.4) — **design-led**, pas copie :
+
+**Alerting Prometheus (v0.1) — santé + métier.** Deux niveaux :
+1. **Santé** (générique) : basé sur la self-instrumentation de tout exporter — `up == 0`,
+   `@@NAMESPACE@@_exporter_collector_success == 0`, durée de scrape anormale.
+2. **Métier** (« ce que fait l'appli ») : alertes **fonctionnelles** sur les métriques des
+   collectors (ex. saturation d'une ressource, profondeur de file, taux d'erreur). **Proposées
+   par la phase archi et `/add-collector`** au fil de la création des collectors.
+
+**Pattern d'alerting encodé** (tiré d'une implémentation de référence de production) :
+- **deux paliers** `severity: warning|critical` à seuils croissants, avec `for:` pour lisser ;
+- labels **portables/site-neutres** (`severity`, `component`) — team/runbook/dashboard via
+  `external_labels` ou routage Alertmanager, **pas** en dur dans le fichier ;
+- **recording rules** (`rules.yml`) pour pré-calculer ratios/taux, avec **garde anti-NaN**
+  (`… / (rate(...) > 0)`) ;
+- seuils = **défauts raisonnables documentés**, « à ajuster à la taille ».
+- PromQL **validée contre des métriques existantes** (même exigence anti-mensonge que
+  `docs-check`) — vérifiée par le golden test et `exporter-reviewer`.
+
+**Dashboards Grafana :**
+- **Santé (v0.1)** : `monitoring/grafana/health-dashboard.json` — templatable car la
+  self-instrumentation est identique d'un exporter à l'autre (seul le namespace/job varie).
+- **Métier (v0.2)** : via `/generate-dashboard` (§8.4) — **design-led**, pas copie :
   mini-brainstorm (audience, méthode **RED/USE**, métriques clés, variables/templating,
-  drill-down) → JSON Grafana. S'appuie sur les principes du skill `dataviz` si présent.
+  drill-down) → JSON Grafana. S'appuie sur le skill `dataviz` si présent.
 
 ---
 
@@ -445,9 +469,11 @@ Ajoute **un** collector à un exporter existant (l'action la plus répétée). P
 (1) détecte la saveur d'I/O du repo courant (ou la demande), (2) demande nom du collector +
 source/endpoint + métriques visées, (3) matérialise `code/<saveur>/collector.go.tmpl` +
 `collector_test.go.tmpl` (**triade de tests**) via `scaffold.sh`, (4) enregistre le collector
-dans le registry map-driven de `main.go` (+ flag `--[no-]collector.<name>`), (5) rappelle la
-mise à jour de `docs/metrics.md` (lockstep) et lance `make test`. Idempotent : refuse si le
-collector existe déjà.
+dans le registry map-driven de `main.go` (+ flag `--[no-]collector.<name>`), (5) **propose des
+alertes métier** (§6.9) pour les nouvelles métriques dans `monitoring/prometheus/alerts.yml`
+(pattern paliers/for/labels portables), (6) rappelle la mise à jour de `docs/metrics.md`
+(lockstep) et lance `make test` + `make docs-check`. Idempotent : refuse si le collector
+existe déjà.
 
 ### 8.3 Subagent `agents/exporter-reviewer.md`
 Rôle : audit **spécifique exporter** — Definition of Done respectée, conventions Prometheus
@@ -508,8 +534,9 @@ Déclencheurs : « créer / scaffolder / durcir / auditer un exporter Prometheus
 - Le skill référence explicitement la doc Prometheus officielle (context7) et sépare [G]/[S].
 - Les 10 fichiers de référence couvrent l'anatomie de maturité + la phase archi + observabilité.
 - **`make docs-check` vert** : aucune métrique/label documenté(e) absent(e) du code.
-- Le dépôt généré contient `monitoring/` : alertes de santé Prometheus + dashboard de santé
-  Grafana, PromQL basée sur des métriques **existantes**.
+- Le dépôt généré contient `monitoring/` : alertes Prometheus **santé + métier** (paliers
+  warning/critical, `for`, labels portables) + recording rules + dashboard de santé Grafana,
+  PromQL basée sur des métriques **existantes** (validée par golden test + reviewer).
 - `scaffold.sh` n'a **aucune dépendance runtime** hors `sh`/`sed` ; substitution `@@VAR@@`
   vérifiable (aucun `@@…@@` résiduel dans un repo généré).
 - `exporter-reviewer` produit un rapport actionnable (gaps Definition of Done / conventions).
