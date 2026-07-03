@@ -121,8 +121,8 @@ composants en v0.1** (+ un 5e en v0.2) :
    **santé** générique (§6.9).
 
 **Emplacement :** dépôt dédié `~/Dev/work/apps_repo/exporters/prometheus-exporter-plugin/`
-(`git init` fait), transformable en marketplace pour distribution. **Rien n'est committé dans
-le repo `slurm_exporter`.**
+(`git init` fait) ; **le dépôt EST sa propre marketplace** (`.claude-plugin/marketplace.json`,
+§4) pour la distribution. **Rien n'est committé dans le repo `slurm_exporter`.**
 
 ### Rappel structure officielle (docs code.claude.com)
 
@@ -170,7 +170,7 @@ prometheus-exporter-plugin/               # racine du dépôt (git) — EST sa p
         cicd-and-release.md               # workflows, GoReleaser, cosign/SBOM, dependabot, CODEOWNERS
         packaging-and-ops.md              # Dockerfile dual, compose durci, systemd
         security-and-hardening.md         # sécu OSS de-personnalisée : jamais de secret en métrique, warnings, config opt.
-        dashboards-and-alerts.md          # alerting Prometheus (santé) + frontière Grafana + méthode design dashboard (RED/USE)
+        dashboards-and-alerts.md          # alerting Prometheus (santé+métier) + recording rules + frontière Grafana + design (RED/USE)
         docs-and-governance.md            # jeu de docs, Definition of Done + docs-check métriques, SECURITY/CHANGELOG/CONTRIBUTING
       assets/                             # templates matérialisés par les commandes (délimiteur @@VAR@@, §5bis)
         scaffold.sh                       # substitution @@VAR@@ + renommage de chemins + sélection de saveur (sh+sed, sans moteur)
@@ -626,3 +626,26 @@ Déclencheurs : « créer / scaffolder / durcir / auditer un exporter Prometheus
   §6.4). Re-sync + écarts volontaires documentés dans `docs/design/re-sync.md`.
 - **Volume v0.1** : 2 saveurs (HTTP+CLI) × triade × golden test = périmètre MVP conséquent ;
   la ROADMAP séquence pour livrer HTTP d'abord, CLI ensuite, DB en v0.2.
+
+---
+
+## 12. Corroboration technique (context7 / doc officielle)
+
+Audit final avant implémentation — affirmations version-sensibles vérifiées contre la doc à
+jour. **Aucune affirmation fausse trouvée.**
+
+| Affirmation (§) | Source | Verdict |
+|---|---|---|
+| Collector custom `Describe`/`Collect`, `NewDesc`, const-metrics (§6.2) | `/prometheus/client_golang` | ✅ confirmé (+ `DescribeByCollect` = alternative dispo) |
+| Naming : prefix, unités de base, `_total` compteurs, pas de label dans le nom, num/dénom séparés pour ratio (§6.1, §6.9) | `prometheus.io/docs/practices/naming` + `writing_exporters` | ✅ confirmé mot pour mot |
+| `process_`/`scrape_` réservés mais extensibles → self-instrumentation `_exporter_*` (§6.1) | `writing_exporters` | ✅ confirmé |
+| Multi-target pattern `/probe` + params `target`/`module`, exporter hors cible (§6.0) | `prometheus.io/docs/guides/multi-target-exporter` | ✅ confirmé |
+| GoReleaser `dockers_v2` multi-platform (buildx) (§6.5) | `/goreleaser/goreleaser` (v2.12+) | ✅ confirmé, à jour |
+| Structure plugin : `.claude-plugin/{plugin,marketplace}.json`, `commands/agents/skills`, `${CLAUDE_PLUGIN_ROOT}`, `claude plugin validate`, `--plugin-dir`, `/reload-plugins`, `/plugin marketplace add`+`install` | `code.claude.com/docs` (agent claude-code-guide) | ✅ confirmé |
+| Templating : moteurs à accolades collisionnent → sentinelle `@@VAR@@` (§5bis) | `/cookiecutter/cookiecutter` + `/hay-kot/scaffold` | ✅ confirmé |
+| `webflag.AddFlags(kingpin.CommandLine, ":9341")`, `web.ListenAndServe` (§6.3) | *exporter-toolkit non indexé context7* | ⚠️ vérifié **par construction** (code réel de la source qui build/CI-passe), pas par context7 |
+
+Seule zone non couverte par context7 : `exporter-toolkit` (pas une lib indexée) — mais son API
+est celle du `main.go` réel de la source de référence, qui compile et passe la CI. À
+re-vérifier au moment d'écrire le `main.go.tmpl` (la version d'`exporter-toolkit` fixe la
+signature exacte de `AddFlags`).
