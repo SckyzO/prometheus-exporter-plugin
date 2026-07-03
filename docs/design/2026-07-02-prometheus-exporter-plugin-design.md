@@ -89,6 +89,16 @@ versions des binaires sans casser l'hôte. Deux exigences complémentaires :
    chaque exporter généré hérite de ce Makefile → ses contributeurs tiers doivent pouvoir
    travailler sans conteneur.
 
+**Principe release host-agnostic (important).** La **discipline de versioning est
+universelle** et ne dépend d'aucune forge : **SemVer**, **tags git `v*`**, **CHANGELOG**
+(Keep-a-Changelog), **Conventional Commits**, injection `version.*` en ldflags, et
+**GoReleaser** (`goreleaser build` / `release --snapshot` tournent **en local, sans GitHub**).
+La **couche livraison GitHub est optionnelle (opt-out)** : `.github/workflows/*` (Actions),
+publication GHCR, scorecard/dependabot, templates issues/PR. Le scaffold demande la **forge**
+(`github` | `none` | autre — variable `@@FORGE@@`) : si `none`, `.github/` est **omis** et le
+chemin « release local via GoReleaser + tag git » est documenté (analogue au fallback natif du
+Makefile). Un exporter sans GitHub reste **versionné, changelogué et releasable**.
+
 ---
 
 ## 3. Nature & emballage (décidé)
@@ -171,9 +181,9 @@ prometheus-exporter-plugin/               # racine du dépôt (git)
           variants/   cache.go.tmpl, background_collector.go.tmpl (options avancées, toutes saveurs)
         build/      Makefile.tmpl, .golangci.yml,
                     scripts/docker/tools/{Dockerfile.tmpl, goreport.sh, deps-report.sh}
-        release/    .goreleaser.yaml.tmpl, .goreleaser.dev.yaml.tmpl,
-                    workflows/{ci,release,dev-release,govulncheck,trivy-scan,scorecard}.yml(.tmpl),
-                    dependabot.yml.tmpl, CODEOWNERS.tmpl
+        release/    .goreleaser.yaml.tmpl, .goreleaser.dev.yaml.tmpl   # TOUJOURS (host-agnostic)
+                    github/{workflows/{ci,release,dev-release,govulncheck,trivy-scan,scorecard}.yml(.tmpl),
+                            dependabot.yml.tmpl, CODEOWNERS.tmpl}      # CONDITIONNEL @@FORGE@@==github
         packaging/  Dockerfile.tmpl, Dockerfile.minimal.tmpl,
                     docker-compose.yml.tmpl, docker-compose.minimal.yml.tmpl,
                     .dockerignore, systemd.service.tmpl
@@ -185,7 +195,7 @@ prometheus-exporter-plugin/               # racine du dépôt (git)
                     grafana/{health-dashboard.json.tmpl (self-instrumentation)}, README.md.tmpl
         licenses/   LICENSE-apache-2.0.txt, LICENSE-mit.txt, LICENSE-gpl-3.0.txt, LICENSE-bsd-3.txt
         github/     ISSUE_TEMPLATE/{bug_report,feature_request,question}.yml,
-                    pull_request_template.md
+                    pull_request_template.md                           # CONDITIONNEL @@FORGE@@==github
 ```
 
 > Distinction importante : **deux niveaux de gouvernance**.
@@ -209,6 +219,7 @@ légitimes des templates : GoReleaser `{{ }}`, Actions `${{ }}`, Docker `${ }`).
 | `@@DATA_SOURCE@@` | endpoint/commande interrogé (1er collector) | `http://localhost:9121` |
 | `@@DEFAULT_PORT@@` | port d'écoute par défaut (voir alloc. officielle) | `9121` |
 | `@@LICENSE@@` | licence (choisie au scaffold, défaut Apache-2.0) | `Apache-2.0` |
+| `@@FORGE@@` | forge d'hébergement (conditionne `.github/`) | `github` \| `none` |
 | `@@OWNER@@` | attribution, CODEOWNERS, OCI labels | `<owner>` |
 
 `/new-prometheus-exporter <name>` collecte/déduit ces variables (dont **saveur** issue de la
@@ -315,11 +326,17 @@ l'exporter généré.
 4. **Overlap `lint`/`report` documenté** (gofmt/vet/ineffassign/misspell couverts par
    golangci-lint *et* goreport — buts distincts : gate vs note/grade).
 
-### 6.5 `cicd-and-release.md` [G]
-Workflows (actions **pinnées SHA**, least-privilege) : `ci`, `release` (GoReleaser+cosign+syft),
-`dev-release`, `govulncheck`, `trivy-scan`, `scorecard`. **GoReleaser** : multi-OS/arch CGO off,
-checksums, **SBOM CycloneDX**, **cosign keyless**, `dockers_v2` multi-arch dual-variant, tags
-flottants gated `Prerelease==""`. `dependabot.yml`, `CODEOWNERS`.
+### 6.5 `cicd-and-release.md` [G] — host-agnostic (§2)
+**Versioning universel (toujours, sans forge) :** SemVer, tags git `v*`, **CHANGELOG**
+(Keep-a-Changelog, impact opérateur par entrée), **Conventional Commits**, ldflags `version.*`.
+**GoReleaser** (config `.goreleaser.yaml`) : multi-OS/arch CGO off, checksums, **SBOM
+CycloneDX**, **cosign keyless**, `dockers_v2` multi-arch dual-variant, tags flottants gated
+`Prerelease==""`. `goreleaser build` / `release --snapshot` tournent **en local** → un dépôt
+**sans GitHub** reste versionné et releasable (release manuelle sur tag).
+**Couche GitHub (opt-out, `@@FORGE@@ == github`) :** workflows (actions **pinnées SHA**,
+least-privilege) `ci`, `release`, `dev-release`, `govulncheck`, `trivy-scan`, `scorecard` ;
+`dependabot.yml` ; `CODEOWNERS` ; templates issues/PR. **Omis si `@@FORGE@@ == none`**, avec
+doc du chemin release local.
 
 ### 6.6 `packaging-and-ops.md` [G]
 `Dockerfile` (base applicative + user non-root dédié) vs `Dockerfile.minimal` (**distroless
@@ -452,7 +469,8 @@ système de mémoire perso ; chemins/identité du mainteneur.
 
 ### 8.1 Slash command `commands/new-prometheus-exporter.md`
 Prompt qui : (0) **exige la phase archi** (§6.0) faite → récupère saveur d'I/O + liste de
-collectors + modèle single/multi-target ; (1) collecte/déduit les variables (§5) ; **(1b)
+collectors + modèle single/multi-target ; (1) collecte/déduit les variables (§5), **dont la
+forge** `@@FORGE@@` (`github`|`none`) qui conditionne `.github/` (§6.5) ; **(1b)
 propose la licence** — choix commenté « simple », **défaut Apache-2.0** (norme
 Prometheus/node_exporter) : Apache-2.0 (permissive + clause brevets, défaut écosystème), MIT
 (permissive minimale), GPL-3.0 (copyleft fort), BSD-3 (permissive) ; (2) invoque
@@ -545,6 +563,9 @@ Déclencheurs : « créer / scaffolder / durcir / auditer un exporter Prometheus
   OSS universels sont encodés (§7bis), les préférences personnelles exclues.
 - **Zéro mention de source** : `grep -ri -e slurm -e <maintainer-handle>` sur l'arbre du plugin
   hors `docs/design/` retourne 0 (contrainte §2).
+- **Release host-agnostic** : `@@FORGE@@ == none` produit un dépôt **sans `.github/`** mais
+  toujours versionné (tags `v*`, CHANGELOG) et releasable en local (`goreleaser release
+  --snapshot`). Le golden test couvre les deux forges.
 - Rien n'est committé dans le repo `slurm_exporter`.
 
 ---
@@ -566,6 +587,9 @@ Déclencheurs : « créer / scaffolder / durcir / auditer un exporter Prometheus
   Prometheus/Grafana affichée.
 - **Docs métriques validées** (§6.8) : `make docs-check` — la doc ne peut mentir (métriques/
   labels documentés ⊆ code). Dans Definition of Done + golden test + reviewer.
+- **Release host-agnostic** (§6.5) : versioning universel (SemVer/tags/CHANGELOG/GoReleaser
+  local) ; couche GitHub Actions **opt-out** via `@@FORGE@@`. Un exporter sans GitHub reste
+  versionné et releasable.
 - **Frontière universel/personnel** (§7bis) : confirmée.
 
 ### Améliorations intégrées au plan (fold)
