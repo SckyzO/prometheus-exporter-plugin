@@ -20,10 +20,16 @@ quelques variables (`name`, `namespace`, `module`, `data source`, `port`, `licen
 — §5), on obtient un dépôt d'exporter **buildable, testé, documenté, releasable**, sans
 réinventer le pattern collector, la toolchain, la CI/CD, ni la discipline docs.
 
+Observabilité livrée avec l'exporter (§6.9) : **alerting Prometheus** (règles de santé) +
+**dashboard Grafana de santé** en v0.1 ; **dashboard métier** via commande guidée
+`/generate-dashboard` en v0.2. Frontière affichée : *alerting = Prometheus (cœur) ; dashboards
+= Grafana (extension délimitée)*.
+
 Non-objectifs (YAGNI v1) :
 - Pas de support multi-langage (Go uniquement ; couche principes séparable pour extension
   future — §2).
-- Pas de génération de dashboards Grafana (référencée en doc, pas scaffoldée).
+- Pas de dashboard **métier** en v0.1 (seulement le dashboard de **santé** générique ; le
+  métier passe par `/generate-dashboard` en v0.2).
 - Pas de MCP/LSP/hooks dans le plugin v1.
 
 ---
@@ -88,7 +94,7 @@ versions des binaires sans casser l'hôte. Deux exigences complémentaires :
 ## 3. Nature & emballage (décidé)
 
 **Plugin Claude Code** `prometheus-exporter`, versionné et partageable, contenant **4
-composants** :
+composants en v0.1** (+ un 5e en v0.2) :
 
 1. **Skill** `prometheus-exporter` — le savoir + le workflow (SKILL.md routeur + `references/`
    + `assets/`), incluant la **phase 0 de design d'architecture**.
@@ -98,8 +104,11 @@ composants** :
    exporter existant (l'action la plus répétée). Réutilise les mêmes templates `code/<saveur>/`.
 4. **Subagent** `exporter-reviewer` — audite un exporter sur les critères **spécifiques
    exporter** (Definition of Done, conventions Prometheus, séparation [G]/[S], cardinalité,
-   triade de tests présente). Auto-suffisant, **dispatché en parallèle** de `/code-review` et
-   `pr-review-toolkit` par le workflow (§8.3).
+   triade de tests présente, **docs-check**, alertes de santé). Auto-suffisant, **dispatché en
+   parallèle** de `/code-review` et `pr-review-toolkit` par le workflow (§8.3).
+5. *(v0.2)* **Slash command** `/generate-dashboard` — design-led, génère un dashboard Grafana
+   **métier** (§8.4). Le scaffold v0.1 livre déjà l'alerting Prometheus + un dashboard de
+   **santé** générique (§6.9).
 
 **Emplacement :** dépôt dédié `~/Dev/work/apps_repo/exporters/prometheus-exporter-plugin/`
 (`git init` fait), transformable en marketplace pour distribution. **Rien n'est committé dans
@@ -135,6 +144,7 @@ prometheus-exporter-plugin/               # racine du dépôt (git)
   commands/
     new-prometheus-exporter.md            # slash command de scaffolding (repo complet)
     add-collector.md                      # slash command : ajoute un collector + sa triade de tests
+    generate-dashboard.md                 # (v0.2) mini-brainstorm design → dashboard Grafana métier
   agents/
     exporter-reviewer.md                  # subagent d'audit exporter-spécifique
   skills/
@@ -149,7 +159,8 @@ prometheus-exporter-plugin/               # racine du dépôt (git)
         cicd-and-release.md               # workflows, GoReleaser, cosign/SBOM, dependabot, CODEOWNERS
         packaging-and-ops.md              # Dockerfile dual, compose durci, systemd
         security-and-hardening.md         # sécu OSS de-personnalisée : jamais de secret en métrique, warnings, config opt.
-        docs-and-governance.md            # jeu de docs, Definition of Done, SECURITY/CHANGELOG/CONTRIBUTING
+        dashboards-and-alerts.md          # alerting Prometheus (santé) + frontière Grafana + méthode design dashboard (RED/USE)
+        docs-and-governance.md            # jeu de docs, Definition of Done + docs-check métriques, SECURITY/CHANGELOG/CONTRIBUTING
       assets/                             # templates matérialisés par les commandes (délimiteur @@VAR@@, §5bis)
         scaffold.sh                       # substitution @@VAR@@ + renommage de chemins + sélection de saveur (sh+sed, sans moteur)
         code/
@@ -169,6 +180,7 @@ prometheus-exporter-plugin/               # racine du dépôt (git)
         docs/       README.md.tmpl, CONTRIBUTING.md.tmpl (Definition of Done),
                     SECURITY.md.tmpl, CHANGELOG.md.tmpl,
                     docs/{metrics,configuration,validation-checklist}.md.tmpl
+        monitoring/ alerts.rules.yml.tmpl (santé Prometheus), health-dashboard.json.tmpl (Grafana, self-instrumentation), README.md.tmpl
         licenses/   LICENSE-apache-2.0.txt, LICENSE-mit.txt, LICENSE-gpl-3.0.txt, LICENSE-bsd-3.txt
         github/     ISSUE_TEMPLATE/{bug_report,feature_request,question}.yml,
                     pull_request_template.md
@@ -330,9 +342,31 @@ règles universelles d'exporter) :
 Docs **en lockstep avec `/metrics`** (`metrics.md`, `configuration.md`,
 `validation-checklist.md` copiable). README structuré (+ section Security & supply chain avec
 recettes cosign/SBOM/distroless). **`CONTRIBUTING.md` = Definition of Done** (build → test
-coverage non décroissante → lint 0 → cluster test → workload → validation par métrique → logs →
-screenshots → CI locale ; + règles nouveaux collectors + anonymisation + Common Pitfalls).
-`SECURITY.md`, `CHANGELOG.md` (impact opérateur par entrée).
+coverage non décroissante → lint 0 → **`make docs-check`** → cluster/cible de test → workload →
+validation par métrique → logs → screenshots → CI locale ; + règles nouveaux collectors +
+anonymisation + Common Pitfalls). `SECURITY.md`, `CHANGELOG.md` (impact opérateur par entrée).
+
+**Validation des docs métriques (contrôle, pas intention).** `docs/metrics.md` doit documenter
+**toute** métrique + labels, et un check **`make docs-check`** (test Go) **gather** les
+descripteurs enregistrés (`prometheus.NewRegistry()` + `Gather()`, Execute/clients mockés) et :
+- **échoue** si une métrique ou un label **cité dans `docs/metrics.md` n'existe pas** dans le
+  code (la doc ne peut pas mentir) ;
+- **warn** (option : échoue) sur toute métrique **du code non documentée**.
+Intégré à la Definition of Done, au golden test du plugin (§11) et vérifié par
+`exporter-reviewer` (§8.3).
+
+### 6.9 `dashboards-and-alerts.md` [G]
+**Frontière affichée : alerting = Prometheus (cœur) ; dashboards = Grafana (extension).**
+- **Alerting Prometheus (v0.1)** : `monitoring/alerts.rules.yml` — règles de **santé**
+  génériques basées sur la self-instrumentation présente dans tout exporter : `up == 0`,
+  `@@NAMESPACE@@_exporter_collector_success == 0`, durée de scrape anormale, `scrape` errors.
+  + emplacements commentés pour les alertes **métier**. PromQL validée contre des métriques
+  **existantes** (même exigence anti-mensonge que les docs).
+- **Dashboard de santé Grafana (v0.1)** : `monitoring/health-dashboard.json` — templatable car
+  la self-instrumentation est identique d'un exporter à l'autre (seul le namespace/job varie).
+- **Dashboard métier (v0.2)** : via `/generate-dashboard` (§8.4) — **design-led**, pas copie :
+  mini-brainstorm (audience, méthode **RED/USE**, métriques clés, variables/templating,
+  drill-down) → JSON Grafana. S'appuie sur les principes du skill `dataviz` si présent.
 
 ---
 
@@ -349,9 +383,11 @@ Fichiers à écrire pour le dépôt du plugin lui-même :
   *(La correspondance concrète source→template reste dans ce design doc uniquement — §6.4,
   §11.2.)*
 - **ROADMAP.md** — jalons : **v0.1** (MVP : skill + phase archi + `/new-prometheus-exporter` +
-  `/add-collector` + `exporter-reviewer`, **saveurs HTTP+CLI**, dépôt `make build`+`make check`
-  verts, CI plugin + golden test) → **v0.2** (saveur **DB**, variantes cache/background,
-  multi-target avancé, dashboards Grafana) → **v1.0** (marketplace + doc complète).
+  `/add-collector` + `exporter-reviewer`, **saveurs HTTP+CLI**, `monitoring/` = alertes de santé
+  Prometheus + dashboard de santé Grafana, `make docs-check`, dépôt `make build`+`make check`
+  verts, CI plugin + golden test) → **v0.2** (saveur **DB**, `/generate-dashboard` métier
+  design-led, variantes cache/background, multi-target avancé) → **v1.0** (marketplace + doc
+  complète).
 - **TODO.md** — backlog opérationnel dérivé du plan d'implémentation.
 - **README.md**, **CHANGELOG.md**, **LICENSE**.
 
@@ -429,7 +465,15 @@ C'est **l'étape d'audit du SKILL** (§9 étape 6) qui dispatche en parallèle :
 (toujours dispo) + — **si présents** — `/code-review` et `pr-review-toolkit` (enhancement
 optionnel, jamais une dépendance).
 Frontmatter : `name`, `description`, `tools` restreints (lecture + Bash pour `make check`),
-`model`.
+`model`. **Vérifie aussi** `make docs-check` (docs métriques non menteuses) et la présence des
+règles d'alerte de santé.
+
+### 8.4 Slash command `commands/generate-dashboard.md` (v0.2)
+Sort **volontairement** du périmètre Prometheus (→ Grafana). Prompt qui lance un
+**mini-brainstorm de design** (audience, méthode **RED/USE**, métriques clés de l'exporter lues
+depuis le code/`metrics.md`, variables/templating, drill-down) puis génère un **JSON Grafana**
+métier. PromQL basée uniquement sur des métriques **existantes**. S'appuie sur `dataviz` si
+présent. Le dashboard de **santé** générique, lui, est livré dès le scaffold (v0.1, §6.9).
 
 ---
 
@@ -443,9 +487,11 @@ Déclencheurs : « créer / scaffolder / durcir / auditer un exporter Prometheus
 2. **Scaffold** — `/new-prometheus-exporter <name>` (saveur + licence choisies).
 3. **Boucle par collector** — `/add-collector <name>` : fetch/Data → Parse → **triade de
    tests** → Collect. Jamais de métrique partielle sur erreur.
-4. **Durcissement** — Makefile container-first, `make check` **vert** (preuve avant
-   affirmation).
-5. **Release/CI + docs** — workflows + GoReleaser + Definition of Done ; docs en lockstep.
+4. **Durcissement** — Makefile container-first, `make check` **vert** + `make docs-check`
+   (docs métriques non menteuses) (preuve avant affirmation).
+5. **Release/CI + docs + observabilité** — workflows + GoReleaser + Definition of Done ; docs
+   en lockstep ; `monitoring/` (alertes de santé Prometheus + dashboard de santé Grafana).
+   Dashboard métier = `/generate-dashboard` (v0.2).
 6. **Audit** — dispatch parallèle : `exporter-reviewer` (toujours) + `/code-review` +
    `pr-review-toolkit` **si présents** (optionnels, jamais requis).
 
@@ -460,7 +506,10 @@ Déclencheurs : « créer / scaffolder / durcir / auditer un exporter Prometheus
 - La phase 0 (design d'archi) est présente et **API-first** ; la licence est **choisie**
   (défaut Apache-2.0).
 - Le skill référence explicitement la doc Prometheus officielle (context7) et sépare [G]/[S].
-- Les 9 fichiers de référence couvrent l'anatomie de maturité + la phase archi.
+- Les 10 fichiers de référence couvrent l'anatomie de maturité + la phase archi + observabilité.
+- **`make docs-check` vert** : aucune métrique/label documenté(e) absent(e) du code.
+- Le dépôt généré contient `monitoring/` : alertes de santé Prometheus + dashboard de santé
+  Grafana, PromQL basée sur des métriques **existantes**.
 - `scaffold.sh` n'a **aucune dépendance runtime** hors `sh`/`sed` ; substitution `@@VAR@@`
   vérifiable (aucun `@@…@@` résiduel dans un repo généré).
 - `exporter-reviewer` produit un rapport actionnable (gaps Definition of Done / conventions).
@@ -485,12 +534,18 @@ Déclencheurs : « créer / scaffolder / durcir / auditer un exporter Prometheus
 - **Licence** : variable `@@LICENSE@@`, **choix proposé** au scaffold, défaut **Apache-2.0**
   (norme Prometheus/node_exporter) (§8.1).
 - **Reviewer** (§8.3) : auto-suffisant, dispatch parallèle, reviewers génériques optionnels.
+- **Observabilité** (§6.9) : alerting Prometheus (santé) + dashboard Grafana de santé en
+  **v0.1** ; dashboard métier design-led via `/generate-dashboard` en **v0.2**. Frontière
+  Prometheus/Grafana affichée.
+- **Docs métriques validées** (§6.8) : `make docs-check` — la doc ne peut mentir (métriques/
+  labels documentés ⊆ code). Dans Definition of Done + golden test + reviewer.
 - **Frontière universel/personnel** (§7bis) : confirmée.
 
 ### Améliorations intégrées au plan (fold)
 - **CI du plugin + golden smoke test** : la CI du dépôt plugin lance `claude plugin validate`,
-  le **grep zéro-source**, et un **scaffold jetable → `make build` + `make check`** (par saveur)
-  pour garantir que les templates produisent un repo valide (anti bit-rot).
+  le **grep zéro-source**, et un **scaffold jetable → `make build` + `make check` + `make
+  docs-check`** (par saveur) pour garantir que les templates produisent un repo valide, avec
+  docs non menteuses et `monitoring/` cohérent (anti bit-rot).
 - **`docs/design/re-sync.md`** (exclu du grep) : porte la correspondance concrète
   source→template + la procédure ; le CLAUDE.md racine y renvoie **génériquement**.
 - **Divers** : refus d'écrasement (§8.1), pointeur alloc. de ports Prometheus officielle,
