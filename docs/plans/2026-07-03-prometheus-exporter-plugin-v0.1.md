@@ -15,7 +15,9 @@
 Every task's requirements implicitly include this section. Values are verbatim from the design spec (`docs/design/2026-07-02-prometheus-exporter-plugin-design.md`).
 
 - **Reference exporter (derivation source, never shipped, never named in artifacts):** `~/Dev/work/apps_repo/exporters/slurm_exporter/slurm_exporter/`. Read the real files; do **not** reproduce templates from memory (spec §11).
-- **HARD — zero source mention:** `grep -rin -e slurm -e sckyzo` over the whole plugin tree **excluding `docs/`** must return **0**. `docs/design/` and `docs/plans/` are creation-history (this plan lives there) and are the only places the source may be named.
+- **HARD — no source leakage (two scoped checks, maintainer decision 2026-07-03):**
+  - **SLURM-GREP:** `grep -rin slurm . | grep -v '/docs/'` must return **0** — the source exporter is never named in any shipped file. `docs/design/` + `docs/plans/` are creation-history (this plan lives there) and are the only places it may appear.
+  - **HANDLE-GREP:** `grep -rin sckyzo skills/ commands/ agents/` must return **0** — the maintainer handle never appears in the taught knowledge, templates, commands, or agents. The plugin's *own* identity/distribution files (`.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, root `LICENSE`, root `README.md`, root `CLAUDE.md`) legitimately carry `SckyzO` as declared author/owner and are **exempt** from HANDLE-GREP. Scaffold templates under `assets/` still use `@@OWNER@@`, never a real handle.
 - **Auto-portance:** the plugin depends on **no** personal `CLAUDE.md`/profile. OSS engineering principles are extracted and de-personalized inside the plugin (spec §7bis).
 - **Templating:** delimiter `@@VAR@@`. Substitution by `scaffold.sh` (`sh`+`sed` only) — **zero runtime dependency** beyond sh/sed. No brace template engine (collides with GoReleaser `{{ }}`, Actions `${{ }}`, Docker `${ }`). Flavor = directory selection, **no in-file conditionals**. A generated repo must contain **no residual `@@…@@`**.
 - **Container-first:** all dev tooling runs in a pinned `*-tools` image; auto-detect `docker` → `podman` → native fallback with an "unpinned versions" warning + `NATIVE=1` escape hatch.
@@ -92,7 +94,7 @@ Verify the current schema with the `claude-code-guide` agent or context7 (`code.
   "name": "prometheus-exporter",
   "version": "0.1.0",
   "description": "Scaffold and harden production-grade Go Prometheus exporters: architecture-first design, collector pattern with mockable I/O, container-first tooling, host-agnostic releases, health+business alerting, and a non-lying metrics-docs check.",
-  "author": { "name": "@@OWNER@@" },
+  "author": { "name": "SckyzO" },
   "license": "Apache-2.0",
   "keywords": ["prometheus", "exporter", "observability", "metrics", "grafana", "golang", "scaffold"],
   "homepage": "",
@@ -100,7 +102,7 @@ Verify the current schema with the `claude-code-guide` agent or context7 (`code.
 }
 ```
 
-Note: `@@OWNER@@` here is a literal placeholder to fill with the real plugin author at publish time (this is the plugin's *own* manifest, not a scaffold template) — replace before v0.1 tag. Leave `homepage`/`repository` empty until the repo is pushed.
+Note: the author is the real handle `SckyzO` (maintainer decision — the plugin's own manifest is exempt from HANDLE-GREP; see Global Constraints). Do **not** use the `@@OWNER@@` scaffold sentinel here — this is the shipped manifest, not a template. Leave `homepage`/`repository` empty until the repo is pushed, then fill with the real URL.
 
 - [ ] **Step 3: Write `.claude-plugin/marketplace.json` (self-marketplace)**
 
@@ -109,7 +111,7 @@ Verify schema first (context7 / claude-code-guide). The repo lists itself as the
 ```json
 {
   "name": "prometheus-exporter-marketplace",
-  "owner": { "name": "@@OWNER@@" },
+  "owner": { "name": "SckyzO" },
   "plugins": [
     { "name": "prometheus-exporter", "source": "./", "description": "Scaffold and harden production-grade Go Prometheus exporters." }
   ]
@@ -166,8 +168,8 @@ v0.1 (MVP): skill + arch phase + `/new-prometheus-exporter` + `/add-collector` +
 
 - [ ] **Step 7: Grep gate + commit**
 
-Run: `grep -rin -e slurm -e sckyzo . --include='*.md' --include='*.json' | grep -v '/docs/'`
-Expected: empty.
+Run SLURM-GREP: `grep -rin slurm . --include='*.md' --include='*.json' | grep -v '/docs/'`
+Expected: empty. (These root files legitimately carry `SckyzO` — README install path, CLAUDE.md author — so HANDLE-GREP is scoped to `skills/ commands/ agents/`, not the root; do **not** grep `sckyzo` here.)
 ```bash
 git -c commit.gpgsign=false add CLAUDE.md README.md ROADMAP.md TODO.md CHANGELOG.md LICENSE
 git -c commit.gpgsign=false commit -m "docs(plugin): add root governance (CLAUDE, README, ROADMAP, TODO, CHANGELOG, LICENSE)"
@@ -662,10 +664,10 @@ Expected: `make check` (now including `docs-check`) PASS; lie-injection sub-chec
 
 Run: `sh test/golden-smoke.sh --all`
 Expected: every matrix cell PASS; grep clean; lie-injection behaves; skips (if any) logged.
-- [ ] **Step 4: Repo-wide zero-source gate**
+- [ ] **Step 4: Repo-wide zero-source gate (two scoped checks)**
 
-Run: `grep -rin -e slurm -e sckyzo . | grep -v '/docs/' | grep -v '/test/_work/'`
-Expected: empty.
+Run SLURM-GREP: `grep -rin slurm . | grep -v '/docs/' | grep -v '/test/_work/'` → Expected: empty.
+Run HANDLE-GREP: `grep -rin sckyzo skills/ commands/ agents/` → Expected: empty. (Manifest/LICENSE/README/CLAUDE.md root exempt — see Global Constraints.)
 - [ ] **Step 5: Commit** `test(ci): add full golden matrix and plugin CI (validate + zero-source grep + golden)`.
 
 ---
@@ -688,8 +690,9 @@ git tag v0.1.0
 ```
 - [ ] **Step 5: Final validate + grep**
 
-Run: `claude plugin validate . && grep -rin -e slurm -e sckyzo . | grep -v '/docs/' | grep -v '/test/_work/' || echo "ALL CLEAN"`
-Expected: validate PASS; `ALL CLEAN`.
+Run: `claude plugin validate .` → Expected: PASS.
+Run SLURM-GREP: `grep -rin slurm . | grep -v '/docs/' | grep -v '/test/_work/'` → Expected: empty.
+Run HANDLE-GREP: `grep -rin sckyzo skills/ commands/ agents/` → Expected: empty.
 
 ---
 
