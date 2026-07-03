@@ -44,6 +44,12 @@ Séparation systématique **[G] générique réutilisable** vs **[S] spécifique
 conservent que le [G] ; le [S] (commande externe, préfixe métrique, parsing) devient des
 variables ou des trous à remplir.
 
+**Principe d'auto-portance (important).** Le plugin ne doit **rien présupposer d'un
+`CLAUDE.md`/profil personnel du mainteneur**. Une fois distribué, il tourne chez des tiers sans
+ce contexte ; en dépendre = couplage caché. Les principes d'ingénierie OSS sur lesquels le
+plugin s'appuie sont donc **extraits et de-personnalisés** dans le plugin lui-même (voir §7bis),
+en distinguant *principe universel* (encodé) de *préférence personnelle* (exclue).
+
 ---
 
 ## 3. Nature & emballage (décidé)
@@ -105,6 +111,7 @@ prometheus-exporter-plugin/               # racine du dépôt (git)
         makefile-and-tooling.md           # toolchain containerisée, targets, golangci, scripts
         cicd-and-release.md               # workflows, GoReleaser, cosign/SBOM, dependabot, CODEOWNERS
         packaging-and-ops.md              # Dockerfile dual, compose durci, systemd
+        security-and-hardening.md         # sécu OSS de-personnalisée : jamais de secret en métrique, warnings, config opt.
         docs-and-governance.md            # jeu de docs, Definition of Done, SECURITY/CHANGELOG/CONTRIBUTING
       assets/                             # templates matérialisés par /new-prometheus-exporter
         code/       collector.go.tmpl, collector_test.go.tmpl, parser_test.go.tmpl,
@@ -194,7 +201,23 @@ flottants gated `Prerelease==""`. `dependabot.yml`, `CODEOWNERS`.
 nonroot**). `docker-compose` durci (`no-new-privileges`, `cap_drop: ALL`, `read_only`,
 `tmpfs`). `systemd` (user dédié, `Restart=on-failure`, exemples commentés). `.dockerignore`.
 
-### 6.7 `docs-and-governance.md` [G]
+### 6.7 `security-and-hardening.md` [G]
+Volet sécurité OSS **de-personnalisé** (extrait des principes du mainteneur, reformulé en
+règles universelles d'exporter) :
+- **Jamais de secret dans une métrique ou un label** : pas de mots de passe, tokens, clés API,
+  passphrases, chemins de certificats exposés via `/metrics` (endpoint public non
+  authentifié). Filtrage/omission côté parsing.
+- **Conservatisme sur les défauts** : ne pas durcir un défaut existant sauf vuln critique
+  exploitable sans action utilisateur ; tout changement de comportement par défaut = breaking
+  change documenté.
+- **Warnings au démarrage** en configuration exposée (ex : pas de TLS/auth sur une adresse
+  non-loopback) — visibles, non fatals.
+- **Config de durcissement optionnelle** (TLS/BasicAuth via `--web.config.file`), documentée,
+  non imposée.
+- Chaîne d'appro : renvoie vers §6.5 (cosign/SBOM/Trivy/govulncheck) et §6.6 (non-root,
+  distroless, compose durci).
+
+### 6.8 `docs-and-governance.md` [G]
 Docs **en lockstep avec `/metrics`** (`metrics.md`, `configuration.md`,
 `validation-checklist.md` copiable). README structuré (+ section Security & supply chain avec
 recettes cosign/SBOM/distroless). **`CONTRIBUTING.md` = Definition of Done** (build → test
@@ -207,15 +230,48 @@ screenshots → CI locale ; + règles nouveaux collectors + anonymisation + Comm
 ## 7. Gouvernance DU PLUGIN (racine du dépôt)
 
 Fichiers à écrire pour le dépôt du plugin lui-même :
-- **CLAUDE.md** — règles de contribution au plugin : convention de commits, comment tester
-  (`claude plugin validate`, `--plugin-dir`, `/reload-plugins`), **règle de re-sync** (les
-  assets sont dérivés des fichiers réels de `slurm_exporter` ; procédure pour re-synchroniser
-  quand le repo de référence évolue), discipline [G]/[S], pas de code mort.
+- **CLAUDE.md** — règles de contribution au plugin, **de-personnalisées** (§7bis) : convention
+  de commits, **anglais pour tout artefact public**, pas de code mort (`make deadcode`-style),
+  règle des deux phases pour refactoring à risque, discipline [G]/[S], comment tester
+  (`claude plugin validate`, `--plugin-dir`, `/reload-plugins`), et la **règle de re-sync**
+  (les assets sont dérivés des fichiers réels de `slurm_exporter` ; procédure pour
+  re-synchroniser quand le repo de référence évolue).
 - **ROADMAP.md** — jalons : v0.1 (MVP : skill + `/new-prometheus-exporter` produisant un dépôt
   qui `make build` + `make check` verts avec 1 collector d'exemple) → v0.2 (variantes
   cache/background + reviewer) → v1.0 (marketplace + doc complète).
 - **TODO.md** — backlog opérationnel dérivé du plan d'implémentation.
 - **README.md**, **CHANGELOG.md**, **LICENSE**.
+
+---
+
+## 7bis. Frontière principes universels vs personnels (auto-portance)
+
+Décision : les principes d'ingénierie OSS sont **extraits de-personnalisés** et encodés dans
+le plugin ; les préférences propres au mainteneur restent dehors. Le plugin ne dépend d'aucun
+`CLAUDE.md`/profil personnel.
+
+**ENCODÉ (principe universel) → emplacement :**
+
+| Principe | Emplacement |
+|---|---|
+| Non-régression testée (test qui échoue avant fix) | Definition of Done (`CONTRIBUTING.md.tmpl`) + SKILL |
+| Respect des couches (métier ≠ I/O) | `collector-pattern.md` (`Data` I/O vs `Parse` pure) |
+| Erreurs au bon niveau (pas d'avalage silencieux) | `collector-pattern.md` (`Collect` log+return, 0 métrique) |
+| Extensibilité sans toucher le cœur (registres > listes) | `project-scaffold.md` (registry map-driven) |
+| Pas de code mort | CLAUDE.md racine + `CONTRIBUTING.md.tmpl` |
+| Conservatisme sur les défauts (breaking documenté) | `security-and-hardening.md` + `prometheus-principles.md` |
+| Sécu : jamais de secret en métrique, warnings, config opt. | `security-and-hardening.md` |
+| Réflexes perf (structure indexée, files bornées) | `collector-pattern.md` (perf checklist) |
+| CI/CD : triggers explicites, guard matrice vide, `&&` | `cicd-and-release.md` |
+| Règle des deux phases (refactoring à risque) | CLAUDE.md racine |
+| **Anglais** pour artefacts publics (commits/PR/issues/docs) | `CONTRIBUTING.md.tmpl` + SKILL |
+| Ton avec contributeurs (« not closing the PR ») | `CONTRIBUTING.md.tmpl` |
+
+**EXCLU (personnel, hors sujet exporter) :** RTK ; français pour les échanges de travail (on
+garde uniquement « anglais pour le public ») ; livrables `.md` téléchargeables/jamais inline ;
+système de mémoire perso ; chemins/identité du mainteneur.
+
+*(Frontière à confirmer par le mainteneur — voir §11.)*
 
 ---
 
@@ -261,9 +317,11 @@ Déclencheurs : « créer / scaffolder / durcir / auditer un exporter Prometheus
 - `/new-prometheus-exporter foo` produit un dépôt qui **build** (`make build`) et passe
   **`make check`** avec ≥ 1 collector d'exemple + triade de tests verte.
 - Le skill référence explicitement la doc Prometheus officielle (context7) et sépare [G]/[S].
-- Les 7 fichiers de référence couvrent l'intégralité de l'anatomie de maturité inventoriée.
+- Les 8 fichiers de référence couvrent l'intégralité de l'anatomie de maturité inventoriée.
 - `exporter-reviewer` produit un rapport actionnable (gaps Definition of Done / conventions).
 - `claude plugin validate .` passe ; le plugin est chargeable via `--plugin-dir`.
+- **Auto-portance** : le plugin ne dépend d'aucun `CLAUDE.md`/profil personnel ; les principes
+  OSS universels sont encodés (§7bis), les préférences personnelles exclues.
 - Rien n'est committé dans le repo `slurm_exporter`.
 
 ---
@@ -279,3 +337,5 @@ Déclencheurs : « créer / scaffolder / durcir / auditer un exporter Prometheus
    forme courte) — détail mineur, tranché à l'implémentation.
 4. **Maintenance** : le plugin fige un instantané des bonnes pratiques ; note de re-sync
    obligatoire dans README + CLAUDE.md du plugin.
+5. **Frontière principes universels/personnels** (§7bis) : découpage extract-de-personnalisé
+   retenu au jugé — **à confirmer** (déplacer des lignes include/exclude si besoin).
