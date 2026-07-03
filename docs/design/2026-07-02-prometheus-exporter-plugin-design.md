@@ -15,8 +15,9 @@ Fournir un **plugin Claude Code** qui capture le savoir-faire d'un exporter Prom
 auditable** pour créer de nouveaux exporters de qualité production, en respectant **d'abord**
 les conventions officielles Prometheus.
 
-À partir de ~6 variables (`name`, `namespace`, `external command`, `module path`, `port`,
-`owner`), on obtient un dépôt d'exporter **buildable, testé, documenté, releasable**, sans
+À partir d'un **design d'architecture** (source, saveur d'I/O, collectors — §6.0) et de
+quelques variables (`name`, `namespace`, `module`, `data source`, `port`, `licence`, `owner`
+— §5), on obtient un dépôt d'exporter **buildable, testé, documenté, releasable**, sans
 réinventer le pattern collector, la toolchain, la CI/CD, ni la discipline docs.
 
 Non-objectifs (YAGNI v1) :
@@ -41,8 +42,21 @@ Non-objectifs (YAGNI v1) :
   GoReleaser + cosign + SBOM, Docker dual-variant, discipline docs.
 
 Séparation systématique **[G] générique réutilisable** vs **[S] spécifique** : les templates ne
-conservent que le [G] ; le [S] (commande externe, préfixe métrique, parsing) devient des
+conservent que le [G] ; le [S] (source de données, préfixe métrique, parsing) devient des
 variables ou des trous à remplir.
+
+**Principe « architecture d'abord, API-first ».** Le choix de la source de données est une
+**décision d'architecture**, pas un défaut technique. Le plugin comporte une **phase de design
+d'architecture** (référence `exporter-architecture.md` + étape 0 du workflow, §9) qui tourne
+**avant** le scaffold. Ordre de préférence des sources enseigné : **REST/API > gRPC > DB > CLI
+(dernier recours)**. `slurm_exporter` wrappe une CLI pour raison *historique* (API Slurm alors
+pauvres) — ce n'est **pas** le défaut recommandé. Le principe réutilisable est **« la frontière
+d'I/O est une dépendance mockable »** (var/interface pour la testabilité), décliné en **3
+saveurs** : **HTTP/REST (défaut recommandé)**, **DB**, **CLI**. La saveur est choisie à
+l'archi puis matérialisée par **sélection de répertoire** de templates (§5bis), pas par des
+conditionnels dans les fichiers. La phase archi couvre aussi **single-target vs multi-target**
+(Prometheus recommande le *multi-target exporter pattern* `?target=` pour les exporters
+réseau/API), la découpe en collectors et le budget de cardinalité.
 
 **Principe d'auto-portance (important).** Le plugin ne doit **rien présupposer d'un
 `CLAUDE.md`/profil personnel du mainteneur**. Une fois distribué, il tourne chez des tiers sans
@@ -73,17 +87,19 @@ versions des binaires sans casser l'hôte. Deux exigences complémentaires :
 
 ## 3. Nature & emballage (décidé)
 
-**Plugin Claude Code** `prometheus-exporter`, versionné et partageable, contenant **3
+**Plugin Claude Code** `prometheus-exporter`, versionné et partageable, contenant **4
 composants** :
 
 1. **Skill** `prometheus-exporter` — le savoir + le workflow (SKILL.md routeur + `references/`
-   + `assets/`).
+   + `assets/`), incluant la **phase 0 de design d'architecture**.
 2. **Slash command** `/new-prometheus-exporter <name>` — scaffolde un dépôt d'exporter complet
-   depuis les templates en remplissant les variables.
-3. **Subagent** `exporter-reviewer` — audite un exporter sur les critères **spécifiques
+   (saveur d'I/O choisie à l'archi, licence choisie) depuis les templates.
+3. **Slash command** `/add-collector <name>` — ajoute un collector + sa triade de tests à un
+   exporter existant (l'action la plus répétée). Réutilise les mêmes templates `code/<saveur>/`.
+4. **Subagent** `exporter-reviewer` — audite un exporter sur les critères **spécifiques
    exporter** (Definition of Done, conventions Prometheus, séparation [G]/[S], cardinalité,
-   triade de tests présente). Conçu pour être **lancé en parallèle** de `/code-review` et
-   `pr-review-toolkit` par le workflow (voir §8 — nuance d'imbrication).
+   triade de tests présente). Auto-suffisant, **dispatché en parallèle** de `/code-review` et
+   `pr-review-toolkit` par le workflow (§8.3).
 
 **Emplacement :** dépôt dédié `~/Dev/work/apps_repo/exporters/prometheus-exporter-plugin/`
 (`git init` fait), transformable en marketplace pour distribution. **Rien n'est committé dans
@@ -117,25 +133,31 @@ prometheus-exporter-plugin/               # racine du dépôt (git)
   docs/
     design/2026-07-02-prometheus-exporter-plugin-design.md   # ce spec
   commands/
-    new-prometheus-exporter.md            # slash command de scaffolding
+    new-prometheus-exporter.md            # slash command de scaffolding (repo complet)
+    add-collector.md                      # slash command : ajoute un collector + sa triade de tests
   agents/
     exporter-reviewer.md                  # subagent d'audit exporter-spécifique
   skills/
     prometheus-exporter/
       SKILL.md                            # routeur : quand/comment, checklist, context7-first
       references/
+        exporter-architecture.md          # ÉTAPE 0 : choix source (API-first), single/multi-target, découpe, cardinalité
         prometheus-principles.md          # conventions officielles (source context7)
-        collector-pattern.md              # les 5 pièces + triade de tests + var Execute
+        collector-pattern.md              # frontière I/O mockable (3 saveurs) + 5 pièces + triade de tests
         project-scaffold.md               # layout, main.go registry, flags auto, endpoints, shutdown
         makefile-and-tooling.md           # toolchain containerisée, targets, golangci, scripts
         cicd-and-release.md               # workflows, GoReleaser, cosign/SBOM, dependabot, CODEOWNERS
         packaging-and-ops.md              # Dockerfile dual, compose durci, systemd
         security-and-hardening.md         # sécu OSS de-personnalisée : jamais de secret en métrique, warnings, config opt.
         docs-and-governance.md            # jeu de docs, Definition of Done, SECURITY/CHANGELOG/CONTRIBUTING
-      assets/                             # templates matérialisés par /new-prometheus-exporter
-        code/       collector.go.tmpl, collector_test.go.tmpl, parser_test.go.tmpl,
-                    execute.go.tmpl, status_tracker.go.tmpl, cache.go.tmpl,
-                    background_collector.go.tmpl, main.go.tmpl, go.mod.tmpl
+      assets/                             # templates matérialisés par les commandes (délimiteur @@VAR@@, §5bis)
+        scaffold.sh                       # substitution @@VAR@@ + renommage de chemins + sélection de saveur (sh+sed, sans moteur)
+        code/
+          common/     status_tracker.go.tmpl, execute.go.tmpl (helper commun), main.go.tmpl, go.mod.tmpl
+          http/       collector.go.tmpl, collector_test.go.tmpl, client.go.tmpl (frontière HTTP mockable) — SAVEUR DÉFAUT
+          cli/        collector.go.tmpl, collector_test.go.tmpl, parser_test.go.tmpl, execute.go.tmpl (var Execute)
+          db/         collector.go.tmpl, collector_test.go.tmpl, client.go.tmpl (frontière DB mockable)
+          variants/   cache.go.tmpl, background_collector.go.tmpl (options avancées, toutes saveurs)
         build/      Makefile.tmpl, .golangci.yml,
                     scripts/docker/tools/{Dockerfile.tmpl, goreport.sh, deps-report.sh}
         release/    .goreleaser.yaml.tmpl, .goreleaser.dev.yaml.tmpl,
@@ -147,6 +169,7 @@ prometheus-exporter-plugin/               # racine du dépôt (git)
         docs/       README.md.tmpl, CONTRIBUTING.md.tmpl (Definition of Done),
                     SECURITY.md.tmpl, CHANGELOG.md.tmpl,
                     docs/{metrics,configuration,validation-checklist}.md.tmpl
+        licenses/   LICENSE-apache-2.0.txt, LICENSE-mit.txt, LICENSE-gpl-3.0.txt, LICENSE-bsd-3.txt
         github/     ISSUE_TEMPLATE/{bug_report,feature_request,question}.yml,
                     pull_request_template.md
 ```
@@ -160,21 +183,66 @@ prometheus-exporter-plugin/               # racine du dépôt (git)
 
 ## 5. Variables de templating
 
+Délimiteur **`@@VAR@@`** (§5bis — choisi pour ne pas collisionner avec les accolades
+légitimes des templates : GoReleaser `{{ }}`, Actions `${{ }}`, Docker `${ }`).
+
 | Variable | Rôle | Exemple |
 |---|---|---|
-| `{{EXPORTER_NAME}}` | nom binaire / dépôt | `redis_exporter` |
-| `{{NAMESPACE}}` | préfixe métrique Prometheus | `redis` |
-| `{{MODULE_PATH}}` | chemin de module Go | `github.com/user/redis_exporter` |
-| `{{EXTERNAL_CMD}}` | commande/binaire interrogé (1er collector) | `redis-cli` |
-| `{{DEFAULT_PORT}}` | port d'écoute par défaut | `9121` |
-| `{{OWNER}}` / `{{AUTHOR}}` | attribution, CODEOWNERS, OCI labels | `SckyzO` |
+| `@@EXPORTER_NAME@@` | nom binaire / dépôt | `redis_exporter` |
+| `@@NAMESPACE@@` | préfixe métrique Prometheus | `redis` |
+| `@@MODULE_PATH@@` | chemin de module Go | `github.com/user/redis_exporter` |
+| `@@IO_FLAVOR@@` | saveur de frontière I/O (choisie à l'archi) | `http` \| `db` \| `cli` |
+| `@@DATA_SOURCE@@` | endpoint/commande interrogé (1er collector) | `http://localhost:9121` |
+| `@@DEFAULT_PORT@@` | port d'écoute par défaut (voir alloc. officielle) | `9121` |
+| `@@LICENSE@@` | licence (choisie au scaffold, défaut Apache-2.0) | `Apache-2.0` |
+| `@@OWNER@@` | attribution, CODEOWNERS, OCI labels | `<owner>` |
 
-`/new-prometheus-exporter <name>` collecte/déduit ces variables puis matérialise
-l'arborescence.
+`/new-prometheus-exporter <name>` collecte/déduit ces variables (dont **saveur** issue de la
+phase archi et **licence** via prompt §8.1) puis matérialise l'arborescence.
+
+---
+
+## 5bis. Mécanisme de templating (tranché via context7)
+
+**Contexte / contrainte.** Les templates contiennent **massivement des accolades légitimes** :
+GoReleaser (`{{ .Version }}`), GitHub Actions (`${{ github.sha }}`), Docker/compose (`${VAR}`).
+Un moteur à accolades collisionne donc avec ce contenu.
+
+**Preuves context7 :**
+- *cookiecutter* (Jinja `{{}}`) impose `{% raw %}…{% endraw %}` ou `_copy_without_render` pour
+  chaque accolade littérale → ingérable ici.
+- *hay-kot/scaffold* (Go `text/template`) impose des **délimiteurs custom par glob** (ex `[[ ]]`
+  pour `.goreleaser`) pour la même raison.
+
+**Décision.** Délimiteur **sentinelle global `@@VAR@@`**, sans moteur de template :
+- Substitution par un **script `scaffold.sh` bundlé** (`sh` + `sed`), référencé via
+  `${CLAUDE_PLUGIN_ROOT}` → **zéro dépendance runtime** (pas de Python/cookiecutter/Go-template
+  → cohérent auto-portance).
+- Le script **renomme aussi les composants de chemin** templatés (`cmd/@@EXPORTER_NAME@@/`).
+- **Saveur d'I/O = sélection de répertoire** (`code/http|db|cli/`), **pas** de conditionnels
+  dans les fichiers → déterministe, testable.
+- Avantage : un `.tmpl` avec `@@OWNER@@` reste un fichier **lisible et valide** tel quel.
+- `@@...@@` n'apparaît dans aucun langage cible → collision impossible ; vérifiable par grep.
 
 ---
 
 ## 6. Contenu détaillé des références (le savoir enseigné)
+
+### 6.0 `exporter-architecture.md` [G] — ÉTAPE 0, avant tout code
+Guide de **design d'architecture** de l'exporter (§9 étape 0) :
+- **Choix de la source** dans l'ordre **REST/API > gRPC > DB > CLI (dernier recours)** ;
+  **context7 sur l'API cible** pour connaître endpoints/format. Justifier CLI si retenu (cas
+  legacy façon Slurm).
+- **Single-target vs multi-target** : rappeler le *multi-target exporter pattern* de Prometheus
+  (`/probe?target=`) pour les exporters réseau/API interrogeant N instances, vs le modèle
+  single-target (l'exporter tourne à côté de sa cible). Fork d'archi structurant → dicte la
+  saveur et le `main.go`.
+- **Frontière d'I/O mockable** : la saveur (`http`/`db`/`cli`) découle de la source ; principe =
+  dépendance injectable pour la testabilité.
+- **Découpe en collectors** + **budget de cardinalité** (quelles séries, combien, quels flags
+  de réduction) — avant d'écrire une ligne.
+Sortie de l'étape : saveur d'I/O, liste de collectors, modèle single/multi-target → inputs du
+scaffold.
 
 ### 6.1 `prometheus-principles.md` [G]
 Source **context7 d'abord** (`prometheus.io` *Writing Exporters* + *Metric and label naming*).
@@ -184,10 +252,15 @@ observé et ses limites vs sémantique Counter stricte) ; labels basse cardinali
 maîtrisée par flags ; OpenMetrics ; self-instrumentation `_exporter_*`.
 
 ### 6.2 `collector-pattern.md` [G]
-Les **5 pièces** (`{{Name}}Data` I/O → `Parse{{Name}}` pure → `{{Name}}GetMetrics` glue →
-`{{Name}}Collector` struct de descs → `New{{Name}}Collector`) + `Describe`/`Collect` (sur
-erreur : log + `return`, **0 métrique** → StatusTracker marque l'échec). **`var Execute`
-mockable** = clé de testabilité. **Triade de tests** par collector : parser (fixture),
+**Frontière d'I/O mockable — 3 saveurs** (le principe, pas l'implémentation) :
+- **HTTP/REST (défaut)** : un `client` injectable (interface) → mock en test via un
+  `httptest.Server` ou un double d'interface.
+- **DB** : un `client`/`querier` injectable → mock via interface ou sqlmock.
+- **CLI (legacy)** : `var Execute` mockable (le pattern de la source) → swap de la var en test.
+Les **5 pièces** (`@@Name@@Data`/fetch I/O → `Parse@@Name@@` pure → `@@Name@@GetMetrics` glue →
+`@@Name@@Collector` struct de descs → `New@@Name@@Collector`) + `Describe`/`Collect` (sur
+erreur : log + `return`, **0 métrique** → StatusTracker marque l'échec). La pièce 1 varie selon
+la saveur ; les pièces 2-5 sont identiques. **Triade de tests** par collector : parser (fixture),
 `_Collect` (registry+Gather), `_Describe` (compte exact de descs), `_ErrorHandling`
 (Execute→err ⇒ `err==nil` + 0 métrique). Fixtures = stdout brut **anonymisé** dans
 `test_data/`. Variantes : collector **caché** (`timedCache` RWMutex+TTL partagé) et
@@ -275,9 +348,10 @@ Fichiers à écrire pour le dépôt du plugin lui-même :
   la contrainte « zéro mention de source » (§2) avec sa vérif grep.
   *(La correspondance concrète source→template reste dans ce design doc uniquement — §6.4,
   §11.2.)*
-- **ROADMAP.md** — jalons : v0.1 (MVP : skill + `/new-prometheus-exporter` produisant un dépôt
-  qui `make build` + `make check` verts avec 1 collector d'exemple) → v0.2 (variantes
-  cache/background + reviewer) → v1.0 (marketplace + doc complète).
+- **ROADMAP.md** — jalons : **v0.1** (MVP : skill + phase archi + `/new-prometheus-exporter` +
+  `/add-collector` + `exporter-reviewer`, **saveurs HTTP+CLI**, dépôt `make build`+`make check`
+  verts, CI plugin + golden test) → **v0.2** (saveur **DB**, variantes cache/background,
+  multi-target avancé, dashboards Grafana) → **v1.0** (marketplace + doc complète).
 - **TODO.md** — backlog opérationnel dérivé du plan d'implémentation.
 - **README.md**, **CHANGELOG.md**, **LICENSE**.
 
@@ -317,14 +391,29 @@ système de mémoire perso ; chemins/identité du mainteneur.
 ## 8. Composants exécutables
 
 ### 8.1 Slash command `commands/new-prometheus-exporter.md`
-Prompt qui : (1) collecte/déduit les 6 variables (§5), (2) crée l'arborescence dépôt depuis
-`${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/assets/`, (3) substitue les variables,
-(4) `git init` + premier commit conventionnel, (5) lance/indique `make build` pour prouver la
-compilation, (6) pointe vers la boucle « ajouter un collector » du skill.
+Prompt qui : (0) **exige la phase archi** (§6.0) faite → récupère saveur d'I/O + liste de
+collectors + modèle single/multi-target ; (1) collecte/déduit les variables (§5) ; **(1b)
+propose la licence** — choix commenté « simple », **défaut Apache-2.0** (norme
+Prometheus/node_exporter) : Apache-2.0 (permissive + clause brevets, défaut écosystème), MIT
+(permissive minimale), GPL-3.0 (copyleft fort), BSD-3 (permissive) ; (2) invoque
+`${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/assets/scaffold.sh` qui copie l'arbre,
+**sélectionne `code/<saveur>/`**, substitue les `@@VAR@@`, renomme les chemins, pose la bonne
+`LICENSE` depuis `licenses/` ; (3) `git init` + premier commit conventionnel ; (4)
+lance/indique `make build` + `make check` pour **prouver** compilation et gate ; (5) pointe
+vers `/add-collector` pour la suite. **Refuse d'écraser** un dossier cible non vide.
 Invocation : `/prometheus-exporter:new-prometheus-exporter <name>` (namespace plugin ; forme
-courte si non ambiguë — détail de nommage mineur).
+courte si non ambiguë — détail mineur).
 
-### 8.2 Subagent `agents/exporter-reviewer.md`
+### 8.2 Slash command `commands/add-collector.md`
+Ajoute **un** collector à un exporter existant (l'action la plus répétée). Prompt qui :
+(1) détecte la saveur d'I/O du repo courant (ou la demande), (2) demande nom du collector +
+source/endpoint + métriques visées, (3) matérialise `code/<saveur>/collector.go.tmpl` +
+`collector_test.go.tmpl` (**triade de tests**) via `scaffold.sh`, (4) enregistre le collector
+dans le registry map-driven de `main.go` (+ flag `--[no-]collector.<name>`), (5) rappelle la
+mise à jour de `docs/metrics.md` (lockstep) et lance `make test`. Idempotent : refuse si le
+collector existe déjà.
+
+### 8.3 Subagent `agents/exporter-reviewer.md`
 Rôle : audit **spécifique exporter** — Definition of Done respectée, conventions Prometheus
 (naming/types/labels), séparation [G]/[S], cardinalité maîtrisée (flags présents), **triade de
 tests présente pour chaque collector**, self-instrumentation câblée, docs en lockstep avec
@@ -336,7 +425,7 @@ externes au plugin → dépendre d'eux violerait l'auto-portance). Il couvre **u
 delta exporter (Definition of Done, naming/types/labels Prometheus, [G]/[S], cardinalité,
 triade de tests par collector, self-instrumentation, pas de secret en métrique, docs en
 lockstep). Son prompt affirme explicitement qu'il **ne duplique pas** la revue générique.
-C'est **l'étape d'audit du SKILL** (§9.6) qui dispatche en parallèle : `exporter-reviewer`
+C'est **l'étape d'audit du SKILL** (§9 étape 6) qui dispatche en parallèle : `exporter-reviewer`
 (toujours dispo) + — **si présents** — `/code-review` et `pr-review-toolkit` (enhancement
 optionnel, jamais une dépendance).
 Frontmatter : `name`, `description`, `tools` restreints (lecture + Bash pour `make check`),
@@ -347,23 +436,33 @@ Frontmatter : `name`, `description`, `tools` restreints (lecture + Bash pour `ma
 ## 9. Workflow encodé dans SKILL.md
 
 Déclencheurs : « créer / scaffolder / durcir / auditer un exporter Prometheus ».
-1. **context7 d'abord** — conventions Prometheus à jour avant tout code.
-2. **Scaffold** — `/new-prometheus-exporter <name>` (6 variables).
-3. **Boucle par métrique** — Data → Parse → **triade de tests** → Collect. Jamais de métrique
-   partielle sur erreur.
-4. **Durcissement** — Makefile containerisé, `make check` **vert** (preuve avant affirmation).
+0. **Design d'architecture** (§6.0) — **avant tout code** : choix de la source (**API-first**),
+   single vs multi-target, découpe en collectors, budget de cardinalité. context7 sur l'API
+   cible. Sortie : saveur d'I/O + liste de collectors.
+1. **context7 d'abord** — conventions Prometheus à jour (naming/types/labels).
+2. **Scaffold** — `/new-prometheus-exporter <name>` (saveur + licence choisies).
+3. **Boucle par collector** — `/add-collector <name>` : fetch/Data → Parse → **triade de
+   tests** → Collect. Jamais de métrique partielle sur erreur.
+4. **Durcissement** — Makefile container-first, `make check` **vert** (preuve avant
+   affirmation).
 5. **Release/CI + docs** — workflows + GoReleaser + Definition of Done ; docs en lockstep.
-6. **Audit** (§9.6) — dispatch parallèle : `exporter-reviewer` (toujours) + `/code-review` +
+6. **Audit** — dispatch parallèle : `exporter-reviewer` (toujours) + `/code-review` +
    `pr-review-toolkit` **si présents** (optionnels, jamais requis).
 
 ---
 
 ## 10. Critères de succès
 
-- `/new-prometheus-exporter foo` produit un dépôt qui **build** (`make build`) et passe
-  **`make check`** avec ≥ 1 collector d'exemple + triade de tests verte.
+- `/new-prometheus-exporter foo` produit, **pour la saveur HTTP (défaut)**, un dépôt qui
+  **build** (`make build`) et passe **`make check`** avec ≥ 1 collector d'exemple + triade de
+  tests verte. Idem au moins pour la saveur `cli` en v0.1.
+- `/add-collector bar` ajoute un collector + sa triade et `make test` reste vert.
+- La phase 0 (design d'archi) est présente et **API-first** ; la licence est **choisie**
+  (défaut Apache-2.0).
 - Le skill référence explicitement la doc Prometheus officielle (context7) et sépare [G]/[S].
-- Les 8 fichiers de référence couvrent l'intégralité de l'anatomie de maturité inventoriée.
+- Les 9 fichiers de référence couvrent l'anatomie de maturité + la phase archi.
+- `scaffold.sh` n'a **aucune dépendance runtime** hors `sh`/`sed` ; substitution `@@VAR@@`
+  vérifiable (aucun `@@…@@` résiduel dans un repo généré).
 - `exporter-reviewer` produit un rapport actionnable (gaps Definition of Done / conventions).
 - `claude plugin validate .` passe ; le plugin est chargeable via `--plugin-dir`.
 - **Auto-portance** : le plugin ne dépend d'aucun `CLAUDE.md`/profil personnel ; les principes
@@ -376,17 +475,33 @@ Déclencheurs : « créer / scaffolder / durcir / auditer un exporter Prometheus
 
 ## 11. Risques / points ouverts
 
-1. **Reviewer** (§8.2) : **résolu** — `exporter-reviewer` auto-suffisant, ne rappelle pas les
-   autres ; dispatch parallèle par le SKILL, reviewers génériques optionnels. (Recommandation
-   analysée et retenue.)
-2. **Fidélité + correction des templates** : les assets sont dérivés des fichiers **réels** de
-   `slurm_exporter` (copie + généralisation [G]), pas réécrits de mémoire — sinon dérive.
-   **Principe : le plugin distille ET corrige la source ; il ne la recopie pas aveuglément.**
-   Là où la source a des incohérences connues (ex : Makefile container-first à moitié, versions
-   périmées — cf. §6.4), le template applique la version corrigée. Le CLAUDE.md du plugin
-   encode la procédure de re-sync **et** la liste des écarts volontaires vs la source.
-3. **Nommage d'invocation** de la commande (`/prometheus-exporter:new-prometheus-exporter` vs
-   forme courte) — détail mineur, tranché à l'implémentation.
-4. **Maintenance** : le plugin fige un instantané des bonnes pratiques ; note de re-sync
-   obligatoire dans README + CLAUDE.md du plugin.
-5. **Frontière principes universels/personnels** (§7bis) : **confirmée**.
+### Décisions résolues (relecture)
+- **Axe 1 — frontière I/O** : **progressif, API-first**. Principe « frontière mockable », 3
+  saveurs (HTTP défaut / DB / CLI), choisies à la **phase archi** (§6.0), matérialisées par
+  répertoire (§5bis). v0.1 : HTTP + CLI ; DB en v0.2.
+- **Axe 2 — templating** : **`@@VAR@@` + `scaffold.sh` (sh/sed), sans moteur** (§5bis, via
+  context7).
+- **Axe 6 — add-collector** : **`/add-collector` dès v0.1** (§8.2).
+- **Licence** : variable `@@LICENSE@@`, **choix proposé** au scaffold, défaut **Apache-2.0**
+  (norme Prometheus/node_exporter) (§8.1).
+- **Reviewer** (§8.3) : auto-suffisant, dispatch parallèle, reviewers génériques optionnels.
+- **Frontière universel/personnel** (§7bis) : confirmée.
+
+### Améliorations intégrées au plan (fold)
+- **CI du plugin + golden smoke test** : la CI du dépôt plugin lance `claude plugin validate`,
+  le **grep zéro-source**, et un **scaffold jetable → `make build` + `make check`** (par saveur)
+  pour garantir que les templates produisent un repo valide (anti bit-rot).
+- **`docs/design/re-sync.md`** (exclu du grep) : porte la correspondance concrète
+  source→template + la procédure ; le CLAUDE.md racine y renvoie **génériquement**.
+- **Divers** : refus d'écrasement (§8.1), pointeur alloc. de ports Prometheus officielle,
+  `.gitignore` du repo plugin, principe « la référence explique le POURQUOI, le template EST
+  l'artefact » (anti-dérive doc/template).
+
+### Risques restants
+- **Nommage d'invocation** (`/prometheus-exporter:new-prometheus-exporter` vs forme courte) —
+  détail mineur, tranché à l'implémentation.
+- **Fidélité + correction des templates** : dérivés des fichiers **réels** de la source (copie +
+  généralisation [G]), pas de mémoire ; **le plugin distille ET corrige** (Makefile, versions —
+  §6.4). Re-sync + écarts volontaires documentés dans `docs/design/re-sync.md`.
+- **Volume v0.1** : 2 saveurs (HTTP+CLI) × triade × golden test = périmètre MVP conséquent ;
+  la ROADMAP séquence pour livrer HTTP d'abord, CLI ensuite, DB en v0.2.
