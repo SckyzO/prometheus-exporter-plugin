@@ -140,9 +140,10 @@ le repo `slurm_exporter`.**
 ## 4. Structure du plugin
 
 ```
-prometheus-exporter-plugin/               # racine du dépôt (git)
+prometheus-exporter-plugin/               # racine du dépôt (git) — EST sa propre marketplace
   .claude-plugin/
     plugin.json                           # manifeste : name, version, description, author, license, keywords
+    marketplace.json                      # self-marketplace : liste ce plugin (source = ce repo) → install par des tiers
   CLAUDE.md                               # règles de contribution AU PLUGIN (voir §7)
   README.md                               # présentation, install, dev loop (SANS mention de source — §2)
   ROADMAP.md                              # jalons (v0.1 MVP → v1.0)
@@ -430,7 +431,18 @@ Fichiers à écrire pour le dépôt du plugin lui-même :
   design-led, variantes cache/background, multi-target avancé) → **v1.0** (marketplace + doc
   complète).
 - **TODO.md** — backlog opérationnel dérivé du plan d'implémentation.
-- **README.md**, **CHANGELOG.md**, **LICENSE**.
+- **README.md** — présentation + positionnement (premier plugin de *création* d'exporters) +
+  dev loop **et** une section **« Distribution & install »** concrète :
+  - `/plugin marketplace add <owner/repo>` puis `/plugin install prometheus-exporter@<mkt>` ;
+  update / désinstall ; **épinglage de version** via tag git `v*` ;
+  - **partage équipe** : déclarer la marketplace + activer le plugin dans un `settings.json`
+  partagé (auto-install) ;
+  - **note de confiance** : installer un plugin exécute du code (provenance / tags).
+- **CHANGELOG.md**, **LICENSE**.
+
+**Dogfooding (cohérence).** Le dépôt du plugin applique lui-même sa propre prédication :
+**tags git `v*` + CHANGELOG + CI** (validate + golden test) — release host-agnostic (§2). Les
+utilisateurs épinglent une version via le tag.
 
 ---
 
@@ -599,6 +611,9 @@ Déclencheurs : « créer / scaffolder / durcir / auditer un exporter Prometheus
   docs non menteuses et `monitoring/` cohérent (anti bit-rot).
 - **`docs/design/re-sync.md`** (exclu du grep) : porte la correspondance concrète
   source→template + la procédure ; le CLAUDE.md racine y renvoie **génériquement**.
+- **Distribution opérationnelle** : `marketplace.json` self-hébergé (le dépôt EST sa
+  marketplace), section README « install » (`/plugin marketplace add` + `/plugin install`),
+  versioning du plugin par tags `v*` (dogfooding), partage équipe via `settings.json`.
 - **Divers** : refus d'écrasement (§8.1), pointeur alloc. de ports Prometheus officielle,
   `.gitignore` du repo plugin, principe « la référence explique le POURQUOI, le template EST
   l'artefact » (anti-dérive doc/template).
