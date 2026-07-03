@@ -16,7 +16,7 @@ Every task's requirements implicitly include this section. Values are verbatim f
 
 - **Reference exporter (derivation source, never shipped, never named in artifacts):** `~/Dev/work/apps_repo/exporters/slurm_exporter/slurm_exporter/`. Read the real files; do **not** reproduce templates from memory (spec §11).
 - **HARD — no source leakage (two scoped checks, maintainer decision 2026-07-03):**
-  - **SLURM-GREP:** `grep -rin slurm . | grep -v '/docs/'` must return **0** — the source exporter is never named in any shipped file. `docs/design/` + `docs/plans/` are creation-history (this plan lives there) and are the only places it may appear.
+  - **SLURM-GREP:** `grep -rin slurm . --exclude-dir=docs --exclude-dir=.git --exclude-dir=.superpowers --exclude-dir=_work` must return **0** — the source exporter is never named in any shipped file. `docs/design/` + `docs/plans/` are creation-history (this plan lives there) and are the only places it may appear. (Use `--exclude-dir=docs`, NOT `| grep -v '/docs/'` — GNU grep emits bare `docs/…` paths without a leading slash, so the pipe filter silently fails. Also: RTK may wrap `grep` unreliably in this env — use `command grep` if results look wrong.)
   - **HANDLE-GREP:** `grep -rin sckyzo skills/ commands/ agents/` must return **0** — the maintainer handle never appears in the taught knowledge, templates, commands, or agents. The plugin's *own* identity/distribution files (`.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, root `LICENSE`, root `README.md`, root `CLAUDE.md`) legitimately carry `SckyzO` as declared author/owner and are **exempt** from HANDLE-GREP. Scaffold templates under `assets/` still use `@@OWNER@@`, never a real handle.
 - **Auto-portance:** the plugin depends on **no** personal `CLAUDE.md`/profile. OSS engineering principles are extracted and de-personalized inside the plugin (spec §7bis).
 - **Templating:** delimiter `@@VAR@@`. Substitution by `scaffold.sh` (`sh`+`sed` only) — **zero runtime dependency** beyond sh/sed. No brace template engine (collides with GoReleaser `{{ }}`, Actions `${{ }}`, Docker `${ }`). Flavor = directory selection, **no in-file conditionals**. A generated repo must contain **no residual `@@…@@`**.
@@ -666,7 +666,7 @@ Run: `sh test/golden-smoke.sh --all`
 Expected: every matrix cell PASS; grep clean; lie-injection behaves; skips (if any) logged.
 - [ ] **Step 4: Repo-wide zero-source gate (two scoped checks)**
 
-Run SLURM-GREP: `grep -rin slurm . | grep -v '/docs/' | grep -v '/test/_work/'` → Expected: empty.
+Run SLURM-GREP: `grep -rin slurm . --exclude-dir=docs --exclude-dir=.git --exclude-dir=.superpowers --exclude-dir=_work` → Expected: empty.
 Run HANDLE-GREP: `grep -rin sckyzo skills/ commands/ agents/` → Expected: empty. (Manifest/LICENSE/README/CLAUDE.md root exempt — see Global Constraints.)
 - [ ] **Step 5: Commit** `test(ci): add full golden matrix and plugin CI (validate + zero-source grep + golden)`.
 
@@ -691,7 +691,7 @@ git tag v0.1.0
 - [ ] **Step 5: Final validate + grep**
 
 Run: `claude plugin validate .` → Expected: PASS.
-Run SLURM-GREP: `grep -rin slurm . | grep -v '/docs/' | grep -v '/test/_work/'` → Expected: empty.
+Run SLURM-GREP: `grep -rin slurm . --exclude-dir=docs --exclude-dir=.git --exclude-dir=.superpowers --exclude-dir=_work` → Expected: empty.
 Run HANDLE-GREP: `grep -rin sckyzo skills/ commands/ agents/` → Expected: empty.
 
 ---
