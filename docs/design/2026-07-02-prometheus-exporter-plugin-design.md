@@ -109,7 +109,7 @@ prometheus-exporter-plugin/               # racine du dépôt (git)
   .claude-plugin/
     plugin.json                           # manifeste : name, version, description, author, license, keywords
   CLAUDE.md                               # règles de contribution AU PLUGIN (voir §7)
-  README.md                               # présentation, install, dev loop, re-sync depuis slurm_exporter
+  README.md                               # présentation, install, dev loop (SANS mention de source — §2)
   ROADMAP.md                              # jalons (v0.1 MVP → v1.0)
   TODO.md                                 # backlog opérationnel
   CHANGELOG.md                            # Keep-a-Changelog
@@ -310,7 +310,7 @@ le plugin ; les préférences propres au mainteneur restent dehors. Le plugin ne
 garde uniquement « anglais pour le public ») ; livrables `.md` téléchargeables/jamais inline ;
 système de mémoire perso ; chemins/identité du mainteneur.
 
-*(Frontière à confirmer par le mainteneur — voir §11.)*
+*(Frontière **confirmée** par le mainteneur.)*
 
 ---
 
@@ -389,5 +389,4 @@ Déclencheurs : « créer / scaffolder / durcir / auditer un exporter Prometheus
    forme courte) — détail mineur, tranché à l'implémentation.
 4. **Maintenance** : le plugin fige un instantané des bonnes pratiques ; note de re-sync
    obligatoire dans README + CLAUDE.md du plugin.
-5. **Frontière principes universels/personnels** (§7bis) : découpage extract-de-personnalisé
-   retenu au jugé — **à confirmer** (déplacer des lignes include/exclude si besoin).
+5. **Frontière principes universels/personnels** (§7bis) : **confirmée**.
