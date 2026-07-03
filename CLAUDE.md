@@ -71,11 +71,17 @@ actually been run and shown green.
 ## Zero-source-mention rule
 
 No shipped file, including this one, may name the production reference
-exporter this plugin's knowledge was distilled from, or any maintainer
-handle. Before every commit, search the tree for both of those strings,
-excluding `docs/`, and confirm there is no output. `docs/` is the only
-exemption: it holds the design and planning history of how the plugin came
-to be, and nothing under it is ever loaded by the plugin at runtime.
+exporter this plugin's knowledge was distilled from, or carry that
+exporter's maintainer handle into the taught knowledge under `skills/`,
+`commands/`, or `agents/` — this repository's own credited maintainer,
+named above, is a separate concern and not what this restricts. Before
+every commit, search the tree (excluding `docs/`) for the exporter's
+name, and search `skills/`, `commands/`, and `agents/` for its
+maintainer handle; see `docs/design/re-sync.md` for the concrete
+strings and mapping, and confirm both searches return no output.
+`docs/` is the only exemption from the first search: it holds the
+design and planning history of how the plugin came to be, and nothing
+under it is ever loaded by the plugin at runtime.
 
 ## Re-sync rule
 
