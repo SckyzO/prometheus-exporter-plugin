@@ -70,18 +70,26 @@ actually been run and shown green.
 
 ## Zero-source-mention rule
 
-No shipped file, including this one, may name the production reference
-exporter this plugin's knowledge was distilled from, or carry that
-exporter's maintainer handle into the taught knowledge under `skills/`,
-`commands/`, or `agents/` — this repository's own credited maintainer,
-named above, is a separate concern and not what this restricts. Before
-every commit, search the tree (excluding `docs/`) for the exporter's
-name, and search `skills/`, `commands/`, and `agents/` for its
-maintainer handle; see `docs/design/re-sync.md` for the concrete
-strings and mapping, and confirm both searches return no output.
-`docs/` is the only exemption from the first search: it holds the
-design and planning history of how the plugin came to be, and nothing
-under it is ever loaded by the plugin at runtime.
+The taught knowledge and templates stand on official Prometheus authority
+(`prometheus.io`), never on "distilled from <a specific project>". So no
+shipped file, including this one, may name the production reference exporter
+this plugin's patterns were derived from. Before every commit, search the
+tree (excluding `docs/`) for that exporter's name and confirm it returns no
+output — this is a hard gate. `docs/` is the only exemption: it holds the
+design and planning history of how the plugin came to be, and nothing under
+it is ever loaded by the plugin at runtime.
+
+Scaffold templates always attribute the generated exporter to `@@OWNER@@` —
+its own creator, the third party who runs `/new-prometheus-exporter` — never
+a hardcoded real handle. That is why a real maintainer handle never appears
+under `assets/`.
+
+As a light hygiene check (not a hard gate), the maintainer's handle should
+also stay absent from `skills/`, `commands/`, and `agents/`: generic
+knowledge has no reason to credit anyone. This repository's own credited
+maintainer, named above, is a separate concern — it legitimately appears in
+this file, the manifest, LICENSE, and README. See `docs/design/re-sync.md`
+for the concrete strings and mapping.
 
 ## Re-sync rule
 
