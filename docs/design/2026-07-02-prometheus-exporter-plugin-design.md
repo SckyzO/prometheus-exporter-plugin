@@ -50,6 +50,16 @@ ce contexte ; en dépendre = couplage caché. Les principes d'ingénierie OSS su
 plugin s'appuie sont donc **extraits et de-personnalisés** dans le plugin lui-même (voir §7bis),
 en distinguant *principe universel* (encodé) de *préférence personnelle* (exclue).
 
+**Principe container-first (important).** Tout l'outillage de dev — build, test, race, lint,
+vuln, sécurité, report — s'exécute **dans un conteneur** (image `*-tools` à versions d'outils
+**pinnées**), jamais sur des outils hôte par défaut. Bénéfice : reproductibilité + dernières
+versions des binaires sans casser l'hôte. Deux exigences complémentaires :
+1. **Multi-moteur** : détection auto `docker` **ou** `podman` (`CONTAINER_ENGINE ?=`).
+2. **Fallback natif** : si aucun moteur n'est détecté, exécution sur outils hôte avec
+   **avertissement** « versions non pinnées » + escape hatch `NATIVE=1`. Indispensable car
+   chaque exporter généré hérite de ce Makefile → ses contributeurs tiers doivent pouvoir
+   travailler sans conteneur.
+
 ---
 
 ## 3. Nature & emballage (décidé)
@@ -185,10 +195,27 @@ pour opt-in), **StatusTracker** wrapping (anti-descs-dupliqués + `recover()` pa
 `Start(ctx)`/`Done()`, drain 5s).
 
 ### 6.4 `makefile-and-tooling.md` [G]
-**Toolchain 100% containerisée (Docker only)**. Targets : `build`, `test`, `race`, `vet`,
-`lint`, `vuln`, `actionlint`, `zizmor`, `secrets`, `osv`, `deadcode`, **`check`** (gate =
-miroir CI), **`report`** (goreportcard offline, échec < B), **`report-deps`**, `docker-build*`,
-`docker-run*`, `clean`. `.golangci.yml` v2 (default none + enable explicite).
+**Toolchain container-first** (§2). Image `*-tools` à versions pinnées, `IN_TOOLS =
+$(CONTAINER_ENGINE) run --rm -v $(CURDIR):/repo -w /repo $(TOOLS_IMG)`.
+- **Détection moteur** : `CONTAINER_ENGINE ?=` auto (docker → podman → aucun).
+- **Fallback natif** : moteur absent ⇒ `IN_TOOLS` vide (exécution hôte) + bandeau
+  d'avertissement « versions non pinnées » ; escape hatch `NATIVE=1 make <target>`.
+Targets : `build`, `test`, `race`, `vet`, `lint`, `vuln`, `actionlint`, `zizmor`, `secrets`,
+`osv`, `deadcode`, **`check`** (gate = miroir CI), **`report`** (goreportcard offline, échec
+< B), **`report-deps`**, `docker-build*`, `docker-run*`, `clean`. `.golangci.yml` v2 (default
+none + enable explicite). Le fallback natif est documenté dans `development.md`/README de
+l'exporter généré.
+
+**Corrections vs le Makefile source de `slurm_exporter`** (le template est la version
+*corrigée*, cf. §11.2) :
+1. **`build` containerisé** aussi (l'original le laisse sur le Go hôte, ce qui rend faux le
+   claim « docker only ») → la promesse container-first devient vraie.
+2. **Suppression du target `setup`** (install de Go hôte via `wget|tar`) : contredit
+   container-first, passif de maintenance/sécu, doublon avec l'image tools.
+3. **Une seule source de version Go** = le Dockerfile de l'image tools (pas de `GO_VERSION`
+   hôte périmé en parallèle).
+4. **Overlap `lint`/`report` documenté** (gofmt/vet/ineffassign/misspell couverts par
+   golangci-lint *et* goreport — buts distincts : gate vs note/grade).
 
 ### 6.5 `cicd-and-release.md` [G]
 Workflows (actions **pinnées SHA**, least-privilege) : `ci`, `release` (GoReleaser+cosign+syft),
@@ -290,10 +317,16 @@ Rôle : audit **spécifique exporter** — Definition of Done respectée, conven
 (naming/types/labels), séparation [G]/[S], cardinalité maîtrisée (flags présents), **triade de
 tests présente pour chaque collector**, self-instrumentation câblée, docs en lockstep avec
 `/metrics`.
-**Nuance d'imbrication (à valider) :** un subagent de plugin n'imbrique pas facilement
-d'autres subagents/commandes. Design retenu : `exporter-reviewer` couvre **uniquement** le
-delta exporter-spécifique et le **workflow le lance en parallèle** de `/code-review` +
-`pr-review-toolkit` (revue générique). Le SKILL/command documente ce lancement parallèle.
+**Design retenu (analysé — recommandé).** `exporter-reviewer` est **auto-suffisant** et
+**n'appelle pas** les autres reviewers (deux raisons : un subagent de plugin n'imbrique pas de
+façon fiable subagents/commandes ; et `/code-review`/`pr-review-toolkit` sont des outils
+externes au plugin → dépendre d'eux violerait l'auto-portance). Il couvre **uniquement** le
+delta exporter (Definition of Done, naming/types/labels Prometheus, [G]/[S], cardinalité,
+triade de tests par collector, self-instrumentation, pas de secret en métrique, docs en
+lockstep). Son prompt affirme explicitement qu'il **ne duplique pas** la revue générique.
+C'est **l'étape d'audit du SKILL** (§9.6) qui dispatche en parallèle : `exporter-reviewer`
+(toujours dispo) + — **si présents** — `/code-review` et `pr-review-toolkit` (enhancement
+optionnel, jamais une dépendance).
 Frontmatter : `name`, `description`, `tools` restreints (lecture + Bash pour `make check`),
 `model`.
 
@@ -308,7 +341,8 @@ Déclencheurs : « créer / scaffolder / durcir / auditer un exporter Prometheus
    partielle sur erreur.
 4. **Durcissement** — Makefile containerisé, `make check` **vert** (preuve avant affirmation).
 5. **Release/CI + docs** — workflows + GoReleaser + Definition of Done ; docs en lockstep.
-6. **Audit** — `exporter-reviewer` en parallèle de `/code-review` + `pr-review-toolkit`.
+6. **Audit** (§9.6) — dispatch parallèle : `exporter-reviewer` (toujours) + `/code-review` +
+   `pr-review-toolkit` **si présents** (optionnels, jamais requis).
 
 ---
 
@@ -328,11 +362,15 @@ Déclencheurs : « créer / scaffolder / durcir / auditer un exporter Prometheus
 
 ## 11. Risques / points ouverts
 
-1. **Nuance reviewer** (§8.2) : audit exporter-spécifique + lancement parallèle des reviewers
-   génériques (plutôt qu'imbrication) — **à valider**.
-2. **Fidélité des templates** : les assets doivent être dérivés des fichiers **réels** de
+1. **Reviewer** (§8.2) : **résolu** — `exporter-reviewer` auto-suffisant, ne rappelle pas les
+   autres ; dispatch parallèle par le SKILL, reviewers génériques optionnels. (Recommandation
+   analysée et retenue.)
+2. **Fidélité + correction des templates** : les assets sont dérivés des fichiers **réels** de
    `slurm_exporter` (copie + généralisation [G]), pas réécrits de mémoire — sinon dérive.
-   Le CLAUDE.md du plugin encode la procédure de re-sync.
+   **Principe : le plugin distille ET corrige la source ; il ne la recopie pas aveuglément.**
+   Là où la source a des incohérences connues (ex : Makefile container-first à moitié, versions
+   périmées — cf. §6.4), le template applique la version corrigée. Le CLAUDE.md du plugin
+   encode la procédure de re-sync **et** la liste des écarts volontaires vs la source.
 3. **Nommage d'invocation** de la commande (`/prometheus-exporter:new-prometheus-exporter` vs
    forme courte) — détail mineur, tranché à l'implémentation.
 4. **Maintenance** : le plugin fige un instantané des bonnes pratiques ; note de re-sync
