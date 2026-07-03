@@ -6,9 +6,12 @@
 # the GitHub-only layer, substitutes every @@KEY@@ sentinel in file contents and
 # path components, strips the .tmpl suffix, and places the chosen LICENSE.
 #
-# POSIX sh + sed + grep only. No runtime dependency beyond core Unix utilities
-# (cp, mv, rm, mkdir, find, tr) that ship on any Unix-like system. Do not add a
-# dependency on bash, Python, Go, or any template engine here — see
+# POSIX sh + sed + grep, plus the common core Unix utilities cp, mv, rm,
+# rmdir, mkdir, find, tr, wc, basename, and mktemp. All ship on any Unix-like
+# system in practice, but note mktemp specifically is NOT in the POSIX base
+# spec (no --dry-run substitute exists in base sh) — this script is "POSIX sh
+# scripting style", not "zero-dependency beyond POSIX base utilities". Do not
+# add a dependency on bash, Python, Go, or any template engine here — see
 # docs/design/2026-07-02-prometheus-exporter-plugin-design.md §5bis.
 #
 # Usage:
@@ -102,10 +105,16 @@ while [ $# -gt 0 ]; do
       esac
       key=${kv%%=*}
       value=${kv#*=}
+      # Validate the WHOLE key, not just its first character: this string is
+      # spliced verbatim into a sed script line as `s/@@KEY@@/.../g'`, so a
+      # stray `/` (or any other sed-delimiter/metacharacter) anywhere in the
+      # key corrupts that generated sed command.
       case "$key" in
-        [A-Z_]*) ;;
-        *) die "invalid --var key '$key', expected an uppercase identifier" ;;
+        ''|[!A-Z_]*|*[!A-Z0-9_]*) die "invalid --var key '$key', expected an uppercase identifier (A-Z, 0-9, _ only)" ;;
       esac
+      if [ "$(printf '%s' "$value" | wc -l)" -ne 0 ]; then
+        die "invalid --var value for key '$key': embedded newline not allowed"
+      fi
       escaped=$(sed_escape_repl "$value")
       printf 's/@@%s@@/%s/g\n' "$key" "$escaped" >> "$sedscript"
       if [ "$key" = LICENSE ]; then
@@ -132,6 +141,20 @@ done
 case "$forge" in
   github|none) ;;
   *) die "invalid --forge '$forge', expected 'github' or 'none'" ;;
+esac
+
+# Reject any --flavor that is not a single path component. Below, $flavor is
+# spliced verbatim into real filesystem paths against both $src and $dst
+# (code/$flavor). Validating it only by "does this path exist" (as opposed to
+# by shape) lets a value like '../../x' walk out of the intended code/
+# subtree entirely: if some sibling directory happens to exist at that
+# resolved location, the flavor gets accepted as "valid", and the later
+# flatten step then mv's that directory's contents into $dst/code/ and
+# rmdir's it afterward — i.e. arbitrary-directory exfiltration into the
+# generated output plus arbitrary-directory deletion, both outside the
+# --dst sandbox. A single path component can never do that.
+case "$flavor" in
+  ''|*/*|*..*) die "invalid --flavor: must be a single path component" ;;
 esac
 
 if [ -d "$src/code" ] && [ ! -d "$src/code/$flavor" ]; then
@@ -232,21 +255,44 @@ done < "$pathlist"
 
 # Place the chosen LICENSE, then discard the unused alternatives — the
 # licenses/ menu is scaffold-only content and never ships in the generated
-# repo, whether or not a license was actually selected.
+# repo, whether or not a license was actually selected. A LICENSE var that
+# doesn't match any available file (typo, e.g. "Apache2.0") must fail loudly:
+# silently skipping the mv and then unconditionally rm -rf'ing licenses/
+# anyway would ship the generated repo with NO license file and no error.
 if [ -d "$dst/licenses" ]; then
   if [ -n "$license_choice" ]; then
     lower=$(printf '%s' "$license_choice" | tr '[:upper:]' '[:lower:]')
     if [ -f "$dst/licenses/LICENSE-$lower.txt" ]; then
       mv "$dst/licenses/LICENSE-$lower.txt" "$dst/LICENSE"
+    else
+      avail=""
+      for f in "$dst"/licenses/LICENSE-*.txt; do
+        [ -f "$f" ] || continue
+        b=${f##*/}
+        b=${b#LICENSE-}
+        b=${b%.txt}
+        avail="$avail $b"
+      done
+      die "unknown --var LICENSE='$license_choice'; available:$avail"
     fi
   fi
   rm -rf "$dst/licenses"
 fi
 
-# Fail loudly if any @@VAR@@ sentinel survives substitution.
-if grep -rn '@@[A-Z_]*@@' "$dst"; then
-  echo "$prog: error: residual @@VAR@@ sentinel(s) left in $dst" >&2
-  exit 3
-fi
+# Fail loudly if any @@VAR@@ sentinel survives substitution. grep's exit
+# status is 0 (match found), 1 (no match, clean), or 2+ (the scan itself
+# failed, e.g. a read error) — treating "not 0" as a blanket "clean" (as a
+# plain `if grep ...; then` does) silently turns a failed scan into a false
+# success. Capture the real code and branch on all three cases explicitly.
+grep_rc=0
+grep -rn '@@[A-Z_]*@@' "$dst" || grep_rc=$?
+case "$grep_rc" in
+  0)
+    echo "$prog: error: residual @@VAR@@ sentinel(s) left in $dst" >&2
+    exit 3
+    ;;
+  1) ;;
+  *) die "residual-sentinel scan of $dst failed (grep exit $grep_rc)" ;;
+esac
 
 echo "scaffolded $dst"
