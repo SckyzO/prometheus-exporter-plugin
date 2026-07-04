@@ -109,3 +109,18 @@ To try the containerized image instead of the bare binary:
 make docker-build
 make docker-run    # starts the compose stack; override DOCKER_IMAGE=/DOCKER_TAG= for a different image/tag
 ```
+
+A minimal, distroless variant is also available (`Dockerfile.minimal` /
+`docker-compose.minimal.yml`, ~15MB, always non-root, no shell, no package manager) — useful
+for confirming the exporter also runs on the hardened image, or for iterating with the
+smallest practical attack surface:
+
+```bash
+make docker-build-minimal
+make docker-run-minimal    # starts docker-compose.minimal.yml
+```
+
+Its compose `container_name` has a `-minimal` suffix (distinct from the standard stack's), so
+the two can run together — but both default to the same host port (`@@DEFAULT_PORT@@`). To
+run them at the same time, set `HOST_PORT` before starting the second one:
+`HOST_PORT=<free-port> make docker-run-minimal`.

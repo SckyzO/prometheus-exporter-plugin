@@ -5,6 +5,14 @@
 # that: no shell, no package manager, and it always runs as the distroless
 # nonroot user regardless of anything set here.
 #
+# container_name below has a "-minimal" suffix so this stack never collides
+# with docker-compose.yml's — the two CAN run at the same time. They still
+# default to the SAME host port (@@DEFAULT_PORT@@) though, so to run this
+# ALONGSIDE the standard stack (e.g. `make docker-run` followed by
+# `make docker-run-minimal`), give this one a free port first:
+#
+#   HOST_PORT=<free-port> make docker-run-minimal
+#
 # Environment overrides:
 #
 #   IMAGE       image to run                   default: @@EXPORTER_NAME@@:dev-minimal
@@ -13,7 +21,7 @@
 services:
   @@EXPORTER_NAME@@:
     image: ${IMAGE:-@@EXPORTER_NAME@@:dev-minimal}
-    container_name: @@EXPORTER_NAME@@
+    container_name: @@EXPORTER_NAME@@-minimal
     restart: unless-stopped
     ports:
       - "${HOST_PORT:-@@DEFAULT_PORT@@}:@@DEFAULT_PORT@@"

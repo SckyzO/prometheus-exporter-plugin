@@ -8,6 +8,10 @@
 # build and test this exporter: there is no separate GO_VERSION in the
 # Makefile. Bump the base image tag below to change it.
 #
+# Reciprocal note: Dockerfile and Dockerfile.minimal (repo root) pin this
+# exact same golang:*-alpine tag/digest in their own build stage — bump
+# those two along with this one, or the three will silently drift apart.
+#
 # Built locally on first use via `make tools-image` (a prerequisite of every
 # other tooling target); rebuilds are incremental thanks to the layer cache.
 
