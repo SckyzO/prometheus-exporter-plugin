@@ -20,9 +20,11 @@ fail() { echo "FAIL: $1" >&2; exit 1; }
 [ -f "$work/out/cmd/redis_exporter/main.go" ] || fail "path @@EXPORTER_NAME@@ not renamed"
 # content substitution applied
 grep -q 'namespace = "redis"' "$work/out/cmd/redis_exporter/main.go" || fail "@@NAMESPACE@@ not substituted"
-# flavor selection: http kept, cli dropped
-[ -f "$work/out/code/client.go" ] || fail "http flavor file missing"
-[ ! -d "$work/out/code/cli" ] || fail "cli flavor dir should be dropped"
+# flavor selection: http moved into internal/collector/, code/ staging removed entirely (cli along with it)
+[ -f "$work/out/internal/collector/client.go" ] || fail "http flavor file missing from internal/collector/"
+[ ! -d "$work/out/code" ] || fail "code/ staging tree should be removed after flavor selection"
+# common file at its final (root) path survives flavor selection untouched
+[ -f "$work/out/keep.txt" ] || fail "common file at final path missing"
 # forge none: github dir dropped
 [ ! -d "$work/out/github" ] || fail "forge=none should drop github/"
 # no residual sentinels anywhere

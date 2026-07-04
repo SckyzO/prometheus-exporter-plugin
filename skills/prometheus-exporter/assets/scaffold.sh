@@ -20,18 +20,28 @@
 #               [--force] [--var KEY=VALUE ...]
 #
 # Behavior:
-#   - Copies --src to --dst.
-#   - Keeps code/common/ and code/<flavor>/, drops other code/<x>/ dirs, then
-#     flattens code/<flavor>/* up into code/ (the real cmd/ + internal/collector/
-#     destination mapping is layered on top of this in a later scaffold.sh
-#     revision, once the real asset tree exists — this generic flatten rule is
-#     the stable contract other tasks build on).
+#   - Copies --src to --dst, then strips the copy's own scaffold.sh (plugin
+#     tooling, not part of any generated exporter's repo).
+#   - Moves code/<flavor>/* into internal/collector/, then removes the whole
+#     code/ staging tree (every non-selected flavor along with it). code/ in
+#     the source tree is scaffold-only staging for the ONE thing that can't
+#     sit at its final repo-relative path directly: multiple flavors (http/,
+#     cli/, ...) all resolve to the same destination, internal/collector/, so
+#     the source tree needs a directory per flavor to choose between before
+#     any of them reaches it. Common templates need no such staging — they
+#     already sit at their final repo-relative path under assets/ (e.g.
+#     go.mod.tmpl, cmd/<name>/main.go.tmpl, internal/logger/logger.go.tmpl)
+#     and are copied straight through by the cp -R above.
 #   - When --forge none, drops release/github/ and top-level github/.
 #   - Substitutes every @@KEY@@ (content and path components) for each --var.
 #   - Strips the .tmpl suffix from file names.
 #   - Places the licenses/LICENSE-<license, lowercased>.txt as LICENSE, then
 #     discards the unused alternatives.
-#   - Fails loudly (exit 3) if any @@...@@ sentinel survives.
+#   - Fails loudly (exit 3) if any @@...@@ sentinel survives, EXCEPT the two
+#     named structural markers in main.go (@@CLIENT_INIT@@,
+#     @@COLLECTOR_REGISTRY@@), which are intentionally left as literal
+#     comments for a later flavor-specific scaffold.sh step to replace — they
+#     are not --var data placeholders, so their survival here is expected.
 #   - Refuses a non-empty --dst unless --force.
 set -eu
 
@@ -61,7 +71,8 @@ license_choice=""
 # report for why this matters).
 sedscript=$(mktemp)
 pathlist=$(mktemp)
-trap 'rm -f "$sedscript" "$pathlist"' EXIT
+sentinels=$(mktemp)
+trap 'rm -f "$sedscript" "$pathlist" "$sentinels"' EXIT
 
 # Escape a literal string for safe use as the REPLACEMENT side of a sed
 # s/// command: backslash must be doubled first, then / (our delimiter) and
@@ -149,10 +160,10 @@ esac
 # by shape) lets a value like '../../x' walk out of the intended code/
 # subtree entirely: if some sibling directory happens to exist at that
 # resolved location, the flavor gets accepted as "valid", and the later
-# flatten step then mv's that directory's contents into $dst/code/ and
-# rmdir's it afterward — i.e. arbitrary-directory exfiltration into the
-# generated output plus arbitrary-directory deletion, both outside the
-# --dst sandbox. A single path component can never do that.
+# move step then mv's that directory's contents into $dst/internal/collector/
+# and rm -rf's the code/ tree afterward — i.e. arbitrary-directory
+# exfiltration into the generated output plus arbitrary-directory deletion,
+# both outside the --dst sandbox. A single path component can never do that.
 case "$flavor" in
   ''|.|*/*|*..*) die "invalid --flavor: must be a single path component" ;;
 esac
@@ -161,9 +172,7 @@ if [ -d "$src/code" ] && [ ! -d "$src/code/$flavor" ]; then
   avail=""
   for d in "$src"/code/*/; do
     [ -d "$d" ] || continue
-    n=$(basename "$d")
-    [ "$n" = common ] && continue
-    avail="$avail $n"
+    avail="$avail $(basename "$d")"
   done
   die "unknown --flavor '$flavor'; available:$avail"
 fi
@@ -190,34 +199,34 @@ mkdir -p "$dst"
 # Copy the template tree verbatim.
 cp -R "$src/." "$dst/"
 
-# Flavor selection: keep code/common/ and code/<flavor>/, drop the rest.
-if [ -d "$dst/code" ]; then
-  for d in "$dst"/code/*/; do
-    [ -d "$d" ] || continue
-    name=$(basename "$d")
-    case "$name" in
-      common|"$flavor") ;;
-      *) rm -rf "$d" ;;
-    esac
+# scaffold.sh itself ships alongside the templates under --src (so it can be
+# invoked as skills/prometheus-exporter/assets/scaffold.sh) but is a
+# plugin-tooling file, not part of any generated exporter's repo — strip the
+# copy the cp -R above just made. rm -f on a path that doesn't exist (e.g. a
+# test fixture --src with no scaffold.sh of its own) is a silent no-op.
+rm -f "$dst/scaffold.sh"
+
+# Flavor selection: move the chosen flavor's files into internal/collector/
+# (their real destination), then drop the whole code/ staging tree — this
+# removes every non-selected flavor in the same step, along with the
+# selected flavor's own, now-emptied directory. Guarded on the selected
+# flavor actually existing in $src (e.g. no code/ at all yet, or a flavor
+# with no files of its own): rm -rf on a path that doesn't exist is a silent
+# no-op, so the final rm -rf below is safe either way.
+if [ -d "$dst/code/$flavor" ]; then
+  mkdir -p "$dst/internal/collector"
+  for entry in "$dst/code/$flavor"/* "$dst/code/$flavor"/.[!.]* "$dst/code/$flavor"/..?*; do
+    if [ -e "$entry" ] || [ -L "$entry" ]; then
+      mv "$entry" "$dst/internal/collector/"
+    fi
   done
 fi
+rm -rf "$dst/code"
 
 # Forge selection: drop GitHub-only directories when the user opts out.
 # rm -rf on a path that doesn't exist (e.g. no release/ yet) is a silent no-op.
 if [ "$forge" = none ]; then
   rm -rf "$dst/release/github" "$dst/github"
-fi
-
-# Flatten the selected flavor's files up into code/ (generic Task 3 rule; a
-# later revision refines the real cmd/ + internal/collector/ destination
-# mapping once the real asset tree exists).
-if [ -d "$dst/code/$flavor" ]; then
-  for entry in "$dst/code/$flavor"/* "$dst/code/$flavor"/.[!.]* "$dst/code/$flavor"/..?*; do
-    if [ -e "$entry" ] || [ -L "$entry" ]; then
-      mv "$entry" "$dst/code/"
-    fi
-  done
-  rmdir "$dst/code/$flavor"
 fi
 
 # Substitute @@KEY@@ sentinels in file contents. Materialize the file list
@@ -285,14 +294,34 @@ fi
 # plain `if grep ...; then` does) silently turns a failed scan into a false
 # success. Capture the real code and branch on all three cases explicitly.
 grep_rc=0
-grep -rn '@@[A-Z_]*@@' "$dst" || grep_rc=$?
+grep -rn '@@[A-Z_]*@@' "$dst" > "$sentinels" || grep_rc=$?
 case "$grep_rc" in
+  0|1) ;;
+  *) die "residual-sentinel scan of $dst failed (grep exit $grep_rc)" ;;
+esac
+
+# main.go's two structural markers (@@CLIENT_INIT@@, @@COLLECTOR_REGISTRY@@)
+# are deliberately left as literal comments for a later flavor-specific
+# scaffold.sh step to replace — they are not --var data placeholders, so
+# their survival is expected, not a forgotten substitution. Filter exactly
+# these two named sentinels out before judging the scan; anything else that
+# matches the broad @@[A-Z_]*@@ shape still fails loudly below, same as
+# before. (A hardcoded pair, not a discovered list, mirrors --forge's own
+# hardcoded github|none: a small, deliberately fixed set, not a growing
+# registry that would justify discovery.) Same explicit-exit-code discipline
+# as the scan above, even though $sentinels is a script-written temp file
+# (not a traversal of arbitrary --dst content) and so is a far less likely
+# source of a genuine grep-internal failure.
+filtered_rc=0
+grep -v -E '@@(CLIENT_INIT|COLLECTOR_REGISTRY)@@' "$sentinels" > "$pathlist" || filtered_rc=$?
+case "$filtered_rc" in
   0)
     echo "$prog: error: residual @@VAR@@ sentinel(s) left in $dst" >&2
+    cat "$pathlist" >&2
     exit 3
     ;;
   1) ;;
-  *) die "residual-sentinel scan of $dst failed (grep exit $grep_rc)" ;;
+  *) die "residual-sentinel filter of $dst failed (grep exit $filtered_rc)" ;;
 esac
 
 echo "scaffolded $dst"

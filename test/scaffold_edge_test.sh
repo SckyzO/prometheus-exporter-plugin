@@ -172,7 +172,7 @@ run --src "$fixtures" --dst "$work/special-dst" \
   --flavor http --forge none \
   --var EXPORTER_NAME=redis_exporter --var NAMESPACE=redis --var 'OWNER=a/b&c\d'
 [ "$rc" -eq 0 ] || fail "special-char round-trip run failed, rc=$rc: $(cat "$err")"
-content=$(cat "$work/special-dst/code/common/keep.txt")
+content=$(cat "$work/special-dst/keep.txt")
 [ "$content" = 'owner=a/b&c\d' ] || fail "special-char round-trip mismatch: got [$content]"
 
 # 6d. multi-level (>=2 deep) sentinel path rename.
@@ -180,8 +180,8 @@ run --src "$fixtures" --dst "$work/deep-dst" \
   --flavor http --forge none \
   --var EXPORTER_NAME=redis_exporter --var NAMESPACE=redis --var OWNER=acme
 [ "$rc" -eq 0 ] || fail "multi-level rename run failed, rc=$rc: $(cat "$err")"
-[ -f "$work/deep-dst/code/redis_exporter/redissub/deep.go" ] || fail "2-level-deep sentinel path was not renamed"
-[ -f "$work/deep-dst/code/redis_exporter/shallow.go" ] || fail "1-level sentinel path (sibling of the 2-level one) was not renamed"
-grep -q 'package deep // redis' "$work/deep-dst/code/redis_exporter/redissub/deep.go" || fail "content substitution missing inside the renamed multi-level path"
+[ -f "$work/deep-dst/internal/collector/redis_exporter/redissub/deep.go" ] || fail "2-level-deep sentinel path was not renamed"
+[ -f "$work/deep-dst/internal/collector/redis_exporter/shallow.go" ] || fail "1-level sentinel path (sibling of the 2-level one) was not renamed"
+grep -q 'package deep // redis' "$work/deep-dst/internal/collector/redis_exporter/redissub/deep.go" || fail "content substitution missing inside the renamed multi-level path"
 
 echo "PASS"
