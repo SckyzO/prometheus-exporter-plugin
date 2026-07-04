@@ -413,7 +413,7 @@ Expected: scaffold OK → `make build` PASS → `make check` PASS → grep clean
 - Keep the 5-piece shape + error contract identical to HTTP. Replace Slurm parsing with a **generic** parser: `parseExample(b) ([]kv, error)` splitting `key<whitespace>value` lines → gauge `@@NAMESPACE@@_example{key=…}`. `exampleData(ctx)` → `Execute(ctx, "@@DATA_SOURCE@@", "@@DATA_SOURCE_ARGS@@"…)`.
 - **Anonymize fixtures:** `testdata/example.txt` = generic `key value` lines, no Slurm output.
 - de-identify all five files → grep 0.
-- `wiring.go.tmpl`: CLI client-init snippet is empty; registry line `register("example", func() prometheus.Collector { return NewExampleCollector(logger) }, true)`.
+- **Wiring = two frag files** `code/cli/wiring/{client_init.frag, registry.frag}` (same mechanism as HTTP; scaffold injects at the `main.go` markers — see the progress-ledger "Wiring MECHANISM" standing decision). CLI `client_init.frag` = empty (or a `--command.timeout` flag decl); `registry.frag` = `register("example", func() prometheus.Collector { return NewExampleCollector(logger) }, true)`. Register the CLI exec-timing self-instrumentation metric as a collector via the same seam (plain `prometheus.New*`, NOT promauto).
 
 - [ ] **Step 1: Read the source files in full.**
 - [ ] **Step 2: Write the five `.tmpl` files + `testdata/example.txt`.**
