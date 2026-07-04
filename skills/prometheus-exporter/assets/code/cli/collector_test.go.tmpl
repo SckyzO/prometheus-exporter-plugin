@@ -1,0 +1,193 @@
+package collector
+
+import (
+	"context"
+	"errors"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"@@MODULE_PATH@@/internal/logger"
+)
+
+// TestExampleCollector_Collect drives the whole 5-piece collector with
+// Execute swapped for a stub that returns this package's own testdata
+// fixture, then verifies both the metric count and their exact exposition-
+// format output. Restoring Execute via defer, immediately after saving it,
+// is what keeps this test isolated from every other test in this file that
+// also swaps Execute — see TestExampleCollector_ErrorHandling below for the
+// same pattern.
+func TestExampleCollector_Collect(t *testing.T) {
+	fixture, err := os.ReadFile("testdata/example.txt")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+
+	oldExecute := Execute
+	defer func() { Execute = oldExecute }()
+	Execute = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		return fixture, nil
+	}
+
+	log := logger.NewTextLogger("error")
+	c := NewExampleCollector(log, time.Second)
+
+	reg := prometheus.NewRegistry()
+	if err := reg.Register(c); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	count, err := testutil.GatherAndCount(reg)
+	if err != nil {
+		t.Fatalf("GatherAndCount: %v", err)
+	}
+	if count != 4 { // 3 per-key gauges (testdata/example.txt has 3 lines) + 1 entries gauge
+		t.Fatalf("GatherAndCount = %d, want 4", count)
+	}
+
+	expected := `
+# HELP @@NAMESPACE@@_example Value reported by the example data source, by key.
+# TYPE @@NAMESPACE@@_example gauge
+@@NAMESPACE@@_example{key="bar"} 2
+@@NAMESPACE@@_example{key="baz"} 3
+@@NAMESPACE@@_example{key="foo"} 1
+# HELP @@NAMESPACE@@_example_entries Number of key/value entries parsed from the example data source in the last scrape.
+# TYPE @@NAMESPACE@@_example_entries gauge
+@@NAMESPACE@@_example_entries 3
+`
+	if err := testutil.CollectAndCompare(c, strings.NewReader(expected)); err != nil {
+		t.Fatalf("unexpected collecting result:\n%s", err)
+	}
+}
+
+// TestExampleCollector_Describe locks the descriptor count at exactly 2
+// (entries, value) so a future edit that silently adds or drops a metric is
+// caught here rather than downstream.
+func TestExampleCollector_Describe(t *testing.T) {
+	log := logger.NewTextLogger("error")
+	c := NewExampleCollector(log, time.Second)
+
+	ch := make(chan *prometheus.Desc, 10)
+	c.Describe(ch)
+	close(ch)
+
+	count := 0
+	for range ch {
+		count++
+	}
+	if count != 2 {
+		t.Fatalf("Describe sent %d descriptors, want 2", count)
+	}
+}
+
+// TestExampleCollector_ErrorHandling covers both ways this collector's I/O →
+// pure-parse pipeline can fail: Execute itself returning an error, and
+// Execute succeeding but returning output parseExample can't make sense of.
+// Either way Collect must emit zero metrics and must not panic: this is the
+// contract the StatusTracker relies on to mark a collector's scrape as
+// failed (see collector.go's Collect doc comment).
+func TestExampleCollector_ErrorHandling(t *testing.T) {
+	assertZeroMetrics := func(t *testing.T) {
+		t.Helper()
+		log := logger.NewTextLogger("error")
+		c := NewExampleCollector(log, time.Second)
+
+		reg := prometheus.NewRegistry()
+		if err := reg.Register(c); err != nil {
+			t.Fatalf("Register: %v", err)
+		}
+
+		count, err := testutil.GatherAndCount(reg)
+		if err != nil {
+			t.Fatalf("GatherAndCount: %v", err)
+		}
+		if count != 0 {
+			t.Fatalf("GatherAndCount = %d, want 0", count)
+		}
+	}
+
+	t.Run("Execute returns an error", func(t *testing.T) {
+		oldExecute := Execute
+		defer func() { Execute = oldExecute }()
+		Execute = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			return nil, errors.New("simulated command failure")
+		}
+		assertZeroMetrics(t)
+	})
+
+	t.Run("Execute succeeds but output is malformed", func(t *testing.T) {
+		oldExecute := Execute
+		defer func() { Execute = oldExecute }()
+		Execute = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			return []byte("not-a-valid-line"), nil
+		}
+		assertZeroMetrics(t)
+	})
+}
+
+// TestExecute_Success exercises the real Execute var — not a swapped stub —
+// covering the exec.CommandContext + CombinedOutput wiring that every other
+// test in this file deliberately bypasses by swapping Execute out (so
+// collector and parsing logic can be tested without a live command). "echo"
+// is used because it is available on every Unix-like system this exporter
+// targets (see the project's container-first Makefile); this exporter's own
+// CLI flavor is inherently Unix-shaped, since it exists to shell out to CLI
+// binaries in the first place.
+func TestExecute_Success(t *testing.T) {
+	out, err := Execute(context.Background(), "echo", "hello")
+	if err != nil {
+		t.Fatalf("Execute(echo): %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "hello" {
+		t.Fatalf("Execute(echo) output = %q, want %q", got, "hello")
+	}
+}
+
+// TestExecute_CommandNotFound covers Execute's error path with a command
+// that cannot possibly exist, deliberately avoiding any real timeout/deadline
+// scenario: that would need a genuinely slow command plus a short deadline,
+// which is exactly the kind of timing-sensitive setup that makes tests flaky
+// under load. A nonexistent binary fails immediately and portably instead.
+func TestExecute_CommandNotFound(t *testing.T) {
+	if _, err := Execute(context.Background(), "this-command-does-not-exist-in-any-path-abcxyz"); err == nil {
+		t.Fatal("Execute(nonexistent command) returned a nil error, want non-nil")
+	}
+}
+
+// TestCommandDuration_CustomRegistryReachable locks the same Critical-bug
+// shape the HTTP flavor's RequestDuration test guards against: CommandDuration
+// must be a plain, exported *prometheus.HistogramVec that this exporter's own
+// custom registry can register directly — the same way registry.frag's
+// injected register("command_exec", ...) call does in main.go — not a
+// promauto value reachable only from prometheus.DefaultRegisterer. A
+// promauto.NewHistogramVec would self-register into that process-wide
+// default registerer as a side effect of package init: reachable from
+// prometheus.DefaultGatherer, but invisible to the custom registry main.go
+// actually serves at /metrics.
+func TestCommandDuration_CustomRegistryReachable(t *testing.T) {
+	CommandDuration.WithLabelValues("success").Observe(0.01)
+
+	reg := prometheus.NewRegistry()
+	if err := reg.Register(CommandDuration); err != nil {
+		t.Fatalf("Register(CommandDuration) on a fresh custom registry: %v", err)
+	}
+	count, err := testutil.GatherAndCount(reg, "@@NAMESPACE@@_exporter_command_duration_seconds")
+	if err != nil {
+		t.Fatalf("GatherAndCount(custom registry): %v", err)
+	}
+	if count == 0 {
+		t.Fatal("GatherAndCount(custom registry) = 0, want >= 1: CommandDuration did not reach a registry it was explicitly registered on")
+	}
+
+	dcount, err := testutil.GatherAndCount(prometheus.DefaultGatherer, "@@NAMESPACE@@_exporter_command_duration_seconds")
+	if err != nil {
+		t.Fatalf("GatherAndCount(DefaultGatherer): %v", err)
+	}
+	if dcount != 0 {
+		t.Fatalf("GatherAndCount(DefaultGatherer) = %d, want 0: CommandDuration must not self-register into the process-wide default registerer (that is what promauto.NewHistogramVec would do; a registry main.go's own /metrics handler never gathers from it)", dcount)
+	}
+}
