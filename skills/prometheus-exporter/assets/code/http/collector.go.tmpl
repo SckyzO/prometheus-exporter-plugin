@@ -1,0 +1,110 @@
+package collector
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+
+	"github.com/prometheus/client_golang/prometheus"
+
+	"@@MODULE_PATH@@/internal/logger"
+)
+
+// exampleStats is the parsed shape of the example target's response. This is
+// a placeholder shape, {"items": <int>, "healthy": <bool>}, documenting the
+// pattern rather than a real API. Replace it, and parseExample below, with
+// your actual target's real response shape when adapting this collector.
+type exampleStats struct {
+	Items   int  `json:"items"`
+	Healthy bool `json:"healthy"`
+}
+
+// exampleData is this collector's only I/O: it fetches the raw response body
+// from the configured target. Kept separate from parsing (parseExample,
+// below) so parsing stays pure and unit-testable without a live server.
+func (c *ExampleCollector) exampleData(ctx context.Context) ([]byte, error) {
+	return c.client.Fetch(ctx, "@@DATA_SOURCE_PATH@@")
+}
+
+// parseExample decodes exampleData's response body into exampleStats. Pure:
+// no I/O, no logging, no side effects, so every input maps deterministically
+// to an output. That is what makes it unit-testable with plain byte
+// fixtures (see collector_test.go's TestParseExample).
+func parseExample(b []byte) (exampleStats, error) {
+	var stats exampleStats
+	if err := json.Unmarshal(b, &stats); err != nil {
+		return exampleStats{}, fmt.Errorf("parse example response: %w", err)
+	}
+	return stats, nil
+}
+
+// exampleGetMetrics is the glue between the I/O step (exampleData) and the
+// pure parsing step (parseExample): the shape every collector in this
+// exporter follows, regardless of flavor.
+func (c *ExampleCollector) exampleGetMetrics(ctx context.Context) (exampleStats, error) {
+	data, err := c.exampleData(ctx)
+	if err != nil {
+		return exampleStats{}, err
+	}
+	return parseExample(data)
+}
+
+// ExampleCollector is the starter collector materialized by
+// /new-prometheus-exporter. It is meant to be renamed and pointed at a real
+// endpoint (see exampleStats' doc comment), but its shape, I/O then pure
+// parse then glue then Describe then Collect, is the one every collector you
+// add should follow.
+type ExampleCollector struct {
+	client  *Client
+	log     *logger.Logger
+	items   *prometheus.Desc
+	healthy *prometheus.Desc
+}
+
+// NewExampleCollector wires a Client into a ready-to-register
+// prometheus.Collector.
+func NewExampleCollector(log *logger.Logger, client *Client) prometheus.Collector {
+	return &ExampleCollector{
+		client: client,
+		log:    log,
+		items: prometheus.NewDesc(
+			"@@NAMESPACE@@_items",
+			"Number of items reported by the example target.",
+			nil, nil,
+		),
+		healthy: prometheus.NewDesc(
+			"@@NAMESPACE@@_healthy",
+			"Whether the example target reports itself healthy (1) or not (0).",
+			nil, nil,
+		),
+	}
+}
+
+// Describe sends exactly this collector's two metric descriptors. They are
+// constant regardless of scrape outcome, which is what makes
+// prometheus.DescribeByCollect unnecessary here.
+func (c *ExampleCollector) Describe(ch chan<- *prometheus.Desc) {
+	ch <- c.items
+	ch <- c.healthy
+}
+
+// Collect fetches and emits this collector's metrics. On any error it logs
+// and returns without sending anything: zero metrics from one scrape is how
+// the StatusTracker wrapping every collector marks this collector's health
+// as failed, instead of silently publishing stale or zero-value data as if
+// it were current.
+func (c *ExampleCollector) Collect(ch chan<- prometheus.Metric) {
+	stats, err := c.exampleGetMetrics(context.Background())
+	if err != nil {
+		c.log.Error("Failed to get example metrics", "err", err)
+		return
+	}
+
+	ch <- prometheus.MustNewConstMetric(c.items, prometheus.GaugeValue, float64(stats.Items))
+
+	healthy := 0.0
+	if stats.Healthy {
+		healthy = 1.0
+	}
+	ch <- prometheus.MustNewConstMetric(c.healthy, prometheus.GaugeValue, healthy)
+}

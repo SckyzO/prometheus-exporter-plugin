@@ -194,4 +194,44 @@ run --src "$fixtures" --dst "$work/selfcopy-dst" \
 [ "$rc" -eq 0 ] || fail "self-copy-strip run failed, rc=$rc: $(cat "$err")"
 [ ! -e "$work/selfcopy-dst/scaffold.sh" ] || fail "scaffold.sh should not be copied into scaffolded output"
 
+# ---------------------------------------------------------------------------
+# Task 5: HTTP-flavor wiring-marker injection. scaffold.sh must fill
+# // @@CLIENT_INIT@@ and // @@COLLECTOR_REGISTRY@@ in main.go from the
+# selected flavor's code/<flavor>/wiring/*.frag snippets, keep each marker
+# comment line itself intact (so /add-collector can reuse it later), and
+# remove the internal/collector/wiring/ staging directory afterward so it
+# never ships in the generated repo. Exercised against the REAL assets tree
+# (not fixtures/mini-template): the wiring frags and the markers they fill
+# are real production content, not scaffold-engine plumbing, and
+# mini-template deliberately carries neither.
+# ---------------------------------------------------------------------------
+realassets="$root/skills/prometheus-exporter/assets"
+run --src "$realassets" --dst "$work/wiring-dst" --flavor http --forge none \
+  --var EXPORTER_NAME=demo_exporter --var NAMESPACE=demo \
+  --var MODULE_PATH=example.com/demo_exporter \
+  --var DATA_SOURCE=http://localhost:9999 --var DATA_SOURCE_PATH=/api/example \
+  --var DEFAULT_PORT=9999 --var OWNER=acme --var LICENSE=apache-2.0
+[ "$rc" -eq 0 ] || fail "real-assets http scaffold (for wiring-injection check) failed, rc=$rc: $(cat "$err")"
+mainfile="$work/wiring-dst/cmd/demo_exporter/main.go"
+[ -f "$mainfile" ] || fail "scaffolded main.go missing at $mainfile"
+grep -q 'exampleTarget := kingpin.Flag' "$mainfile" || fail "client_init.frag was not injected into main.go"
+grep -q '// @@CLIENT_INIT@@' "$mainfile" || fail "// @@CLIENT_INIT@@ marker must survive injection so /add-collector can reuse it"
+grep -q 'register("example"' "$mainfile" || fail "registry.frag was not injected into main.go"
+grep -q '// @@COLLECTOR_REGISTRY@@' "$mainfile" || fail "// @@COLLECTOR_REGISTRY@@ marker must survive injection so /add-collector can reuse it"
+[ ! -d "$work/wiring-dst/internal/collector/wiring" ] || fail "internal/collector/wiring/ staging dir should be removed after injection"
+
+# Regression lock for a real bug hit while building this: register()'s own
+# doc comment in main.go.tmpl prose-mentions "// @@COLLECTOR_REGISTRY@@"
+# inside a sentence ("...marker in main() below."), to point readers at the
+# real marker below it. An unanchored sed address matches that prose line
+# too and splices a second copy of registry.frag into the middle of the
+# comment block — main.go still contains 'register("example"' (the two
+# checks above pass), but the output no longer compiles ("non-declaration
+# statement outside function body"). Asserting an exact count of 1 is what
+# actually catches that failure mode; mere presence does not.
+regcount=$(grep -c 'register("example"' "$mainfile")
+[ "$regcount" -eq 1 ] || fail "expected exactly 1 injected register(\"example\" call, found $regcount (regex likely matches register()'s own doc-comment prose mention of the marker too)"
+initcount=$(grep -c 'exampleTarget := kingpin.Flag' "$mainfile")
+[ "$initcount" -eq 1 ] || fail "expected exactly 1 injected client_init.frag copy, found $initcount"
+
 echo "PASS"

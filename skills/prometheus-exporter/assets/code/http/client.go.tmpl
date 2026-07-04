@@ -1,0 +1,87 @@
+package collector
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+)
+
+// requestDuration times every Client.Fetch call, labeled by outcome
+// ("success" or "error"). It is declared once at package scope, not per
+// Client, because Prometheus metrics are meant to live for the process
+// lifetime, not the lifetime of whichever struct happens to touch them.
+//
+// Known limitation: main.go deliberately builds its own
+// prometheus.NewRegistry() instead of using the process-wide default
+// registry, to avoid pulling third-party global state into this exporter's
+// own /metrics output (see main.go's own comment on that line).
+// promauto.NewHistogramVec below registers into prometheus.DefaultRegisterer,
+// which is a different registry than the one this exporter actually serves
+// at /metrics. So today this histogram is tracked in-process but not scraped
+// by this exporter's own endpoint. Exposing it there would mean threading
+// that registry down into internal/collector (for example as a NewClient
+// parameter), which the current flavor seam does not do. Documented here
+// deliberately rather than shipped as if it already worked.
+var requestDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+	Name: "@@NAMESPACE@@_exporter_request_duration_seconds",
+	Help: "Duration in seconds of HTTP requests issued by this exporter's collectors, by outcome.",
+}, []string{"outcome"})
+
+// Client is the HTTP boundary every collector in this flavor talks to.
+// Building it around a base URL, instead of reaching for http.DefaultClient
+// directly from a collector, is what makes collectors testable: point
+// NewClient at an httptest.Server instead of a real target.
+type Client struct {
+	httpClient *http.Client
+	baseURL    string
+}
+
+// NewClient builds a Client bound to target (a base URL, for example
+// "http://localhost:9100"), applying timeout to every request.
+func NewClient(target string, timeout time.Duration) *Client {
+	return &Client{
+		httpClient: &http.Client{Timeout: timeout},
+		baseURL:    target,
+	}
+}
+
+// Fetch issues a GET request for baseURL+path and returns the response
+// body. A non-2xx status is reported as an error so callers never have to
+// separately inspect the status code. Every call, success or failure, is
+// timed and recorded on requestDuration.
+func (c *Client) Fetch(ctx context.Context, path string) (data []byte, err error) {
+	start := time.Now()
+	defer func() {
+		outcome := "success"
+		if err != nil {
+			outcome = "error"
+		}
+		requestDuration.WithLabelValues(outcome).Observe(time.Since(start).Seconds())
+	}()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request for %s: %w", path, err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch %s: %w", path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("fetch %s: unexpected status %s", path, resp.Status)
+	}
+
+	data, err = io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response body for %s: %w", path, err)
+	}
+	return data, nil
+}

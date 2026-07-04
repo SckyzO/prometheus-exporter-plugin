@@ -35,13 +35,19 @@
 #   - When --forge none, drops release/github/ and top-level github/.
 #   - Substitutes every @@KEY@@ (content and path components) for each --var.
 #   - Strips the .tmpl suffix from file names.
+#   - Fills main.go's // @@CLIENT_INIT@@ and // @@COLLECTOR_REGISTRY@@
+#     markers from the selected flavor's internal/collector/wiring/
+#     {client_init.frag,registry.frag}, if it shipped any, then removes that
+#     staging directory. The marker comments themselves survive the fill
+#     (sed inserts after them, never replacing them) so /add-collector can
+#     reuse the same markers later to insert more collectors.
 #   - Places the licenses/LICENSE-<license, lowercased>.txt as LICENSE, then
 #     discards the unused alternatives.
 #   - Fails loudly (exit 3) if any @@...@@ sentinel survives, EXCEPT the two
 #     named structural markers in main.go (@@CLIENT_INIT@@,
-#     @@COLLECTOR_REGISTRY@@), which are intentionally left as literal
-#     comments for a later flavor-specific scaffold.sh step to replace — they
-#     are not --var data placeholders, so their survival here is expected.
+#     @@COLLECTOR_REGISTRY@@) — those are not --var data placeholders, and
+#     the wiring-marker fill above deliberately preserves them, so their
+#     survival to this point is expected, not a forgotten substitution.
 #   - Refuses a non-empty --dst unless --force.
 set -eu
 
@@ -261,6 +267,62 @@ find "$dst" -type f -name '*.tmpl' -print > "$pathlist"
 while IFS= read -r file; do
   mv "$file" "${file%.tmpl}"
 done < "$pathlist"
+
+# Flavor wiring-marker injection: fill main.go's two structural markers
+# (// @@CLIENT_INIT@@, // @@COLLECTOR_REGISTRY@@ — defined by Task 4's
+# main.go.tmpl) with the selected flavor's wiring snippets, if it shipped
+# any. Flavor snippets stage under code/<flavor>/wiring/{client_init.frag,
+# registry.frag} (mirror-layout, exactly like every other flavor file) and so
+# land at internal/collector/wiring/ after the flavor-selection move earlier
+# in this script. By this point they are also fully @@KEY@@-substituted,
+# since the content-substitution pass above runs over every file under $dst
+# regardless of extension, and path-renamed/.tmpl-stripped, since it runs
+# after both of those steps, so cmd/*/main.go already sits at its final path.
+#
+# This is a hardcoded, fixed pair (frag basename -> marker name), not a
+# discovered or growing registry, mirroring this same script's own
+# --forge github|none precedent. sed's `r` command inserts the frag file's
+# content immediately AFTER the matched marker line without consuming it, so
+# the marker comment itself survives verbatim in the output — deliberate, so
+# /add-collector can find and reuse the same marker later to insert
+# additional collectors. That is also why the residual-sentinel guard below
+# still needs (and already has) its CLIENT_INIT/COLLECTOR_REGISTRY exemption
+# after this step runs, not just before it.
+if [ -d "$dst/internal/collector/wiring" ]; then
+  mainfile=""
+  for f in "$dst"/cmd/*/main.go; do
+    [ -f "$f" ] || continue
+    [ -z "$mainfile" ] || die "expected exactly one cmd/*/main.go for flavor-wiring injection, found more than one"
+    mainfile=$f
+  done
+  [ -n "$mainfile" ] || die "flavor shipped internal/collector/wiring/ snippets but no cmd/*/main.go was found to inject them into"
+
+  # Both sed addresses below are anchored to match ONLY a line that (modulo
+  # surrounding blank/tab) consists solely of the marker comment, e.g.
+  # `\t// @@CLIENT_INIT@@`. This is deliberate, not defensive-for-its-own-
+  # sake: register()'s own doc comment in main.go.tmpl prose-mentions
+  # `// @@COLLECTOR_REGISTRY@@` inside a sentence ("...marker in main()
+  # below.") to point readers at the real marker. An unanchored
+  # `/@@COLLECTOR_REGISTRY@@/` address matches that prose line too and
+  # splices executable Go statements into the middle of a comment block,
+  # which breaks the build with "non-declaration statement outside function
+  # body" — caught empirically while implementing this, not a hypothetical.
+  if [ -f "$dst/internal/collector/wiring/client_init.frag" ]; then
+    grep -q '^[[:blank:]]*// @@CLIENT_INIT@@[[:blank:]]*$' "$mainfile" || die "$mainfile has no standalone // @@CLIENT_INIT@@ marker line to inject into"
+    sed -e '\|^[[:blank:]]*// @@CLIENT_INIT@@[[:blank:]]*$|r '"$dst"'/internal/collector/wiring/client_init.frag' "$mainfile" > "$mainfile.scaffoldtmp"
+    mv "$mainfile.scaffoldtmp" "$mainfile"
+  fi
+  if [ -f "$dst/internal/collector/wiring/registry.frag" ]; then
+    grep -q '^[[:blank:]]*// @@COLLECTOR_REGISTRY@@[[:blank:]]*$' "$mainfile" || die "$mainfile has no standalone // @@COLLECTOR_REGISTRY@@ marker line to inject into"
+    sed -e '\|^[[:blank:]]*// @@COLLECTOR_REGISTRY@@[[:blank:]]*$|r '"$dst"'/internal/collector/wiring/registry.frag' "$mainfile" > "$mainfile.scaffoldtmp"
+    mv "$mainfile.scaffoldtmp" "$mainfile"
+  fi
+
+  # wiring/ is scaffold-only staging, like licenses/ below — it must never
+  # ship in the generated repo now that its content has been spliced into
+  # main.go above.
+  rm -rf "$dst/internal/collector/wiring"
+fi
 
 # Place the chosen LICENSE, then discard the unused alternatives — the
 # licenses/ menu is scaffold-only content and never ships in the generated
