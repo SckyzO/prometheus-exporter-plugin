@@ -107,7 +107,7 @@ Tagged releases publish signed, checksummed binaries with a CycloneDX SBOM attac
 | Quality | `make vet` | `go vet` |
 | | `make lint` | `golangci-lint run ./...` |
 | | `make vuln` | `govulncheck` — reachable-vulnerability scan |
-| | `make check` | `vet` + `lint` + `test` + `vuln` + `actionlint` + `zizmor` + `deadcode` — the pre-merge gate |
+| | `make check` | `vet` + `lint` + `test` + `vuln` + `actionlint` + `zizmor` + `deadcode` + `docs-check` — the pre-merge gate |
 | | `make report` | Offline goreportcard-equivalent grade; fails below `B` |
 | | `make report-deps` | Tabular dependency status (direct + indirect, patch/minor/major) |
 | Security | `make actionlint` | Lints `.github/workflows/` (skips gracefully if there is no GitHub layer) |
@@ -115,6 +115,7 @@ Tagged releases publish signed, checksummed binaries with a CycloneDX SBOM attac
 | | `make secrets` | `gitleaks` secret scan over the working tree |
 | | `make osv` | Dependency vulnerability scan against the OSV database |
 | | `make deadcode` | Fails if any unreachable Go code is found |
+| | `make docs-check` | `docs/metrics.md` documents no metric/label the code doesn't emit (warns on the reverse gap) |
 | Docker | `make docker-build` | Builds a local image tagged `@@EXPORTER_NAME@@:dev` |
 | | `make docker-run` | Starts the compose stack (override `DOCKER_IMAGE=`/`DOCKER_TAG=`) |
 

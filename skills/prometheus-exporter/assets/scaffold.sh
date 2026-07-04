@@ -229,6 +229,25 @@ if [ -d "$dst/code/$flavor" ]; then
 fi
 rm -rf "$dst/code"
 
+# Flavor-specific docs: code/<flavor>/metrics.md.tmpl (if shipped) documents
+# that flavor's own collector metrics truthfully - its metric names differ
+# per flavor (e.g. http's @@NAMESPACE@@_items vs cli's @@NAMESPACE@@_example),
+# so, unlike every other file under docs/, this one cannot be a single file
+# shared by every flavor: a name accurate for one flavor would be an
+# undocumented-in-code lie for another, exactly what make docs-check (see
+# internal/collector/docs_check_test.go) exists to catch. It stages under
+# code/<flavor>/ so the flavor selection above already picked the right one,
+# then lands in internal/collector/ alongside every other flavor file above -
+# the correct staging location, but the WRONG final path (its real home is
+# docs/metrics.md, not internal/collector/metrics.md.tmpl) - so relocate the
+# whole file here, before the generic substitution/rename/tmpl-strip passes
+# below, which then apply to it at its real path exactly like every other
+# common doc under docs/ already does. Guarded the same way every other
+# optional flavor file is: a flavor that ships none is a silent no-op.
+if [ -f "$dst/internal/collector/metrics.md.tmpl" ]; then
+  mv "$dst/internal/collector/metrics.md.tmpl" "$dst/docs/metrics.md.tmpl"
+fi
+
 # Forge selection: drop GitHub-only directories when the user opts out.
 # rm -rf on a path that doesn't exist (e.g. no release/ yet) is a silent no-op.
 if [ "$forge" = none ]; then

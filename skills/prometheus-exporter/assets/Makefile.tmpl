@@ -204,9 +204,24 @@ deadcode: native-warning tools-image
 	@echo "Running deadcode"
 	@$(IN_TOOLS) -c 'out=$$(deadcode -test ./...); if [ -n "$$out" ]; then echo "$$out"; echo "dead code found"; exit 1; fi; echo "no dead code"'
 
+# docs-check - docs/metrics.md must never document a metric or label the code
+# cannot produce (see internal/collector/docs_check_test.go): fails on that
+# direction, since a lying doc is worse than none. The reverse gap - a real
+# metric missing from docs/metrics.md - is only a warning (the -v below
+# surfaces it), per CONTRIBUTING.md's Definition of Done, step 4.
+# -count=1 disables go test's result cache: this test's real input,
+# docs/metrics.md, is a plain file the Go toolchain has no reason to track as
+# a build dependency, so without -count=1 a second run could serve a stale
+# cached PASS/FAIL after only that file changed - the exact failure mode a
+# lie-detector for that file must never have.
+.PHONY: docs-check
+docs-check: native-warning tools-image
+	@echo "Running docs-check (docs/metrics.md vs internal/collector/*.go)"
+	@$(IN_TOOLS) -c 'go test -run TestDocsCheck -v -count=1 ./internal/collector/...'
+
 # Full pre-commit / pre-release verification gate - mirrors what CI runs.
 .PHONY: check
-check: vet lint test vuln actionlint zizmor deadcode
+check: vet lint test vuln actionlint zizmor deadcode docs-check
 
 # `lint` (above) and `report` (below) deliberately overlap: gofmt, go vet,
 # ineffassign, and misspell are each covered by both. That's by design, not

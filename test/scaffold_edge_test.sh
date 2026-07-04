@@ -242,4 +242,26 @@ regcount=$(grep -c 'register("example"' "$mainfile")
 initcount=$(grep -c 'exampleTarget := kingpin.Flag' "$mainfile")
 [ "$initcount" -eq 1 ] || fail "expected exactly 1 injected client_init.frag copy, found $initcount"
 
+# ---------------------------------------------------------------------------
+# Task 11: flavor-specific docs/metrics.md relocation. code/<flavor>/
+# metrics.md.tmpl (staged like every other flavor file) must end up at
+# docs/metrics.md — NOT internal/collector/metrics.md[.tmpl], its generic
+# flavor-selection staging location — with @@VAR@@ substitution already
+# applied, exactly like every other common doc under docs/. Exercised
+# against the REAL assets tree, same reasoning as the wiring-marker block
+# above: this is real production content (mini-template ships no
+# metrics.md.tmpl of its own), not scaffold-engine plumbing.
+# ---------------------------------------------------------------------------
+run --src "$realassets" --dst "$work/metricsdoc-dst" --flavor cli --forge none \
+  --var EXPORTER_NAME=demo_exporter --var NAMESPACE=demo \
+  --var MODULE_PATH=example.com/demo_exporter \
+  --var DATA_SOURCE=demo_cli --var DATA_SOURCE_PATH=unused \
+  --var DEFAULT_PORT=9999 --var OWNER=acme --var LICENSE=apache-2.0
+[ "$rc" -eq 0 ] || fail "real-assets cli scaffold (for metrics.md relocation check) failed, rc=$rc: $(cat "$err")"
+metricsdoc="$work/metricsdoc-dst/docs/metrics.md"
+[ -f "$metricsdoc" ] || fail "docs/metrics.md missing after a cli-flavor scaffold"
+grep -q '`demo_example`' "$metricsdoc" || fail "docs/metrics.md does not document the cli flavor's own @@NAMESPACE@@_example metric — flavor-specific content did not land, or @@VAR@@ substitution did not reach it"
+[ ! -e "$work/metricsdoc-dst/internal/collector/metrics.md.tmpl" ] || fail "metrics.md.tmpl staging file should not survive in internal/collector/"
+[ ! -e "$work/metricsdoc-dst/internal/collector/metrics.md" ] || fail "metrics.md should not remain in internal/collector/ after relocation to docs/"
+
 echo "PASS"

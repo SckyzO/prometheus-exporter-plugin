@@ -1,0 +1,360 @@
+// docs_check_test.go implements `make docs-check`: it verifies docs/metrics.md
+// never documents a Prometheus metric name or label that this package's own
+// source code cannot produce. See docs/metrics.md's own header comment for
+// the table format parseMetricsDoc below expects, and CONTRIBUTING.md's
+// Definition of Done (step 4) for how this fits into the release workflow.
+//
+// Flavor-agnostic by construction: this file ships unmodified to both the
+// http and cli flavors, exactly like status_tracker.go/status_tracker_test.go
+// alongside it. It never imports or names a specific collector type
+// (ExampleCollector, Client, ...) — instead it parses whichever *.go files
+// happen to live in this same directory at build time and extracts every
+// prometheus.NewDesc(...)/prometheus.NewHistogramVec(...) call it finds via
+// go/ast, the same way for either flavor.
+//
+// This is a source-extraction check, not a construct-and-Describe check:
+// nothing here constructs a collector or mocks any I/O. A metric's name and
+// label set are fixed at its call site in source, regardless of whether that
+// collector's own Collect ever successfully runs — constructing collectors
+// and calling Gather() instead would make this check depend on whether a
+// fake client/Execute happens to succeed this run, which has nothing to do
+// with whether the DOCS are truthful (see collector.go's own Collect doc
+// comment: a collector emits zero metrics on error, so a Gather()-based
+// check would misreport a merely-unreachable-target collector's real,
+// well-documented metrics as "undocumented" or vice versa).
+//
+// Known, deliberate limitations of this static-analysis approach (documented
+// here rather than silently assumed):
+//   - A metric's fqName must be a plain double-quoted string literal at its
+//     NewDesc/Opts.Name call site. A computed name (fmt.Sprintf, string
+//     concatenation, ...) is invisible to this extractor — also a
+//     Prometheus naming anti-pattern independent of this tool (metric names
+//     are meant to be static), so this is not expected to bite a
+//     correctly-written collector.
+//   - Only the prometheus.NewDesc and prometheus.NewHistogramVec call shapes
+//     are recognized (the two this scaffold's own collectors actually use).
+//     Extending the switch in extractSourceMetrics to also recognize
+//     NewCounterVec/NewGaugeVec/NewSummaryVec is a small, self-contained
+//     addition if a future collector needs one of those — not added
+//     speculatively here since nothing in this scaffold uses them yet.
+//   - Only this package's own directory (".") is scanned, non-recursively —
+//     correct for this scaffold's flat internal/collector/ layout; a future
+//     reorganization into subpackages would need a wider walk.
+//   - A label list that isn't a literal `nil` or `[]string{"a", "b"}` (for
+//     example a shared package-level variable reused across several Desc
+//     calls) cannot be resolved here. Rather than guessing wrong, such a
+//     metric's labels are marked unknown (metricDesc.labelsKnown = false)
+//     and TestDocsCheck skips label verification for it — this extractor
+//     must never manufacture a false "docs lie" out of its own inability to
+//     resolve a label list.
+package collector
+
+import (
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"testing"
+)
+
+// docsMetricsPath is docs/metrics.md, expressed relative to this package's
+// own directory (internal/collector/, always exactly two levels below repo
+// root in every flavor this scaffold ships) since `go test` runs with the
+// package's source directory as its working directory — the same
+// convention every other test file here already relies on for its own
+// testdata/ fixtures.
+const docsMetricsPath = "../../docs/metrics.md"
+
+// metricDesc is one Prometheus metric's variable label keys, as either
+// extracted from source (extractSourceMetrics) or parsed from
+// docs/metrics.md (parseMetricsDoc). The metric's name is not stored here —
+// it is always the key of the map this type is a value in.
+type metricDesc struct {
+	labels []string
+	// labelsKnown is false when this metric's name was statically resolved
+	// but its label list was not (see this file's own doc comment). A label
+	// documented against such a metric must never be reported as a lie:
+	// this checker genuinely does not know the real label set, so it must
+	// not guess.
+	labelsKnown bool
+}
+
+// TestDocsCheck is `make docs-check`'s implementation: docs/metrics.md must
+// never document a metric or label this package's source cannot produce
+// (docs subset-of code — a hard failure, since a lying doc is worse than no
+// doc at all). The reverse gap, a real metric missing from docs/metrics.md,
+// is only logged as a warning (visible under `go test -v`, which is how
+// `make docs-check` always invokes this) — see CONTRIBUTING.md's Definition
+// of Done, step 4: undocumented is a quality gap, not a lie.
+func TestDocsCheck(t *testing.T) {
+	extracted, err := extractSourceMetrics(".")
+	if err != nil {
+		t.Fatalf("extract metrics from internal/collector/*.go: %v", err)
+	}
+	// A completely empty extraction almost certainly means this extractor
+	// itself broke (a refactor changed the call shapes it recognizes)
+	// rather than that this package genuinely defines zero metrics — every
+	// flavor this scaffold ships defines at least the shared StatusTracker's
+	// two. Left unchecked, an extractor that silently finds nothing would
+	// make every future run of this test vacuously pass forever regardless
+	// of what docs/metrics.md claims — exactly the kind of lie this test
+	// exists to catch.
+	if len(extracted) == 0 {
+		t.Fatal("extractSourceMetrics found zero metrics in internal/collector/*.go — either this package defines none (unexpected) or the extractor's go/ast pattern matching no longer recognizes this code; see this file's own doc comment")
+	}
+
+	documented, err := parseMetricsDoc(docsMetricsPath)
+	if err != nil {
+		t.Fatalf("parse %s: %v", docsMetricsPath, err)
+	}
+
+	var lies []string
+	for name, doc := range documented {
+		src, ok := extracted[name]
+		if !ok {
+			lies = append(lies, fmt.Sprintf("%s documents metric `%s`, which does not exist in internal/collector/*.go", docsMetricsPath, name))
+			continue
+		}
+		if !src.labelsKnown {
+			continue
+		}
+		for _, label := range doc.labels {
+			if !containsString(src.labels, label) {
+				lies = append(lies, fmt.Sprintf("%s documents label `%s` on metric `%s`, which the code does not emit (code labels: %v)", docsMetricsPath, label, name, src.labels))
+			}
+		}
+	}
+	if len(lies) > 0 {
+		sort.Strings(lies)
+		t.Fatalf("%s documents %d metric(s)/label(s) that do not exist in code:\n  - %s", docsMetricsPath, len(lies), strings.Join(lies, "\n  - "))
+	}
+
+	var undocumented []string
+	for name := range extracted {
+		if _, ok := documented[name]; !ok {
+			undocumented = append(undocumented, name)
+		}
+	}
+	if len(undocumented) > 0 {
+		sort.Strings(undocumented)
+		t.Logf("WARNING: %d metric(s) emitted by internal/collector/*.go are not documented in %s: %s (see CONTRIBUTING.md's Definition of Done, step 4)", len(undocumented), docsMetricsPath, strings.Join(undocumented, ", "))
+	}
+}
+
+func containsString(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if s == needle {
+			return true
+		}
+	}
+	return false
+}
+
+// extractSourceMetrics parses every non-test *.go file directly under dir
+// and returns every prometheus.NewDesc/NewHistogramVec call site it can
+// statically resolve, keyed by metric name. Test files are skipped
+// deliberately: status_tracker_test.go's stub collectors build throwaway
+// prometheus.NewDesc calls from a variable name, for StatusTracker's own
+// tests, never a metric this exporter actually ships on /metrics.
+func extractSourceMetrics(dir string) (map[string]metricDesc, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("read dir %s: %w", dir, err)
+	}
+
+	result := make(map[string]metricDesc)
+	fset := token.NewFileSet()
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+
+		file, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, 0)
+		if err != nil {
+			return nil, fmt.Errorf("parse %s: %w", name, err)
+		}
+
+		ast.Inspect(file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			// Assumes the conventional, unaliased
+			// `"github.com/prometheus/client_golang/prometheus"` import
+			// every template file in this scaffold actually uses — see
+			// this file's own doc comment for why a differently-aliased
+			// import is out of scope.
+			pkgIdent, ok := sel.X.(*ast.Ident)
+			if !ok || pkgIdent.Name != "prometheus" {
+				return true
+			}
+
+			switch sel.Sel.Name {
+			case "NewDesc":
+				// prometheus.NewDesc(fqName, help, variableLabels, constLabels)
+				if len(call.Args) < 3 {
+					return true
+				}
+				fqName, ok := stringLit(call.Args[0])
+				if !ok {
+					return true
+				}
+				labels, labelsKnown := stringSliceLit(call.Args[2])
+				result[fqName] = metricDesc{labels: labels, labelsKnown: labelsKnown}
+			case "NewHistogramVec":
+				// prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: fqName, ...}, variableLabels)
+				if len(call.Args) < 2 {
+					return true
+				}
+				fqName, ok := optsName(call.Args[0])
+				if !ok {
+					return true
+				}
+				labels, labelsKnown := stringSliceLit(call.Args[1])
+				result[fqName] = metricDesc{labels: labels, labelsKnown: labelsKnown}
+			}
+			return true
+		})
+	}
+	return result, nil
+}
+
+// stringLit resolves expr as a plain double-quoted string literal.
+func stringLit(expr ast.Expr) (string, bool) {
+	lit, ok := expr.(*ast.BasicLit)
+	if !ok || lit.Kind != token.STRING {
+		return "", false
+	}
+	v, err := strconv.Unquote(lit.Value)
+	if err != nil {
+		return "", false
+	}
+	return v, true
+}
+
+// stringSliceLit resolves expr as either the bare identifier nil (no
+// labels — ok=true, a known-empty label set) or a []string{"a", "b", ...}
+// composite literal of plain string literals (ok=true). Anything else (a
+// variable, a function call, a slice built from a non-literal element, ...)
+// reports ok=false: the caller must then treat that metric's label set as
+// unknown, not as empty — see metricDesc's labelsKnown field.
+func stringSliceLit(expr ast.Expr) ([]string, bool) {
+	if ident, ok := expr.(*ast.Ident); ok && ident.Name == "nil" {
+		return nil, true
+	}
+	comp, ok := expr.(*ast.CompositeLit)
+	if !ok {
+		return nil, false
+	}
+	labels := make([]string, 0, len(comp.Elts))
+	for _, elt := range comp.Elts {
+		s, ok := stringLit(elt)
+		if !ok {
+			return nil, false
+		}
+		labels = append(labels, s)
+	}
+	return labels, true
+}
+
+// optsName resolves expr as a prometheus.HistogramOpts{...}-shaped composite
+// literal and returns its Name field's string literal value.
+func optsName(expr ast.Expr) (string, bool) {
+	comp, ok := expr.(*ast.CompositeLit)
+	if !ok {
+		return "", false
+	}
+	for _, elt := range comp.Elts {
+		kv, ok := elt.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+		key, ok := kv.Key.(*ast.Ident)
+		if !ok || key.Name != "Name" {
+			continue
+		}
+		return stringLit(kv.Value)
+	}
+	return "", false
+}
+
+// metricsDocNameRE matches a markdown table cell that is exactly one
+// backtick-quoted name, nothing else — this is what excludes
+// docs/metrics.md's header row (`| Metric | Type | ... |`, no backticks)
+// and separator row (`|---|---|...|`) from being misread as metric rows.
+var metricsDocNameRE = regexp.MustCompile("^`([A-Za-z_][A-Za-z0-9_]*)`$")
+
+// metricsDocLabelRE finds every backtick-quoted token inside a table row's
+// Labels cell (see docs/metrics.md's own header comment for the table
+// format) — comma/space-separated doesn't matter, this just extracts each
+// `name` in turn. A cell of "-" (no labels) simply yields zero matches.
+var metricsDocLabelRE = regexp.MustCompile("`([A-Za-z_][A-Za-z0-9_]*)`")
+
+// parseMetricsDoc parses path (docs/metrics.md) as a sequence of
+// "| `metric` | Type | `label`, ... | Description |" table rows — see this
+// file's own header comment and docs/metrics.md's header comment for the
+// exact format. Any line that isn't a well-formed, backtick-first-cell row
+// is ignored, which is what lets prose and headings coexist in the same
+// file without special-casing them here. Lines inside an HTML comment
+// (`<!-- ... -->`, on their own lines — docs/metrics.md's own format-guide
+// block is written exactly this way) are skipped outright: that block's own
+// example row, `| \`metric_name\` | Type | \`label1\`, \`label2\` |
+// Description |`, is itself well-formed table syntax and would otherwise be
+// misread as documenting real metrics literally named "metric_name" with
+// labels "label1"/"label2" — a false lie this checker would report against
+// itself on every single run.
+func parseMetricsDoc(path string) (map[string]metricDesc, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+
+	result := make(map[string]metricDesc)
+	inComment := false
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+
+		if inComment {
+			if strings.Contains(line, "-->") {
+				inComment = false
+			}
+			continue
+		}
+		if strings.Contains(line, "<!--") && !strings.Contains(line, "-->") {
+			inComment = true
+			continue
+		}
+
+		if !strings.HasPrefix(line, "|") || !strings.HasSuffix(line, "|") {
+			continue
+		}
+		cells := strings.Split(strings.Trim(line, "|"), "|")
+		if len(cells) < 3 {
+			continue
+		}
+
+		nameMatch := metricsDocNameRE.FindStringSubmatch(strings.TrimSpace(cells[0]))
+		if nameMatch == nil {
+			continue // header row, separator row, or some other non-metric table row
+		}
+		name := nameMatch[1]
+
+		var labels []string
+		for _, m := range metricsDocLabelRE.FindAllStringSubmatch(strings.TrimSpace(cells[2]), -1) {
+			labels = append(labels, m[1])
+		}
+		result[name] = metricDesc{labels: labels, labelsKnown: true}
+	}
+	return result, nil
+}

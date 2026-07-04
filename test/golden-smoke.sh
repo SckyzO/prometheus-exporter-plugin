@@ -4,9 +4,12 @@
 # Scaffolds a throwaway exporter via scaffold.sh, then runs it through the
 # exact same gate a real maintainer would run right after
 # /new-prometheus-exporter: `make build` then `make check` (vet, lint, test,
-# vuln, actionlint, zizmor, deadcode — see Makefile.tmpl). Both must succeed,
-# the generated tree must never mention the source project this plugin's
-# knowledge is derived from, and no @@VAR@@ sentinel may survive.
+# vuln, actionlint, zizmor, deadcode, docs-check — see Makefile.tmpl). Both
+# must succeed, the generated tree must never mention the source project
+# this plugin's knowledge is derived from, and no @@VAR@@ sentinel may
+# survive. A final sub-check fabricates a lying docs/metrics.md line and
+# proves `make docs-check` alone actually rejects it, then reverts and
+# proves it accepts the clean doc again (see below).
 #
 # Usage:
 #   test/golden-smoke.sh --flavor <http|cli> --forge <github|none>
@@ -194,5 +197,35 @@ echo "== make check ($flavor/$forge) =="
 if ! ( cd "$work" && make check ); then
   die "make check FAILED for $flavor/$forge — see output above"
 fi
+
+# docs-check lie-injection (Task 11): the whole point of `make docs-check` is
+# that it CANNOT be green while docs/metrics.md documents a metric that does
+# not exist in code. Prove that property empirically rather than trusting it:
+# fabricate exactly such a lie, confirm the gate fails, revert, confirm it
+# passes again. A well-formed table row (see docs/metrics.md's own header
+# comment for the exact format internal/collector/docs_check_test.go parses)
+# naming a metric that cannot possibly exist — an UPPERCASE name guarantees
+# no accidental collision with any real (always-lowercase, @@NAMESPACE@@-
+# prefixed) extracted metric.
+echo "== docs-check lie-injection ($flavor/$forge): a fabricated metric must fail make docs-check =="
+metrics_doc="$work/docs/metrics.md"
+[ -f "$metrics_doc" ] || die "docs/metrics.md missing after scaffold — cannot run the lie-injection sub-check ($flavor/$forge)"
+
+lie_line='| `THIS_METRIC_DOES_NOT_EXIST_lie_injection_check` | Counter | - | Injected by golden-smoke.sh to prove make docs-check actually catches a lying doc. |'
+printf '%s\n' "$lie_line" >> "$metrics_doc"
+
+if ( cd "$work" && make docs-check ); then
+  die "make docs-check PASSED with a fabricated metric injected into docs/metrics.md — the gate does not actually catch a lying doc ($flavor/$forge)"
+fi
+echo "confirmed: make docs-check FAILS on the injected lie, as expected ($flavor/$forge)"
+
+# Revert: drop exactly the injected line, nothing else.
+grep -v -F "$lie_line" "$metrics_doc" > "$metrics_doc.tmp"
+mv "$metrics_doc.tmp" "$metrics_doc"
+
+if ! ( cd "$work" && make docs-check ); then
+  die "make docs-check still FAILS after reverting the injected lie — docs/metrics.md was not cleanly restored ($flavor/$forge)"
+fi
+echo "confirmed: make docs-check PASSES again after reverting the injected lie ($flavor/$forge)"
 
 echo "$prog: PASS — $flavor/$forge scaffold + build + check green"
