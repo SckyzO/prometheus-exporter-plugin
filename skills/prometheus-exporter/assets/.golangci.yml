@@ -36,11 +36,6 @@ linters:
     revive:
       rules:
         - name: indent-error-flow
-        # var-naming (snake_case -> camelCase) and exported (godoc comments) are
-        # relaxed for now: not every generated file documents every exported
-        # symbol yet. Tighten this once the scaffold's own templates carry a
-        # doc comment on every exported identifier — tracked as a follow-up,
-        # not a permanent policy.
 
     gocritic:
       enabled-checks:
@@ -51,11 +46,6 @@ linters:
     staticcheck:
       checks:
         - all
-        # ST1003 (naming conventions) and ST1000/ST1020 (package/godoc comments)
-        # are relaxed for the same reason as revive's var-naming/exported above.
-        - "-ST1003"
-        - "-ST1000"
-        - "-ST1020"
 
   exclusions:
     rules:
@@ -64,11 +54,6 @@ linters:
         linters:
           - errcheck
           - gosec
-
-      # revive: var-naming and exported godoc comments — see the settings
-      # comment above.
-      - linters: [revive]
-        text: "(var-naming|exported)"
 
 formatters:
   enable:

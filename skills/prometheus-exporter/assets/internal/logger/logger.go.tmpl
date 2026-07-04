@@ -1,3 +1,6 @@
+// Package logger provides a thin log/slog wrapper shared by every collector
+// and by cmd/@@EXPORTER_NAME@@'s main package, adding go-kit/log-style
+// compatibility helpers (Log, With) on top of slog's native API.
 package logger
 
 import (

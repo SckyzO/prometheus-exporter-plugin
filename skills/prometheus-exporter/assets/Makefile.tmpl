@@ -244,8 +244,12 @@ DOCKER_BUILD_ARGS = \
 # $TARGETPLATFORM/@@EXPORTER_NAME@@. Mirror that locally: compile into
 # ./linux/<arch>/@@EXPORTER_NAME@@, build with --platform so BuildKit sets
 # TARGETPLATFORM to the same value, then clean up. Never commit ./linux/ to
-# git (the binary is gitignored at repo root).
-DOCKER_PLATFORM := linux/$(shell go env GOARCH)
+# git (the binary is gitignored at repo root). Resolved as a shell-local
+# `platform` var inside docker-build's own recipe below (via `go env
+# GOARCH`), deliberately NOT a `:=` Make variable at this scope - that would
+# run `go env` at Make-parse time for every target in this file, including
+# on a Go-less host running only test/vet/clean/etc, exactly the trap the
+# header comment above warns `build` itself must avoid.
 
 # Same metadata as LDFLAGS above, spelled out again because this path builds
 # straight from the shell (no $(LDFLAGS)-with-embedded-quotes to reuse) and
@@ -257,18 +261,19 @@ DOCKER_GO_LDFLAGS = -s -w \
 	-X github.com/prometheus/common/version.BuildUser=$$(git config user.email) \
 	-X github.com/prometheus/common/version.BuildDate=$$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
+# Deliberately NOT routed through IN_TOOLS: this compiles the binary that
+# gets baked into the image right below, a separate concern from the
+# primary containerised `build` target above, and this target needs a
+# host Go toolchain either way (same requirement it already has for
+# docker/podman itself, and no native fallback makes sense for "build a
+# container image" in the first place).
 .PHONY: docker-build
 docker-build:
 	@[ "$(CONTAINER_ENGINE)" != none ] || { echo "no container engine (docker or podman) found" >&2; exit 1; }
 	@echo "Building $(DOCKER_REF)"
-	# Deliberately NOT routed through IN_TOOLS: this compiles the binary that
-	# gets baked into the image right below, a separate concern from the
-	# primary containerised `build` target above, and this target needs a
-	# host Go toolchain either way (same requirement it already has for
-	# docker/podman itself, and no native fallback makes sense for "build a
-	# container image" in the first place).
-	CGO_ENABLED=0 GOOS=linux go build -ldflags "$(DOCKER_GO_LDFLAGS)" -o ./$(DOCKER_PLATFORM)/$(EXPORTER_NAME) ./cmd/$(EXPORTER_NAME)
-	$(CONTAINER_ENGINE) build $(DOCKER_BUILD_ARGS) --platform $(DOCKER_PLATFORM) -t $(DOCKER_REF) .
+	platform="linux/$$(go env GOARCH)"; \
+	CGO_ENABLED=0 GOOS=linux go build -ldflags "$(DOCKER_GO_LDFLAGS)" -o "./$$platform/$(EXPORTER_NAME)" ./cmd/$(EXPORTER_NAME); \
+	$(CONTAINER_ENGINE) build $(DOCKER_BUILD_ARGS) --platform "$$platform" -t $(DOCKER_REF) .
 	@rm -rf ./linux
 	@echo "built $(DOCKER_REF)"
 
