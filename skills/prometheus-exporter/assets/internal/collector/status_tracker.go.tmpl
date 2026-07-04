@@ -56,26 +56,54 @@ func (st *StatusTracker) Describe(ch chan<- *prometheus.Desc) {
 	ch <- st.duration
 }
 
-// Collect runs each inner collector, measures its duration, and emits status metrics.
-// Each inner collector writes directly into ch — no intermediate channel or extra
-// goroutine. Panics are caught via defer/recover in the same goroutine, which is
-// standard Go and avoids any buffering overhead regardless of metric volume.
+// Collect runs each inner collector, measures its duration, and emits status
+// metrics. Success is count-based, not just panic-based: each inner
+// collector's output is buffered on a private per-entry channel (instead of
+// writing directly into ch) so this method can count how many metrics it
+// produced before forwarding them. A collector that returns normally but
+// emits zero metrics — the documented "log the error, then bare return"
+// shape every collector in this exporter follows (see collector.go's Collect
+// doc comment) — is exactly as much a failed scrape as one that panics, so
+// both are reported as collector_success=0 here. Panics are still caught via
+// defer/recover in the same goroutine that calls Collect; deferring the
+// channel close ahead of the recover (LIFO: recover runs first) guarantees
+// the buffering goroutine below always sees its channel closed and returns,
+// even when the wrapped Collect panics partway through.
 func (st *StatusTracker) Collect(ch chan<- prometheus.Metric) {
 	for _, e := range st.entries {
 		start := time.Now()
 		succeeded := 1.0
 
+		sub := make(chan prometheus.Metric)
+		var collected []prometheus.Metric
+		done := make(chan struct{})
+		go func() {
+			for m := range sub {
+				collected = append(collected, m)
+			}
+			close(done)
+		}()
+
 		func() {
+			defer close(sub)
 			defer func() {
 				if r := recover(); r != nil {
 					st.logger.Error("Collector panicked", "collector", e.name, "panic", r)
 					succeeded = 0
 				}
 			}()
-			e.collector.Collect(ch)
+			e.collector.Collect(sub)
 		}()
+		<-done
 
 		elapsed := time.Since(start).Seconds()
+		if len(collected) == 0 {
+			succeeded = 0
+		}
+		for _, m := range collected {
+			ch <- m
+		}
+
 		ch <- prometheus.MustNewConstMetric(st.success, prometheus.GaugeValue, succeeded, e.name)
 		ch <- prometheus.MustNewConstMetric(st.duration, prometheus.GaugeValue, elapsed, e.name)
 	}

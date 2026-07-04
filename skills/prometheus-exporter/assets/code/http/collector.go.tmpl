@@ -89,13 +89,27 @@ func (c *ExampleCollector) Describe(ch chan<- *prometheus.Desc) {
 }
 
 // Collect fetches and emits this collector's metrics. On any error it logs
-// and returns without sending anything: zero metrics from one scrape is how
-// the StatusTracker wrapping every collector marks this collector's health
-// as failed, instead of silently publishing stale or zero-value data as if
-// it were current.
+// and returns without sending anything: the StatusTracker wrapping every
+// collector counts how many metrics each Collect call actually emits, and
+// zero from one scrape is what makes it set
+// @@NAMESPACE@@_exporter_collector_success{collector="example"} to 0 for
+// this collector, instead of silently publishing stale or zero-value data as
+// if it were current (see status_tracker.go's Collect for the counting
+// logic this relies on).
+//
+// Collector-authoring rule: on a successful scrape always emit your
+// metrics — with zero VALUES when there is no data — never zero metrics.
+// Emitting nothing is what StatusTracker treats as a failed scrape, so a
+// collector that wants to report "no data" as a normal outcome must still
+// send a metric (for example a gauge set to 0), not bare-return like the
+// error path below.
 func (c *ExampleCollector) Collect(ch chan<- prometheus.Metric) {
 	stats, err := c.exampleGetMetrics(context.Background())
 	if err != nil {
+		// Error path: log and return with zero metrics sent — see the
+		// collector-authoring rule above for why that bare return is only
+		// correct here, on a genuine failure, and not as a stand-in for "no
+		// data this scrape".
 		c.log.Error("Failed to get example metrics", "err", err)
 		return
 	}

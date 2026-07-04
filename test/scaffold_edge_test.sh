@@ -214,6 +214,14 @@ run --src "$realassets" --dst "$work/wiring-dst" --flavor http --forge none \
 [ "$rc" -eq 0 ] || fail "real-assets http scaffold (for wiring-injection check) failed, rc=$rc: $(cat "$err")"
 mainfile="$work/wiring-dst/cmd/demo_exporter/main.go"
 [ -f "$mainfile" ] || fail "scaffolded main.go missing at $mainfile"
+
+# The marker-injection checks below only prove main.go itself was patched;
+# they say nothing about whether the http flavor's own source files actually
+# made it into the scaffolded tree. Assert those exist too.
+for f in collector.go collector_test.go client.go; do
+  [ -f "$work/wiring-dst/internal/collector/$f" ] || fail "expected internal/collector/$f to exist after an http-flavor scaffold"
+done
+
 grep -q 'exampleTarget := kingpin.Flag' "$mainfile" || fail "client_init.frag was not injected into main.go"
 grep -q '// @@CLIENT_INIT@@' "$mainfile" || fail "// @@CLIENT_INIT@@ marker must survive injection so /add-collector can reuse it"
 grep -q 'register("example"' "$mainfile" || fail "registry.frag was not injected into main.go"

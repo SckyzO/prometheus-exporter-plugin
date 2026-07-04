@@ -136,3 +136,101 @@ func TestExampleCollector_ErrorHandling(t *testing.T) {
 		assertZeroMetrics(t, srv.URL)
 	})
 }
+
+// statusTrackerSuccessMetric is the collector_success metric family name,
+// shared by the two StatusTracker tests below both as their
+// testutil.CollectAndCompare filter and inside their own expected-text
+// literals. Filtering to just this family deliberately excludes
+// collector_duration_seconds from both comparisons: its value is a real
+// elapsed time and therefore not deterministic.
+const statusTrackerSuccessMetric = "@@NAMESPACE@@_exporter_collector_success"
+
+// TestExampleCollector_StatusTrackerSuccess wraps a healthy ExampleCollector
+// (live target, valid response) in a StatusTracker and asserts it is
+// reported successful. Read together with
+// TestExampleCollector_StatusTrackerFailure below, this pins down both
+// directions of the count-based contract: metrics emitted means success,
+// zero metrics means failure, regardless of whether anything panicked.
+func TestExampleCollector_StatusTrackerSuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "testdata/example.json")
+	}))
+	defer srv.Close()
+
+	log := logger.NewTextLogger("error")
+	c := NewExampleCollector(log, NewClient(srv.URL, time.Second))
+
+	tracker := NewStatusTracker(log)
+	tracker.Add("example", c)
+
+	expected := `
+# HELP ` + statusTrackerSuccessMetric + ` Whether the last scrape of the collector succeeded (1=success, 0=failure)
+# TYPE ` + statusTrackerSuccessMetric + ` gauge
+` + statusTrackerSuccessMetric + `{collector="example"} 1
+`
+	if err := testutil.CollectAndCompare(tracker, strings.NewReader(expected), statusTrackerSuccessMetric); err != nil {
+		t.Fatalf("unexpected collecting result:\n%s", err)
+	}
+}
+
+// TestExampleCollector_StatusTrackerFailure wraps an ExampleCollector pointed
+// at an unreachable target (so Collect logs an error and bare-returns, per
+// its documented error path — see collector.go's Collect) in a StatusTracker
+// and asserts the collector is reported UNsuccessful, even though nothing
+// panicked. Before the count-based fix, StatusTracker only flipped success
+// to 0 on a recovered panic, so a plain log-and-return error path like
+// ExampleCollector's left it reporting success=1 with zero metrics
+// published — this test fails against that pre-fix StatusTracker (RED) and
+// passes once Collect counts emitted metrics instead (GREEN).
+func TestExampleCollector_StatusTrackerFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	srv.Close() // closed before use: every request now fails with connection refused
+
+	log := logger.NewTextLogger("error")
+	c := NewExampleCollector(log, NewClient(srv.URL, time.Second))
+
+	tracker := NewStatusTracker(log)
+	tracker.Add("example", c)
+
+	expected := `
+# HELP ` + statusTrackerSuccessMetric + ` Whether the last scrape of the collector succeeded (1=success, 0=failure)
+# TYPE ` + statusTrackerSuccessMetric + ` gauge
+` + statusTrackerSuccessMetric + `{collector="example"} 0
+`
+	if err := testutil.CollectAndCompare(tracker, strings.NewReader(expected), statusTrackerSuccessMetric); err != nil {
+		t.Fatalf("unexpected collecting result:\n%s", err)
+	}
+}
+
+// TestRequestDuration_CustomRegistryReachable locks the other Critical fix:
+// RequestDuration must be a plain, exported *prometheus.HistogramVec that
+// this exporter's own custom registry can register directly — the same way
+// registry.frag's injected register("http_client_requests", ...) call does
+// in main.go — not a promauto value reachable only from
+// prometheus.DefaultRegisterer. Before the fix, promauto.NewHistogramVec
+// self-registered into that process-wide default registerer as a side
+// effect of package init: reachable from prometheus.DefaultGatherer, but
+// invisible to the custom registry main.go actually serves at /metrics.
+func TestRequestDuration_CustomRegistryReachable(t *testing.T) {
+	RequestDuration.WithLabelValues("success").Observe(0.01)
+
+	reg := prometheus.NewRegistry()
+	if err := reg.Register(RequestDuration); err != nil {
+		t.Fatalf("Register(RequestDuration) on a fresh custom registry: %v", err)
+	}
+	count, err := testutil.GatherAndCount(reg, "@@NAMESPACE@@_exporter_request_duration_seconds")
+	if err != nil {
+		t.Fatalf("GatherAndCount(custom registry): %v", err)
+	}
+	if count == 0 {
+		t.Fatal("GatherAndCount(custom registry) = 0, want >= 1: RequestDuration did not reach a registry it was explicitly registered on")
+	}
+
+	dcount, err := testutil.GatherAndCount(prometheus.DefaultGatherer, "@@NAMESPACE@@_exporter_request_duration_seconds")
+	if err != nil {
+		t.Fatalf("GatherAndCount(DefaultGatherer): %v", err)
+	}
+	if dcount != 0 {
+		t.Fatalf("GatherAndCount(DefaultGatherer) = %d, want 0: RequestDuration must not self-register into the process-wide default registerer (that was the pre-fix bug — promauto.NewHistogramVec auto-registers there, a registry main.go's own /metrics handler never gathers)", dcount)
+	}
+}

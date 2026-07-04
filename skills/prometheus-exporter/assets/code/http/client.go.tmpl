@@ -8,26 +8,35 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-// requestDuration times every Client.Fetch call, labeled by outcome
+// RequestDuration times every Client.Fetch call, labeled by outcome
 // ("success" or "error"). It is declared once at package scope, not per
 // Client, because Prometheus metrics are meant to live for the process
 // lifetime, not the lifetime of whichever struct happens to touch them.
+// Exported (capitalized) so main.go's // @@COLLECTOR_REGISTRY@@ wiring (see
+// registry.frag) can register it directly on this exporter's own custom
+// registry.
 //
-// Known limitation: main.go deliberately builds its own
-// prometheus.NewRegistry() instead of using the process-wide default
-// registry, to avoid pulling third-party global state into this exporter's
-// own /metrics output (see main.go's own comment on that line).
-// promauto.NewHistogramVec below registers into prometheus.DefaultRegisterer,
-// which is a different registry than the one this exporter actually serves
-// at /metrics. So today this histogram is tracked in-process but not scraped
-// by this exporter's own endpoint. Exposing it there would mean threading
-// that registry down into internal/collector (for example as a NewClient
-// parameter), which the current flavor seam does not do. Documented here
-// deliberately rather than shipped as if it already worked.
-var requestDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+// Deliberately built with plain prometheus.NewHistogramVec, not
+// promauto.NewHistogramVec: promauto's factories auto-register into
+// prometheus.DefaultRegisterer, the process-wide global registry — but
+// main.go builds its own prometheus.NewRegistry() instead of using that
+// global one (see main.go's own comment on that line), and only collectors
+// reachable via register()/tracker.Add(...) ever reach /metrics. A
+// *prometheus.HistogramVec already implements prometheus.Collector, so
+// registry.frag registers this var the exact same way it registers every
+// other collector — no promauto, no second registry to thread through
+// NewClient.
+//
+// Single process-wide histogram, labeled only by outcome: if
+// /add-collector later wires a second HTTP-flavor collector against a
+// different target, both collectors' request timings share these same
+// "success"/"error" buckets and are not distinguishable from each other by
+// target. Fine for this scaffold's one-collector v0.1 starting point; a
+// per-target breakdown would need an additional label threaded through
+// Client.
+var RequestDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 	Name: "@@NAMESPACE@@_exporter_request_duration_seconds",
 	Help: "Duration in seconds of HTTP requests issued by this exporter's collectors, by outcome.",
 }, []string{"outcome"})
@@ -53,7 +62,7 @@ func NewClient(target string, timeout time.Duration) *Client {
 // Fetch issues a GET request for baseURL+path and returns the response
 // body. A non-2xx status is reported as an error so callers never have to
 // separately inspect the status code. Every call, success or failure, is
-// timed and recorded on requestDuration.
+// timed and recorded on RequestDuration.
 func (c *Client) Fetch(ctx context.Context, path string) (data []byte, err error) {
 	start := time.Now()
 	defer func() {
@@ -61,7 +70,7 @@ func (c *Client) Fetch(ctx context.Context, path string) (data []byte, err error
 		if err != nil {
 			outcome = "error"
 		}
-		requestDuration.WithLabelValues(outcome).Observe(time.Since(start).Seconds())
+		RequestDuration.WithLabelValues(outcome).Observe(time.Since(start).Seconds())
 	}()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
