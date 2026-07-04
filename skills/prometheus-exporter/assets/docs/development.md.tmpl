@@ -69,6 +69,17 @@ curl http://localhost:@@DEFAULT_PORT@@/healthz
 # returns: ok
 ```
 
+**Simulate CI locally:**
+
+If this repo has a GitHub Actions layer (`.github/workflows/`), [`act`](https://github.com/nektos/act)
+replays those workflows locally before you push — requires Docker, and only applies if the
+repo actually has a `.github/workflows/` directory (for example, not on a `--forge none`
+scaffold):
+
+```bash
+act push
+```
+
 **No engine available, or debugging an engine-specific failure:**
 
 If neither Docker nor Podman is detected, every tooling target silently falls back to the
@@ -91,7 +102,10 @@ validate a metric -> check logs -> `make check`.
 
 To try the containerized image instead of the bare binary:
 
+> Needs a `Dockerfile` and `docker-compose.yml` at the repo root. If your copy of this repo
+> doesn't have them yet, the bare-binary loop above works with no extra setup.
+
 ```bash
 make docker-build
-make docker-run    # starts the compose stack; override IMAGE= for a different tag
+make docker-run    # starts the compose stack; override DOCKER_IMAGE=/DOCKER_TAG= for a different image/tag
 ```

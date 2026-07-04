@@ -45,8 +45,12 @@ bin/@@EXPORTER_NAME@@ --version
 - `make report` exits 0 - grade >= B (a drop in grade versus the default branch is a release
   blocker).
 - `make build` produces `bin/@@EXPORTER_NAME@@` without warnings.
-- `bin/@@EXPORTER_NAME@@ --version` prints a version string that includes the current branch
-  name for an unreleased build (for example `v0.2.0-3-gabcdef1`).
+- `bin/@@EXPORTER_NAME@@ --version` prints a first line of the form `@@EXPORTER_NAME@@, version
+  <VERSION> (branch: <BRANCH>, revision: <REVISION>)`, followed by indented `build user`/
+  `build date`/`go version`/`platform`/`tags` lines — branch and revision are separate fields,
+  never fused into the version string itself. For an unreleased build, `<VERSION>` comes from
+  `git describe --tags --always --dirty --abbrev=7` and typically looks like `v0.2.0-dirty` or
+  `v0.2.0-3-gabcdef1`, depending on how many commits/tags exist since the last tag.
 
 ### If it fails
 

@@ -56,11 +56,15 @@ is the only hard requirement; a host Go toolchain is optional (`NATIVE=1`).
 
 ### Docker
 
+These targets need a `Dockerfile` and `docker-compose.yml` at the repo root. If your copy of
+this repo doesn't have them yet, [build from source](#from-source) above works with no extra
+setup.
+
 Build and run a local image with the bundled Make targets:
 
 ```bash
 make docker-build
-make docker-run   # starts the compose stack; override IMAGE= for a different tag
+make docker-run   # starts the compose stack; override DOCKER_IMAGE=/DOCKER_TAG= for a different image/tag
 ```
 
 Once a release is tagged, GoReleaser (see [docs/release-process.md](docs/release-process.md))
@@ -112,7 +116,7 @@ Tagged releases publish signed, checksummed binaries with a CycloneDX SBOM attac
 | | `make osv` | Dependency vulnerability scan against the OSV database |
 | | `make deadcode` | Fails if any unreachable Go code is found |
 | Docker | `make docker-build` | Builds a local image tagged `@@EXPORTER_NAME@@:dev` |
-| | `make docker-run` | Starts the compose stack (override `IMAGE=`) |
+| | `make docker-run` | Starts the compose stack (override `DOCKER_IMAGE=`/`DOCKER_TAG=`) |
 
 `make check`, `make report`, and `make report-deps` run **inside a container** — contributors
 only need Docker or Podman, no host Go install required.
