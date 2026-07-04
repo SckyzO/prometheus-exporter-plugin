@@ -252,14 +252,32 @@ report-deps: native-warning tools-image
 # For building/running a local image outside the release pipeline (release
 # images are built by GoReleaser on tag push). Unlike the tooling targets
 # above, these have no native fallback: building or running a container
-# image inherently needs a container engine, so both targets fail fast with
-# a clear message if CONTAINER_ENGINE is "none", regardless of NATIVE.
+# image inherently needs a container engine, so all four targets fail fast
+# with a clear message if CONTAINER_ENGINE is "none", regardless of NATIVE.
+#
+# Dockerfile/Dockerfile.minimal are self-contained multi-stage builds: each
+# COPYs this repo's Go source into its own build stage and compiles it there
+# (see either file's own header comment) - unlike GoReleaser's release
+# pipeline, which cross-compiles externally first and stages the result at
+# $TARGETPLATFORM/@@EXPORTER_NAME@@ for dockers_v2 to COPY (see
+# .goreleaser.yaml). That means these four local-debug targets need nothing
+# beyond the container engine itself: no host Go toolchain, no pre-build or
+# staging step - `docker build .` and `make docker-build` do exactly the
+# same work.
 
-DOCKER_IMAGE ?= $(EXPORTER_NAME)
-DOCKER_TAG   ?= dev
-DOCKER_REF   := $(DOCKER_IMAGE):$(DOCKER_TAG)
+DOCKER_IMAGE       ?= $(EXPORTER_NAME)
+DOCKER_TAG         ?= dev
+DOCKER_REF         := $(DOCKER_IMAGE):$(DOCKER_TAG)
+DOCKER_REF_MINIMAL := $(DOCKER_IMAGE):$(DOCKER_TAG)-minimal
 
-# Build args shared by the image build.
+# Build args shared by every image build below. Both Dockerfiles declare
+# matching ARGs and inject them into their own build stage's -ldflags with
+# the exact same github.com/prometheus/common/version.* keys LDFLAGS (top of
+# this file) uses - so `--version` reports identical values whether the
+# binary was built by `make build` or by `make docker-build`/-minimal. A
+# bare `docker build .` with no --build-arg still works (each ARG defaults
+# to a generic value in the Dockerfile), it just reports less specific
+# version info.
 DOCKER_BUILD_ARGS = \
 	--build-arg VERSION=$$(git describe --tags --dirty 2>/dev/null || echo dev) \
 	--build-arg COMMIT=$$(git rev-parse HEAD) \
@@ -267,48 +285,37 @@ DOCKER_BUILD_ARGS = \
 	--build-arg BUILD_USER="$$(git config user.email)" \
 	--build-arg BUILD_DATE=$$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-# GoReleaser's dockers_v2 stages the release binary at
-# $TARGETPLATFORM/@@EXPORTER_NAME@@. Mirror that locally: compile into
-# ./linux/<arch>/@@EXPORTER_NAME@@, build with --platform so BuildKit sets
-# TARGETPLATFORM to the same value, then clean up. Never commit ./linux/ to
-# git (the binary is gitignored at repo root). Resolved as a shell-local
-# `platform` var inside docker-build's own recipe below (via `go env
-# GOARCH`), deliberately NOT a `:=` Make variable at this scope - that would
-# run `go env` at Make-parse time for every target in this file, including
-# on a Go-less host running only test/vet/clean/etc, exactly the trap the
-# header comment above warns `build` itself must avoid.
-
-# Same metadata as LDFLAGS above, spelled out again because this path builds
-# straight from the shell (no $(LDFLAGS)-with-embedded-quotes to reuse) and
-# strips debug info for a smaller release-shaped image (-s -w).
-DOCKER_GO_LDFLAGS = -s -w \
-	-X github.com/prometheus/common/version.Version=$$(git describe --tags --dirty 2>/dev/null || echo dev) \
-	-X github.com/prometheus/common/version.Revision=$$(git rev-parse HEAD) \
-	-X github.com/prometheus/common/version.Branch=$$(git rev-parse --abbrev-ref HEAD) \
-	-X github.com/prometheus/common/version.BuildUser=$$(git config user.email) \
-	-X github.com/prometheus/common/version.BuildDate=$$(date -u +%Y-%m-%dT%H:%M:%SZ)
-
-# Deliberately NOT routed through IN_TOOLS: this compiles the binary that
-# gets baked into the image right below, a separate concern from the
-# primary containerised `build` target above, and this target needs a
-# host Go toolchain either way (same requirement it already has for
-# docker/podman itself, and no native fallback makes sense for "build a
-# container image" in the first place).
 .PHONY: docker-build
 docker-build:
 	@[ "$(CONTAINER_ENGINE)" != none ] || { echo "no container engine (docker or podman) found" >&2; exit 1; }
 	@echo "Building $(DOCKER_REF)"
-	platform="linux/$$(go env GOARCH)"; \
-	CGO_ENABLED=0 GOOS=linux go build -ldflags "$(DOCKER_GO_LDFLAGS)" -o "./$$platform/$(EXPORTER_NAME)" ./cmd/$(EXPORTER_NAME); \
-	$(CONTAINER_ENGINE) build $(DOCKER_BUILD_ARGS) --platform "$$platform" -t $(DOCKER_REF) .
-	@rm -rf ./linux
+	$(CONTAINER_ENGINE) build $(DOCKER_BUILD_ARGS) -f Dockerfile -t $(DOCKER_REF) .
 	@echo "built $(DOCKER_REF)"
+
+# Distroless/minimal counterpart to docker-build above - same source, same
+# build args, just -f Dockerfile.minimal and a -minimal tag suffix so it
+# never collides with the standard image.
+.PHONY: docker-build-minimal
+docker-build-minimal:
+	@[ "$(CONTAINER_ENGINE)" != none ] || { echo "no container engine (docker or podman) found" >&2; exit 1; }
+	@echo "Building $(DOCKER_REF_MINIMAL)"
+	$(CONTAINER_ENGINE) build $(DOCKER_BUILD_ARGS) -f Dockerfile.minimal -t $(DOCKER_REF_MINIMAL) .
+	@echo "built $(DOCKER_REF_MINIMAL)"
 
 .PHONY: docker-run
 docker-run:
 	@[ "$(CONTAINER_ENGINE)" != none ] || { echo "no container engine (docker or podman) found" >&2; exit 1; }
 	@echo "Starting compose stack: $(DOCKER_REF) (override DOCKER_IMAGE=/DOCKER_TAG= to change)"
 	IMAGE=$(DOCKER_REF) $(CONTAINER_ENGINE) compose -f docker-compose.yml up -d
+	@echo "Metrics at http://localhost:@@DEFAULT_PORT@@/metrics"
+
+# Distroless/minimal counterpart to docker-run above - same compose
+# hardening, just docker-compose.minimal.yml and the -minimal image tag.
+.PHONY: docker-run-minimal
+docker-run-minimal:
+	@[ "$(CONTAINER_ENGINE)" != none ] || { echo "no container engine (docker or podman) found" >&2; exit 1; }
+	@echo "Starting compose stack: $(DOCKER_REF_MINIMAL) (override DOCKER_IMAGE=/DOCKER_TAG= to change)"
+	IMAGE=$(DOCKER_REF_MINIMAL) $(CONTAINER_ENGINE) compose -f docker-compose.minimal.yml up -d
 	@echo "Metrics at http://localhost:@@DEFAULT_PORT@@/metrics"
 
 # Cleans up build artifacts.

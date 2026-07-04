@@ -9,8 +9,10 @@
 # this plugin's knowledge is derived from, and no @@VAR@@ sentinel may
 # survive. `promtool check rules` then validates monitoring/prometheus/
 # {alerts,rules}.yml (native/docker/podman, explicit SKIP if none available —
-# see below). A final sub-check fabricates a lying docs/metrics.md line and
-# proves `make docs-check` alone actually rejects it, then reverts and
+# see below). A `docker build -f Dockerfile .` guarded the same way (docker,
+# then podman, else an explicit SKIP) proves the scaffolded Dockerfile itself
+# actually builds. A final sub-check fabricates a lying docs/metrics.md line
+# and proves `make docs-check` alone actually rejects it, then reverts and
 # proves it accepts the clean doc again (see below).
 #
 # Usage:
@@ -264,5 +266,33 @@ if ! ( cd "$work" && make docs-check ); then
   die "make docs-check still FAILS after reverting the injected lie — docs/metrics.md was not cleanly restored ($flavor/$forge)"
 fi
 echo "confirmed: make docs-check PASSES again after reverting the injected lie ($flavor/$forge)"
+
+# Guarded docker build (Task 13): Dockerfile is a self-contained multi-stage
+# build (it COPYs this scaffold's own source and compiles it — see the
+# file's own header comment), so `docker build .` must actually succeed on a
+# fresh scaffold, not just parse. Guarded the same way promtool is above,
+# minus the "native" tier — building an image always needs a container
+# engine, there is no host-only equivalent: docker, then podman, else an
+# explicit SKIP, never a silent pass. The image is tagged and left in the
+# local engine's cache (same trade-off promtool's `docker run prom/prometheus`
+# pull above already makes) rather than removed afterwards — re-running this
+# script repeatedly benefits from the layer cache instead of re-pulling/
+# re-compiling the Go toolchain layer every time.
+echo "== docker build ($flavor/$forge) =="
+if command -v docker >/dev/null 2>&1; then
+  echo "using docker"
+  if ! ( cd "$work" && docker build -f Dockerfile -t "golden-smoke-$flavor-$forge:latest" . ); then
+    die "docker build FAILED for $flavor/$forge — see output above"
+  fi
+  echo "confirmed: docker build PASSED ($flavor/$forge)"
+elif command -v podman >/dev/null 2>&1; then
+  echo "no docker; using podman"
+  if ! ( cd "$work" && podman build -f Dockerfile -t "golden-smoke-$flavor-$forge:latest" . ); then
+    die "docker build FAILED (via podman) for $flavor/$forge — see output above"
+  fi
+  echo "confirmed: docker build PASSED via podman ($flavor/$forge)"
+else
+  echo "SKIPPING docker build ($flavor/$forge): no docker/podman container engine found — install one to validate Dockerfile locally"
+fi
 
 echo "$prog: PASS — $flavor/$forge scaffold + build + check green"
