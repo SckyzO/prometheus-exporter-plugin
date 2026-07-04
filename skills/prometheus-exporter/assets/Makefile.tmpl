@@ -153,21 +153,33 @@ vuln: native-warning tools-image
 	@$(IN_TOOLS) -c 'govulncheck ./...'
 
 # actionlint - GitHub Actions workflow linter. Auto-discovers
-# .github/workflows/ and runs shellcheck on every `run:` block. Harmless
-# no-op when .github/workflows/ doesn't exist (e.g. this repo was
-# scaffolded with --forge none).
+# .github/workflows/. Despite what its own docs imply, it does NOT treat a
+# missing .github/workflows/ as "nothing to lint" - it hard-errors ("no
+# project was found in any parent directories") - so a repo scaffolded with
+# --forge none (no workflows at all) must guard the call itself, or `check`
+# would never pass on such a repo. Verified empirically against actionlint,
+# not assumed.
 .PHONY: actionlint
 actionlint: native-warning tools-image
-	@echo "Running actionlint"
-	@$(IN_TOOLS) -c 'actionlint -color'
+	@if [ -d .github/workflows ]; then \
+	  echo "Running actionlint"; \
+	  $(IN_TOOLS) -c 'actionlint -color'; \
+	else \
+	  echo "Skipping actionlint: no .github/workflows/ found (--forge none, or none added yet)"; \
+	fi
 
 # zizmor - static analysis (security) for GitHub Actions. --offline keeps
-# it deterministic (no GitHub API calls). Same forge=none caveat as
-# actionlint above.
+# it deterministic (no GitHub API calls). Same missing-.github/workflows/
+# guard as actionlint above, and for the same reason: --forge none ships no
+# workflows for it to scan.
 .PHONY: zizmor
 zizmor: native-warning tools-image
-	@echo "Running zizmor"
-	@$(IN_TOOLS) -c 'zizmor --offline .'
+	@if [ -d .github/workflows ]; then \
+	  echo "Running zizmor"; \
+	  $(IN_TOOLS) -c 'zizmor --offline .'; \
+	else \
+	  echo "Skipping zizmor: no .github/workflows/ found (--forge none, or none added yet)"; \
+	fi
 
 # gitleaks - secret scanner over the working tree. Kept out of `check`
 # (it's a prevention tool, not a build gate); run it before committing.

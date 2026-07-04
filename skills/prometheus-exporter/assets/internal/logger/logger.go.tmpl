@@ -15,11 +15,6 @@ type Logger struct {
 	*slog.Logger
 }
 
-// NewLogger creates a logger with the specified level, defaulting to text format.
-func NewLogger(level string) *Logger {
-	return NewTextLogger(level)
-}
-
 // NewTextLogger creates a text-format logger suitable for interactive use.
 func NewTextLogger(level string) *Logger {
 	var slogLevel slog.Level
