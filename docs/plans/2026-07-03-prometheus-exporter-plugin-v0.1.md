@@ -15,7 +15,7 @@
 Every task's requirements implicitly include this section. Values are verbatim from the design spec (`docs/design/2026-07-02-prometheus-exporter-plugin-design.md`).
 
 - **Reference exporter (derivation source, never shipped, never named in artifacts):** `~/Dev/work/apps_repo/exporters/slurm_exporter/slurm_exporter/`. Read the real files; do **not** reproduce templates from memory (spec §11).
-- **HARD gate — SLURM-GREP (the source PROJECT is never named):** `grep -rin slurm . --exclude-dir=docs --exclude-dir=.git --exclude-dir=.superpowers --exclude-dir=_work` must return **0**. The taught knowledge and templates stand on official Prometheus authority (`prometheus.io`), never on "distilled from <source project>" — so the source project is never named in any shipped file. `docs/design/` + `docs/plans/` are creation-history (this plan lives there) and are the only places it may appear. (Use `--exclude-dir=docs`, NOT `| grep -v '/docs/'` — GNU grep emits bare `docs/…` paths without a leading slash, so the pipe filter silently fails. RTK may wrap `grep` unreliably — use `command grep` if results look wrong.)
+- **HARD gate — SLURM-GREP (the source PROJECT is never named):** `grep -rin slurm . --exclude-dir=docs --exclude-dir=.git --exclude-dir=.superpowers --exclude-dir=test` must return **0**. The taught knowledge and templates stand on official Prometheus authority (`prometheus.io`), never on "distilled from <source project>" — so the source project is never named in any shipped file. `docs/design/` + `docs/plans/` are creation-history (this plan lives there) and are the only places it may appear. (Use `--exclude-dir=docs`, NOT `| grep -v '/docs/'` — GNU grep emits bare `docs/…` paths without a leading slash, so the pipe filter silently fails. RTK may wrap `grep` unreliably — use `command grep` if results look wrong.)
 - **Ownership in templates — always `@@OWNER@@`:** the generated exporter's owner/maintainer is the third party who runs `/new-prometheus-exporter`, represented by `@@OWNER@@` in scaffold templates — **never a hardcoded real handle**. This (not any secrecy rule) is the reason a real maintainer handle does not appear under `assets/`.
 - **Light hygiene — HANDLE-GREP (non-blocking, decided 2026-07-03):** `grep -rin sckyzo skills/ commands/ agents/` should be **0** — there is simply no reason for the maintainer's handle to appear in generic knowledge/templates, so it stays absent naturally. This is a hygiene check, **not a hard gate**: the maintainer openly authors the plugin, and `SckyzO` legitimately appears in the plugin's own manifest / LICENSE / README / root CLAUDE.md.
 - **Auto-portance:** the plugin depends on **no** personal `CLAUDE.md`/profile. OSS engineering principles are extracted and de-personalized inside the plugin (spec §7bis).
@@ -665,7 +665,7 @@ Run: `sh test/golden-smoke.sh --all`
 Expected: every matrix cell PASS; grep clean; lie-injection behaves; skips (if any) logged.
 - [ ] **Step 4: Repo-wide zero-source gate (two scoped checks)**
 
-Run SLURM-GREP: `grep -rin slurm . --exclude-dir=docs --exclude-dir=.git --exclude-dir=.superpowers --exclude-dir=_work` → Expected: empty.
+Run SLURM-GREP: `grep -rin slurm . --exclude-dir=docs --exclude-dir=.git --exclude-dir=.superpowers --exclude-dir=test` → Expected: empty.
 Run HANDLE-GREP: `grep -rin sckyzo skills/ commands/ agents/` → Expected: empty. (Manifest/LICENSE/README/CLAUDE.md root exempt — see Global Constraints.)
 - [ ] **Step 5: Commit** `test(ci): add full golden matrix and plugin CI (validate + zero-source grep + golden)`.
 
@@ -690,7 +690,7 @@ git tag v0.1.0
 - [ ] **Step 5: Final validate + grep**
 
 Run: `claude plugin validate .` → Expected: PASS.
-Run SLURM-GREP: `grep -rin slurm . --exclude-dir=docs --exclude-dir=.git --exclude-dir=.superpowers --exclude-dir=_work` → Expected: empty.
+Run SLURM-GREP: `grep -rin slurm . --exclude-dir=docs --exclude-dir=.git --exclude-dir=.superpowers --exclude-dir=test` → Expected: empty.
 Run HANDLE-GREP: `grep -rin sckyzo skills/ commands/ agents/` → Expected: empty.
 
 ---
