@@ -35,8 +35,8 @@ groups:
       # currently-healthy collectors is meaningless when there are none.
       - record: job:@@NAMESPACE@@_exporter_collector_duration_seconds:avg_healthy
         expr: >
-          sum(@@NAMESPACE@@_exporter_collector_duration_seconds * @@NAMESPACE@@_exporter_collector_success)
-          / (sum(@@NAMESPACE@@_exporter_collector_success) > 0)
+          sum by (job) (@@NAMESPACE@@_exporter_collector_duration_seconds * @@NAMESPACE@@_exporter_collector_success)
+          / (sum by (job) (@@NAMESPACE@@_exporter_collector_success) > 0)
 
       # ──────────────────────────────────────────────────────────────────
       # EXAMPLE (commented out) — business error-rate ratio

@@ -160,8 +160,8 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum(@@NAMESPACE@@_exporter_collector_success{job=~\"$job\"})",
-          "legendFormat": "OK",
+          "expr": "sum by (job, instance) (@@NAMESPACE@@_exporter_collector_success{job=~\"$job\"})",
+          "legendFormat": "OK {{job}}/{{instance}}",
           "refId": "A",
           "instant": true
         }
@@ -198,8 +198,8 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum(1 - @@NAMESPACE@@_exporter_collector_success{job=~\"$job\"})",
-          "legendFormat": "FAIL",
+          "expr": "sum by (job, instance) (1 - @@NAMESPACE@@_exporter_collector_success{job=~\"$job\"})",
+          "legendFormat": "FAIL {{job}}/{{instance}}",
           "refId": "A",
           "instant": true
         }
@@ -239,8 +239,8 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum(@@NAMESPACE@@_exporter_collector_success{job=~\"$job\"}) / count(@@NAMESPACE@@_exporter_collector_success{job=~\"$job\"}) * 100",
-          "legendFormat": "Health %",
+          "expr": "sum by (job, instance) (@@NAMESPACE@@_exporter_collector_success{job=~\"$job\"}) / count by (job, instance) (@@NAMESPACE@@_exporter_collector_success{job=~\"$job\"}) * 100",
+          "legendFormat": "Health % {{job}}/{{instance}}",
           "refId": "A",
           "instant": true
         }
@@ -294,7 +294,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "expr": "@@NAMESPACE@@_exporter_collector_success{job=~\"$job\"}",
-          "legendFormat": "{{collector}}",
+          "legendFormat": "{{collector}} ({{job}}/{{instance}})",
           "refId": "A",
           "instant": true
         }
@@ -350,7 +350,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "expr": "@@NAMESPACE@@_exporter_collector_success{job=~\"$job\"}",
-          "legendFormat": "{{collector}}",
+          "legendFormat": "{{collector}} ({{job}}/{{instance}})",
           "refId": "A"
         }
       ]
@@ -399,7 +399,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "expr": "@@NAMESPACE@@_exporter_collector_duration_seconds{job=~\"$job\"}",
-          "legendFormat": "{{collector}}",
+          "legendFormat": "{{collector}} ({{job}}/{{instance}})",
           "refId": "A"
         }
       ]
@@ -438,7 +438,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "expr": "sort_desc(@@NAMESPACE@@_exporter_collector_duration_seconds{job=~\"$job\"})",
-          "legendFormat": "{{collector}}",
+          "legendFormat": "{{collector}} ({{job}}/{{instance}})",
           "refId": "A",
           "instant": true
         }
@@ -475,7 +475,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "expr": "@@NAMESPACE@@_exporter_collector_duration_seconds{job=~\"$job\"}",
-          "legendFormat": "{{collector}}",
+          "legendFormat": "{{collector}} ({{job}}/{{instance}})",
           "refId": "A"
         }
       ]
@@ -523,8 +523,6 @@
           "options": {
             "excludeByName": {
               "Time": true,
-              "instance": true,
-              "job": true,
               "Value": true,
               "__name__": true,
               "Value #A": true
@@ -532,7 +530,9 @@
             "renameByName": {
               "path": "Path",
               "version": "Version",
-              "checksum": "Checksum"
+              "checksum": "Checksum",
+              "job": "Job",
+              "instance": "Instance"
             }
           }
         }

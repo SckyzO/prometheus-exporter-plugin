@@ -102,6 +102,14 @@ path), reload Prometheus (`SIGHUP` or `/-/reload`), and check **Status →
 Rules** to confirm the `@@NAMESPACE@@.alerts` and `@@NAMESPACE@@.rules`
 groups load without errors.
 
+**Match your real `job_name`.** `alerts.yml`'s `ExporterDown` rule hardcodes
+`up{job="@@EXPORTER_NAME@@"} == 0`, matching the `job_name` in the
+`scrape_configs` snippet above. If your own `scrape_configs` entry uses a
+different `job_name`, edit that selector (and any other `job=` selector you
+rely on across `alerts.yml` / `rules.yml`) to match — otherwise the alert
+silently never fires, since it's just comparing against a `job` label value
+that no series will ever have.
+
 ### Validating the rule files
 
 ```bash
