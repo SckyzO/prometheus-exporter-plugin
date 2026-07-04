@@ -127,6 +127,85 @@ func TestExampleCollector_ErrorHandling(t *testing.T) {
 		}
 		assertZeroMetrics(t)
 	})
+
+	// A duplicate key must not reach two MustNewConstMetric calls on the
+	// same descriptor+label-set — see parseExample's doc comment for why
+	// that would break Registry.Gather for the WHOLE scrape, not just this
+	// collector. parseExample's fail-closed guard turns it into an ordinary
+	// parse error instead, so this collector reports zero metrics
+	// (StatusTracker marks it failed) exactly like any other parse error,
+	// and nothing downstream ever sees the duplicate.
+	t.Run("Execute succeeds but output has a duplicate key", func(t *testing.T) {
+		oldExecute := Execute
+		defer func() { Execute = oldExecute }()
+		Execute = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			return []byte("foo 1\nfoo 2\n"), nil
+		}
+		assertZeroMetrics(t)
+	})
+}
+
+// statusTrackerSuccessMetric is the collector_success metric family name,
+// used below as TestExampleCollector_StatusTrackerSuccessOnEmptyOutput's
+// testutil.CollectAndCompare filter. Filtering to just this family
+// deliberately excludes collector_duration_seconds: its value is a real
+// elapsed time and therefore not deterministic.
+const statusTrackerSuccessMetric = "@@NAMESPACE@@_exporter_collector_success"
+
+// TestExampleCollector_StatusTrackerSuccessOnEmptyOutput is the reason the
+// entries gauge exists: a data source that runs successfully but has
+// nothing to report (blank output, exit 0) is a legitimate, healthy
+// outcome, not a failure — Collect must still emit something (entries,
+// valued 0) so this case is distinguishable from the error path's zero
+// metrics (see Collect's doc comment on the collector-authoring rule).
+// Wrapping the collector in a real StatusTracker — not just GatherAndCount
+// against a plain registry — proves that distinction actually reaches the
+// success signal operators alert on, the same way HTTP's
+// TestExampleCollector_StatusTrackerSuccess proves it for a healthy
+// non-empty target.
+func TestExampleCollector_StatusTrackerSuccessOnEmptyOutput(t *testing.T) {
+	oldExecute := Execute
+	defer func() { Execute = oldExecute }()
+	Execute = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		return []byte(""), nil
+	}
+
+	log := logger.NewTextLogger("error")
+	c := NewExampleCollector(log, time.Second)
+
+	reg := prometheus.NewRegistry()
+	if err := reg.Register(c); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	count, err := testutil.GatherAndCount(reg)
+	if err != nil {
+		t.Fatalf("GatherAndCount: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("GatherAndCount = %d, want 1 (the entries gauge, valued 0 — never zero metrics on a successful scrape)", count)
+	}
+
+	expected := `
+# HELP @@NAMESPACE@@_example_entries Number of key/value entries parsed from the example data source in the last scrape.
+# TYPE @@NAMESPACE@@_example_entries gauge
+@@NAMESPACE@@_example_entries 0
+`
+	if err := testutil.CollectAndCompare(c, strings.NewReader(expected)); err != nil {
+		t.Fatalf("unexpected collecting result:\n%s", err)
+	}
+
+	tracker := NewStatusTracker(log)
+	tracker.Add("example", c)
+
+	expectedSuccess := `
+# HELP ` + statusTrackerSuccessMetric + ` Whether the last scrape of the collector succeeded (1=success, 0=failure)
+# TYPE ` + statusTrackerSuccessMetric + ` gauge
+` + statusTrackerSuccessMetric + `{collector="example"} 1
+`
+	if err := testutil.CollectAndCompare(tracker, strings.NewReader(expectedSuccess), statusTrackerSuccessMetric); err != nil {
+		t.Fatalf("unexpected collecting result:\n%s", err)
+	}
 }
 
 // TestExecute_Success exercises the real Execute var — not a swapped stub —

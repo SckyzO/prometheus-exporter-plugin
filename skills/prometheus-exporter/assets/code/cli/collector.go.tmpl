@@ -49,13 +49,28 @@ func (c *ExampleCollector) exampleData(ctx context.Context) ([]byte, error) {
 //	bar 2
 //
 // Blank lines are skipped. Anything else — a line that isn't exactly two
-// whitespace-separated fields, or whose second field isn't a number — is a
-// parse error. This generic shape only exists to document the I/O →
-// pure-parse → glue pattern every collector in this exporter follows, not
-// to model any specific target; replace it with your real data source's
-// real parsing logic when adapting this collector.
+// whitespace-separated fields, whose second field isn't a number, or whose
+// key repeats a key already seen earlier in the same input — is a parse
+// error. The repeated-key rule is deliberate, not incidental: Collect below
+// emits one MustNewConstMetric per entry, all sharing the same descriptor
+// and labeled only by key, so two entries with the same key would produce
+// two metrics with an identical label set on that descriptor — something
+// Prometheus's Registry.Gather rejects at scrape time (see main.go's
+// ErrorHandling comment for what an unguarded Gather error there does to
+// the REST of the scrape). Rejecting the duplicate here, at parse time,
+// keeps that failure inside this collector's own fail-closed contract
+// (parse error → Collect logs and emits nothing, see Collect's doc comment)
+// instead of surfacing downstream as a Gather error. Adapting this parser
+// for a real data source that can legitimately repeat keys must
+// dedupe/aggregate before returning, or add a further label to
+// disambiguate — never let two ConstMetrics reach the same label set. This
+// generic shape only exists to document the I/O → pure-parse → glue pattern
+// every collector in this exporter follows, not to model any specific
+// target; replace it with your real data source's real parsing logic when
+// adapting this collector.
 func parseExample(b []byte) ([]exampleMetric, error) {
 	var metrics []exampleMetric
+	seen := make(map[string]struct{})
 
 	scanner := bufio.NewScanner(bytes.NewReader(b))
 	for scanner.Scan() {
@@ -74,7 +89,13 @@ func parseExample(b []byte) ([]exampleMetric, error) {
 			return nil, fmt.Errorf("parse example line %q: value %q is not a number: %w", line, fields[1], err)
 		}
 
-		metrics = append(metrics, exampleMetric{Key: fields[0], Value: value})
+		key := fields[0]
+		if _, dup := seen[key]; dup {
+			return nil, fmt.Errorf("parse example line %q: duplicate key %q (each key must appear at most once per scrape)", line, key)
+		}
+		seen[key] = struct{}{}
+
+		metrics = append(metrics, exampleMetric{Key: key, Value: value})
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("scan example output: %w", err)

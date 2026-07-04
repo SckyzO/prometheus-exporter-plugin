@@ -142,8 +142,20 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(indexHTML))
 	})
+	// ErrorHandling: ContinueOnError is a deliberate deviation from
+	// client_golang's default (HTTPErrorOnError). Every collector here is
+	// wrapped by the single StatusTracker above precisely so one collector
+	// can't take the whole scrape down; without this option, a Gather-level
+	// error attributable to just one of them (for example two ConstMetrics
+	// colliding on the same label set) would still discard every OTHER
+	// collector's metrics too and fail the entire /metrics response with an
+	// HTTP error, defeating that promise at the handler level. ContinueOnError
+	// serves every metric family that gathered cleanly and only falls back
+	// to an HTTP error if literally nothing could be gathered — the same
+	// idiom multi-collector exporters like node_exporter use.
 	http.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{
 		EnableOpenMetrics: true,
+		ErrorHandling:     promhttp.ContinueOnError,
 	}))
 	// /healthz returns 200 OK as long as the HTTP server is up. This allows
 	// orchestrators (Kubernetes, systemd watchdog) to distinguish "exporter
