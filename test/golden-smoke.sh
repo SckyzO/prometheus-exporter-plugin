@@ -104,8 +104,21 @@ case "$flavor-$forge" in
       --var OWNER=acme \
       --var LICENSE=apache-2.0
     ;;
+  cli-none)
+    sh "$assets/scaffold.sh" \
+      --src "$assets" --dst "$work" \
+      --flavor "$flavor" --forge "$forge" --force \
+      --var EXPORTER_NAME=demo_exporter \
+      --var NAMESPACE=demo \
+      --var MODULE_PATH=example.com/demo_exporter \
+      --var DATA_SOURCE=demo_cli \
+      --var DATA_SOURCE_PATH=unused \
+      --var DEFAULT_PORT=9999 \
+      --var OWNER=acme \
+      --var LICENSE=apache-2.0
+    ;;
   *)
-    die "no golden @@VAR@@ values wired yet for --flavor $flavor --forge $forge (only http+none is supported as of Task 7 — see Tasks 9/14/22 for cli/github)"
+    die "no golden @@VAR@@ values wired yet for --flavor $flavor --forge $forge (http+none and cli+none supported; see Tasks 14/22 for github)"
     ;;
 esac
 
