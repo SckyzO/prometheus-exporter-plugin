@@ -281,10 +281,9 @@ git -c commit.gpgsign=false commit -m "feat(scaffold): add dependency-free @@VAR
 
 **Interfaces (the flavor seam — consumed by Tasks 5, 8, 16):**
 - `main.go` defines and exposes:
-  - `type Collector = prometheus.Collector` alias used by factories.
-  - `func register(name string, c prometheus.Collector, enabledByDefault bool)` — appends to the registry and auto-creates `--[no-]collector.<name>` (kingpin negation), wraps with StatusTracker.
+  - `func register(name string, newFn func() prometheus.Collector, enabledByDefault bool)` — a **lazy constructor** (collectors are built after kingpin `Parse()`, else flag pointers read zero); appends a `registryEntry` and auto-creates `--[no-]collector.<name>` (kingpin negation), wraps with StatusTracker. (No `type Collector` alias — use `prometheus.Collector` directly.)
   - Marker `// @@CLIENT_INIT@@` — where flavor client construction is inserted (HTTP: `client := newClient(cfg)`; CLI: nothing).
-  - Marker `// @@COLLECTOR_REGISTRY@@` — where `register("<name>", New<Name>Collector(deps…), true)` lines are inserted by scaffold/`add-collector`.
+  - Marker `// @@COLLECTOR_REGISTRY@@` — where `register("<name>", func() prometheus.Collector { return New<Name>Collector(deps…) }, true)` lines are inserted by scaffold/`add-collector` (closure wraps the factory so construction happens post-`Parse()`).
   - `const namespace = "@@NAMESPACE@@"`.
 - Flavor collector constructor signatures the seam expects:
   - HTTP: `func New<Name>Collector(logger *Logger, client *Client) prometheus.Collector`
@@ -298,7 +297,7 @@ git -c commit.gpgsign=false commit -m "feat(scaffold): add dependency-free @@VAR
 
 **Transform:**
 - `go.mod.tmpl`: `module @@MODULE_PATH@@`; keep `go 1.26.x`; keep the dep set (`client_golang`, `exporter-toolkit`, `common`, `kingpin/v2`) with the **exact versions from the reference `go.mod`**. **context7-verify** `webflag.AddFlags` / `web.ListenAndServe` signatures against the pinned `exporter-toolkit` version (spec §12 open item) and adjust `main.go.tmpl` to match.
-- `main.go.tmpl`: keep [G] — registry map-driven, auto flags, StatusTracker wrapping, `RegisterExecMetrics`/cache metrics hooks (guard cache hook behind a no-op for HTTP), exporter-toolkit web flags, endpoints `/metrics` (OpenMetrics) `/healthz` `/`, signal-aware shutdown. Replace the hardcoded collector registrations with the two markers above + the `register()` helper. Replace `slurm`/binary specifics with `@@NAMESPACE@@`/`@@EXPORTER_NAME@@`/`@@DEFAULT_PORT@@`. Remove Slurm-only flags (`--slurm.bin-path`, feature-set, sacct). Keep `--command.timeout` only in the CLI wiring (move out of common if CLI-specific).
+- `main.go.tmpl`: keep [G] — registry map-driven, auto flags, StatusTracker wrapping, exporter-toolkit web flags, endpoints `/metrics` (OpenMetrics) `/healthz` `/`, signal-aware shutdown. Exec/request-timing self-instrumentation and cache metrics are **flavor/variant-owned, NOT in common** (HTTP wires request timing in `client.go`; CLI wires `RegisterExecMetrics` in `execute.go`; cache = v0.2). Replace the hardcoded collector registrations with the two markers above + the `register()` helper. Replace `slurm`/binary specifics with `@@NAMESPACE@@`/`@@EXPORTER_NAME@@`/`@@DEFAULT_PORT@@`. Remove Slurm-only flags (`--slurm.bin-path`, feature-set, sacct). Keep `--command.timeout` only in the CLI wiring (move out of common if CLI-specific).
 - `status_tracker.go.tmpl`, `logger.go.tmpl`: pure [G]; only rename package/import paths to `@@MODULE_PATH@@`; strip any Slurm comment.
 - **de-identify:** SLURM-GREP the four generated files → 0.
 - **Asset layout = mirror the final repo tree (REVISED from concern-grouping — decision 2026-07-04).** Common templates live at their FINAL repo-relative paths under `assets/`: `assets/go.mod.tmpl`, `assets/cmd/@@EXPORTER_NAME@@/main.go.tmpl`, `assets/internal/collector/status_tracker.go.tmpl`, `assets/internal/logger/logger.go.tmpl`. `scaffold.sh` does **NO** per-file/per-concern mapping table (avoids the central-hardcoded-list anti-pattern). The ONLY staging exception is flavor selection: change `scaffold.sh`'s flavor-flatten so `code/<flavor>/*` lands in `internal/collector/` (not `code/`), then `rm -rf code/`. Update `test/scaffold_test.sh` fixture + assertions to match (common files at final paths; flavor asserts `internal/collector/client.go`); keep both suites green. All later concern dirs (`build/`, `packaging/`, `docs/`, `monitoring/`, `release/`) follow the same rule in their tasks: template sits at its final repo-relative path under `assets/`, no mapping.
@@ -340,7 +339,7 @@ Expected: files listed; `GREP CLEAN`. (Full compile happens in Task 7.)
   - `ExampleCollector struct{ items, healthy *prometheus.Desc; … }`
   - `NewExampleCollector(logger, client)`; `Describe`; `Collect` → on error: `log + return` (0 metrics → StatusTracker marks failed).
 - [ ] **Step 3: Write the failing triad `collector_test.go.tmpl`** — `TestParseExample` (fixture bytes), `TestExampleCollector_Collect` (httptest.Server returns fixture → `NewRegistry`+`Gather` → assert 2 metrics), `TestExampleCollector_Describe` (exact desc count), `TestExampleCollector_ErrorHandling` (server 500 / closed → `Collect` yields 0 metrics, no panic). Include a `testdata/example.json` fixture template.
-- [ ] **Step 4: Write `wiring.go.tmpl`** — provides the two-marker fill: in `main.go` the scaffold inserts `client := newClient(cfg.dataSource, cfg.timeout)` at `// @@CLIENT_INIT@@` and `register("example", NewExampleCollector(logger, client), true)` at `// @@COLLECTOR_REGISTRY@@`. Implement insertion as sed-marker replacement rules that `scaffold.sh` applies for HTTP flavor (marker → flavor snippet file), keeping "no in-file conditionals".
+- [ ] **Step 4: Write `wiring.go.tmpl`** — provides the two-marker fill: in `main.go` the scaffold inserts `client := newClient(cfg.dataSource, cfg.timeout)` at `// @@CLIENT_INIT@@` and `register("example", func() prometheus.Collector { return NewExampleCollector(logger, client) }, true)` at `// @@COLLECTOR_REGISTRY@@`. Implement insertion as sed-marker replacement rules that `scaffold.sh` applies for HTTP flavor (marker → flavor snippet file), keeping "no in-file conditionals".
 - [ ] **Step 5: Materialize + grep check** (compile deferred to Task 7): scaffold HTTP, assert `internal/collector/collector.go` + `_test.go` + `client.go` present, markers filled, grep-clean.
 - [ ] **Step 6: Commit** `feat(templates): add HTTP flavor (client, example collector, test triad, wiring)`.
 
@@ -414,7 +413,7 @@ Expected: scaffold OK → `make build` PASS → `make check` PASS → grep clean
 - Keep the 5-piece shape + error contract identical to HTTP. Replace Slurm parsing with a **generic** parser: `parseExample(b) ([]kv, error)` splitting `key<whitespace>value` lines → gauge `@@NAMESPACE@@_example{key=…}`. `exampleData(ctx)` → `Execute(ctx, "@@DATA_SOURCE@@", "@@DATA_SOURCE_ARGS@@"…)`.
 - **Anonymize fixtures:** `testdata/example.txt` = generic `key value` lines, no Slurm output.
 - de-identify all five files → grep 0.
-- `wiring.go.tmpl`: CLI client-init snippet is empty; registry line `register("example", NewExampleCollector(logger), true)`.
+- `wiring.go.tmpl`: CLI client-init snippet is empty; registry line `register("example", func() prometheus.Collector { return NewExampleCollector(logger) }, true)`.
 
 - [ ] **Step 1: Read the source files in full.**
 - [ ] **Step 2: Write the five `.tmpl` files + `testdata/example.txt`.**
