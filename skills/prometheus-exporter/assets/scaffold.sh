@@ -312,6 +312,9 @@ esac
 # as the scan above, even though $sentinels is a script-written temp file
 # (not a traversal of arbitrary --dst content) and so is a far less likely
 # source of a genuine grep-internal failure.
+# Line-grained exception: grep -v drops whole physical lines, so a forgotten
+# @@FOO@@ sharing a line with one of the two markers would be swallowed too.
+# Fine today because each marker sits alone on its own line in main.go.
 filtered_rc=0
 grep -v -E '@@(CLIENT_INIT|COLLECTOR_REGISTRY)@@' "$sentinels" > "$pathlist" || filtered_rc=$?
 case "$filtered_rc" in

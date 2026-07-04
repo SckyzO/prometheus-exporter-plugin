@@ -184,4 +184,14 @@ run --src "$fixtures" --dst "$work/deep-dst" \
 [ -f "$work/deep-dst/internal/collector/redis_exporter/shallow.go" ] || fail "1-level sentinel path (sibling of the 2-level one) was not renamed"
 grep -q 'package deep // redis' "$work/deep-dst/internal/collector/redis_exporter/redissub/deep.go" || fail "content substitution missing inside the renamed multi-level path"
 
+# 6e. scaffold.sh self-copy: the fixture ships its own scaffold.sh (a stand-in
+# for the real plugin tooling file) precisely so this assertion has something
+# to catch. It must never survive into scaffolded output — it's plugin
+# tooling, not part of a generated exporter's repo.
+run --src "$fixtures" --dst "$work/selfcopy-dst" \
+  --flavor http --forge none \
+  --var EXPORTER_NAME=redis_exporter --var NAMESPACE=redis --var OWNER=acme
+[ "$rc" -eq 0 ] || fail "self-copy-strip run failed, rc=$rc: $(cat "$err")"
+[ ! -e "$work/selfcopy-dst/scaffold.sh" ] || fail "scaffold.sh should not be copied into scaffolded output"
+
 echo "PASS"
