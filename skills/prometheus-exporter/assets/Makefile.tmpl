@@ -1,0 +1,286 @@
+# Makefile - container-first dev tooling for @@EXPORTER_NAME@@.
+#
+# build, test, race, vet, lint, vuln, report, and report-deps all run inside
+# a single pinned *-tools image (scripts/docker/tools/) that bundles the Go
+# toolchain, golangci-lint, and every scanner these targets need - so the
+# only host requirement is a container engine (Docker or Podman), never a
+# local Go install. The Go version is pinned in exactly ONE place:
+# scripts/docker/tools/Dockerfile. There is no separate host GO_VERSION
+# here - keeping one in parallel would drift from the image and lie about
+# which version actually built your binary.
+#
+# Two paths when no engine is available (or you don't want one):
+#   - No docker/podman detected: tooling silently falls back to the host
+#     Go toolchain, printing a visible "unpinned tool versions" warning on
+#     every invocation.
+#   - NATIVE=1 make <target>: forces the host path even when an engine IS
+#     present (e.g. to debug an engine-specific failure).
+# Both paths run the identical underlying command; only WHERE it runs
+# differs.
+
+EXPORTER_NAME := @@EXPORTER_NAME@@
+
+# -eu -o pipefail: fail fast on an unset variable, a non-zero exit anywhere
+# in a pipeline, or the last command in one.
+SHELL := $(shell which bash) -eu -o pipefail
+
+VERSION    ?= $(shell git describe --tags --always --dirty --abbrev=7 || echo "untagged")
+REVISION   ?= $(shell git rev-parse HEAD)
+BRANCH     ?= $(shell git rev-parse --abbrev-ref HEAD)
+BUILD_USER ?= $(shell git config user.name) <$(shell git config user.email)>
+BUILD_DATE ?= $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
+
+# LDFLAGS inject build metadata into prometheus/common/version - the same
+# package every Prometheus exporter uses to serve --version / build_info.
+LDFLAGS = \
+	-X 'github.com/prometheus/common/version.Version=$(VERSION)' \
+	-X 'github.com/prometheus/common/version.Revision=$(REVISION)' \
+	-X 'github.com/prometheus/common/version.Branch=$(BRANCH)' \
+	-X 'github.com/prometheus/common/version.BuildUser=$(BUILD_USER)' \
+	-X 'github.com/prometheus/common/version.BuildDate=$(BUILD_DATE)'
+
+.PHONY: all
+all: build
+
+# --- Container-first tooling -------------------------------------------------
+# CONTAINER_ENGINE auto-detects docker, then podman, then falls back to
+# "none". NATIVE=1 forces the host-toolchain path below even when an engine
+# IS available.
+CONTAINER_ENGINE ?= $(shell command -v docker >/dev/null 2>&1 && echo docker || (command -v podman >/dev/null 2>&1 && echo podman || echo none))
+# Freeze whatever the line above produced (a user override or the $(shell...)
+# detection) into an immediately-expanded value. Without this, CONTAINER_ENGINE
+# stays a recursive (lazily re-evaluated) variable and every later reference -
+# the ifeq below, IN_TOOLS, and every docker-build/docker-run/tools-image
+# recipe - would re-run the detection shell command independently. Harmless in
+# practice (detection is deterministic within one `make` run) but wasteful,
+# and the ifeq below needs a single, stable answer to branch on.
+CONTAINER_ENGINE := $(CONTAINER_ENGINE)
+NATIVE ?= 0
+
+ifeq ($(NATIVE),1)
+RUN_NATIVE := 1
+else ifeq ($(CONTAINER_ENGINE),none)
+RUN_NATIVE := 1
+else
+RUN_NATIVE := 0
+endif
+
+TOOLS_IMG := $(EXPORTER_NAME)-tools:latest
+TOOLS_CTX := scripts/docker/tools
+
+# IN_TOOLS is the program every tooling target below hands its command to.
+# Every call site appends "-c '<command>'" itself, mirroring the container
+# path's own tools image `ENTRYPOINT ["/bin/bash"]` (which turns
+# "-c '<command>'" into `bash -c '<command>'`) - so the exact same call-site
+# shape works unchanged whichever path is active:
+#   native:        sh -c '<command>'
+#   containerised: <engine> run --rm -v "$(CURDIR):/repo" -w /repo IMG -c '<command>'
+ifeq ($(RUN_NATIVE),1)
+IN_TOOLS := sh
+else
+IN_TOOLS := $(CONTAINER_ENGINE) run --rm -v "$(CURDIR):/repo" -w /repo $(TOOLS_IMG)
+endif
+
+# Prerequisite of every tooling target below: prints the "unpinned
+# versions" warning exactly once per invocation (Make only evaluates a
+# given prerequisite once per run, no matter how many targets depend on
+# it) when running the host path - whether because no engine was found, or
+# NATIVE=1 forced it.
+.PHONY: native-warning
+native-warning:
+ifeq ($(RUN_NATIVE),1)
+	@echo "----------------------------------------------------------------"
+	@echo "No docker/podman detected (or NATIVE=1): running on the HOST Go"
+	@echo "toolchain and tools. Versions are NOT pinned - results may differ"
+	@echo "from CI. Install docker or podman for reproducible, pinned tooling."
+	@echo "----------------------------------------------------------------"
+endif
+
+# Builds the tools image if missing or if its Dockerfile changed. A no-op
+# on the native path - there is no image to build.
+.PHONY: tools-image
+tools-image:
+ifneq ($(RUN_NATIVE),1)
+	@if ! $(CONTAINER_ENGINE) image inspect $(TOOLS_IMG) >/dev/null 2>&1 || \
+	   [ $(TOOLS_CTX)/Dockerfile -nt /tmp/.$(TOOLS_IMG).stamp ]; then \
+	  echo "Building $(TOOLS_IMG)..."; \
+	  $(CONTAINER_ENGINE) build -t $(TOOLS_IMG) $(TOOLS_CTX) && touch /tmp/.$(TOOLS_IMG).stamp; \
+	fi
+endif
+
+# Build target: compiles bin/@@EXPORTER_NAME@@. Containerised like every
+# other tooling target here - this is what makes "a container engine is the
+# only host requirement" true. (Previously `build` alone required a host Go
+# toolchain, contradicting that claim - see the header comment above.)
+.PHONY: build
+build: native-warning tools-image
+	@echo "Building bin/$(EXPORTER_NAME)"
+	@mkdir -p bin
+	@$(IN_TOOLS) -c "CGO_ENABLED=0 go build -v -ldflags \"$(LDFLAGS)\" -o bin/$(EXPORTER_NAME) ./cmd/$(EXPORTER_NAME)"
+
+# Runs all tests.
+.PHONY: test
+test: native-warning tools-image
+	@echo "Running tests"
+	@$(IN_TOOLS) -c 'go test -v ./...'
+
+# Tests with the race detector. Useful to catch concurrency bugs in
+# collectors with background goroutines. CGO_ENABLED=1 is required: the
+# race detector is implemented in C (the tools image bundles a C toolchain).
+.PHONY: race
+race: native-warning tools-image
+	@echo "Running tests with race detector"
+	@$(IN_TOOLS) -c 'CGO_ENABLED=1 go test -race -count=1 ./...'
+
+# go vet.
+.PHONY: vet
+vet: native-warning tools-image
+	@echo "Running go vet"
+	@$(IN_TOOLS) -c 'go vet ./...'
+
+# golangci-lint, same tool + config as CI.
+.PHONY: lint
+lint: native-warning tools-image
+	@echo "Running golangci-lint"
+	@$(IN_TOOLS) -c 'golangci-lint run ./...'
+
+# govulncheck - Go call-graph vulnerability scanner. Catches reachable
+# stdlib / dependency CVEs that image scanners (e.g. Trivy) and module-list
+# scanners (osv-scanner, below) miss. Needs network to fetch the vuln DB.
+.PHONY: vuln
+vuln: native-warning tools-image
+	@echo "Running govulncheck"
+	@$(IN_TOOLS) -c 'govulncheck ./...'
+
+# actionlint - GitHub Actions workflow linter. Auto-discovers
+# .github/workflows/ and runs shellcheck on every `run:` block. Harmless
+# no-op when .github/workflows/ doesn't exist (e.g. this repo was
+# scaffolded with --forge none).
+.PHONY: actionlint
+actionlint: native-warning tools-image
+	@echo "Running actionlint"
+	@$(IN_TOOLS) -c 'actionlint -color'
+
+# zizmor - static analysis (security) for GitHub Actions. --offline keeps
+# it deterministic (no GitHub API calls). Same forge=none caveat as
+# actionlint above.
+.PHONY: zizmor
+zizmor: native-warning tools-image
+	@echo "Running zizmor"
+	@$(IN_TOOLS) -c 'zizmor --offline .'
+
+# gitleaks - secret scanner over the working tree. Kept out of `check`
+# (it's a prevention tool, not a build gate); run it before committing.
+.PHONY: secrets
+secrets: native-warning tools-image
+	@echo "Running gitleaks secret scan"
+	@$(IN_TOOLS) -c 'gitleaks dir . --no-banner --redact'
+
+# osv-scanner - dependency vulnerability scan against the OSV database.
+# Complements govulncheck (call graph) with the OSV feed. Needs network, so
+# it's a separate target rather than part of `check`.
+.PHONY: osv
+osv: native-warning tools-image
+	@echo "Running osv-scanner"
+	@$(IN_TOOLS) -c 'osv-scanner scan source --lockfile go.mod'
+
+# deadcode - unreachable Go functions (reachability from main + tests).
+# Fails if any dead code is found. Part of `check` so dead code cannot
+# creep back in.
+.PHONY: deadcode
+deadcode: native-warning tools-image
+	@echo "Running deadcode"
+	@$(IN_TOOLS) -c 'out=$$(deadcode -test ./...); if [ -n "$$out" ]; then echo "$$out"; echo "dead code found"; exit 1; fi; echo "no dead code"'
+
+# Full pre-commit / pre-release verification gate - mirrors what CI runs.
+.PHONY: check
+check: vet lint test vuln actionlint zizmor deadcode
+
+# `lint` (above) and `report` (below) deliberately overlap: gofmt, go vet,
+# ineffassign, and misspell are each covered by both. That's by design, not
+# redundancy - they answer different questions. `lint` (part of `check`) is
+# a pass/fail GATE: any finding fails the build, same as CI. `report` is a
+# goreportcard-style GRADE: a percentage per check, tolerant of a few
+# findings as long as the overall average stays >= B. A clean `check`
+# doesn't guarantee an A on `report`, and a passing `report` grade can
+# still hide the handful of issues `check` would fail on - keep both.
+#
+# Offline equivalent of the goreportcard.com checks. Runs gofmt -s, go vet,
+# gocyclo, ineffassign, misspell, and a LICENSE check, then prints a
+# per-check score and an overall grade. Exits non-zero below B.
+.PHONY: report
+report: native-warning tools-image
+	@$(IN_TOOLS) -c '$(TOOLS_CTX)/goreport.sh'
+
+# Reports the state of Go module dependencies in a tabular form: which
+# direct deps are up to date, which indirect ones have an upgrade
+# available, and whether each pending bump is patch / minor / major.
+# Read-only; never runs `go get` automatically - that's left for
+# `go get -u ./... && go mod tidy`.
+.PHONY: report-deps
+report-deps: native-warning tools-image
+	@$(IN_TOOLS) -c '$(TOOLS_CTX)/deps-report.sh'
+
+# --- Docker images (local debug) ---------------------------------------------
+# For building/running a local image outside the release pipeline (release
+# images are built by GoReleaser on tag push). Unlike the tooling targets
+# above, these have no native fallback: building or running a container
+# image inherently needs a container engine, so both targets fail fast with
+# a clear message if CONTAINER_ENGINE is "none", regardless of NATIVE.
+
+DOCKER_IMAGE ?= $(EXPORTER_NAME)
+DOCKER_TAG   ?= dev
+DOCKER_REF   := $(DOCKER_IMAGE):$(DOCKER_TAG)
+
+# Build args shared by the image build.
+DOCKER_BUILD_ARGS = \
+	--build-arg VERSION=$$(git describe --tags --dirty 2>/dev/null || echo dev) \
+	--build-arg COMMIT=$$(git rev-parse HEAD) \
+	--build-arg BRANCH=$$(git rev-parse --abbrev-ref HEAD) \
+	--build-arg BUILD_USER="$$(git config user.email)" \
+	--build-arg BUILD_DATE=$$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# GoReleaser's dockers_v2 stages the release binary at
+# $TARGETPLATFORM/@@EXPORTER_NAME@@. Mirror that locally: compile into
+# ./linux/<arch>/@@EXPORTER_NAME@@, build with --platform so BuildKit sets
+# TARGETPLATFORM to the same value, then clean up. Never commit ./linux/ to
+# git (the binary is gitignored at repo root).
+DOCKER_PLATFORM := linux/$(shell go env GOARCH)
+
+# Same metadata as LDFLAGS above, spelled out again because this path builds
+# straight from the shell (no $(LDFLAGS)-with-embedded-quotes to reuse) and
+# strips debug info for a smaller release-shaped image (-s -w).
+DOCKER_GO_LDFLAGS = -s -w \
+	-X github.com/prometheus/common/version.Version=$$(git describe --tags --dirty 2>/dev/null || echo dev) \
+	-X github.com/prometheus/common/version.Revision=$$(git rev-parse HEAD) \
+	-X github.com/prometheus/common/version.Branch=$$(git rev-parse --abbrev-ref HEAD) \
+	-X github.com/prometheus/common/version.BuildUser=$$(git config user.email) \
+	-X github.com/prometheus/common/version.BuildDate=$$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+.PHONY: docker-build
+docker-build:
+	@[ "$(CONTAINER_ENGINE)" != none ] || { echo "no container engine (docker or podman) found" >&2; exit 1; }
+	@echo "Building $(DOCKER_REF)"
+	# Deliberately NOT routed through IN_TOOLS: this compiles the binary that
+	# gets baked into the image right below, a separate concern from the
+	# primary containerised `build` target above, and this target needs a
+	# host Go toolchain either way (same requirement it already has for
+	# docker/podman itself, and no native fallback makes sense for "build a
+	# container image" in the first place).
+	CGO_ENABLED=0 GOOS=linux go build -ldflags "$(DOCKER_GO_LDFLAGS)" -o ./$(DOCKER_PLATFORM)/$(EXPORTER_NAME) ./cmd/$(EXPORTER_NAME)
+	$(CONTAINER_ENGINE) build $(DOCKER_BUILD_ARGS) --platform $(DOCKER_PLATFORM) -t $(DOCKER_REF) .
+	@rm -rf ./linux
+	@echo "built $(DOCKER_REF)"
+
+.PHONY: docker-run
+docker-run:
+	@[ "$(CONTAINER_ENGINE)" != none ] || { echo "no container engine (docker or podman) found" >&2; exit 1; }
+	@echo "Starting compose stack (override IMAGE=$(DOCKER_REF))"
+	IMAGE=$(DOCKER_REF) $(CONTAINER_ENGINE) compose -f docker-compose.yml up -d
+	@echo "Metrics at http://localhost:@@DEFAULT_PORT@@/metrics"
+
+# Cleans up build artifacts.
+.PHONY: clean
+clean:
+	@echo "Cleaning up"
+	rm -fr bin/

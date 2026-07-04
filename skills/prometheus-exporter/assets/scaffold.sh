@@ -237,10 +237,21 @@ fi
 
 # Substitute @@KEY@@ sentinels in file contents. Materialize the file list
 # first so every rewrite operates on a snapshot rather than a live traversal.
+# `sed ... > tmp` creates a brand-new inode for tmp (default-permissioned per
+# umask, NOT copying $file's mode), so the `mv` right after silently drops
+# any executable bit $file had — a real regression for shipped helper
+# scripts like scripts/docker/tools/{goreport.sh,deps-report.sh}, which are
+# invoked as bare paths (relying on the exec bit + shebang) by the Makefile.
+# Recorded before the rewrite and reapplied after, POSIX chmod +x only
+# (never a specific octal mode: that would require a non-POSIX
+# `stat`/`chmod --reference`, whose flag spelling differs between GNU and
+# BSD/macOS — see the header comment's POSIX-utilities constraint).
 find "$dst" -type f -print > "$pathlist"
 while IFS= read -r file; do
+  if [ -x "$file" ]; then was_exec=yes; else was_exec=no; fi
   sed -f "$sedscript" "$file" > "$file.scaffoldtmp"
   mv "$file.scaffoldtmp" "$file"
+  [ "$was_exec" = yes ] && chmod +x "$file"
 done < "$pathlist"
 
 # Rename path components containing @@KEY@@ sentinels. -depth lists a
