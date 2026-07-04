@@ -7,7 +7,9 @@
 # vuln, actionlint, zizmor, deadcode, docs-check — see Makefile.tmpl). Both
 # must succeed, the generated tree must never mention the source project
 # this plugin's knowledge is derived from, and no @@VAR@@ sentinel may
-# survive. A final sub-check fabricates a lying docs/metrics.md line and
+# survive. `promtool check rules` then validates monitoring/prometheus/
+# {alerts,rules}.yml (native/docker/podman, explicit SKIP if none available —
+# see below). A final sub-check fabricates a lying docs/metrics.md line and
 # proves `make docs-check` alone actually rejects it, then reverts and
 # proves it accepts the clean doc again (see below).
 #
@@ -196,6 +198,41 @@ fi
 echo "== make check ($flavor/$forge) =="
 if ! ( cd "$work" && make check ); then
   die "make check FAILED for $flavor/$forge — see output above"
+fi
+
+# promtool check rules (Task 12): monitoring/prometheus/{alerts,rules}.yml must
+# be valid Prometheus rule files — the same anti-lie bar as docs-check, just
+# for PromQL instead of Go source. promtool itself is not in the tools image
+# (scripts/docker/tools/Dockerfile has no use for it outside this one check),
+# so this step degrades through three tiers instead of hard-failing when
+# nothing is available: native promtool, then docker, then podman, each
+# running the official `prom/prometheus` image's own promtool. If none of
+# the three exist, log an explicit SKIP and move on — silently saying nothing
+# here would be indistinguishable from "checked and clean", exactly the kind
+# of false confidence this whole script exists to prevent.
+echo "== promtool check rules ($flavor/$forge) =="
+if command -v promtool >/dev/null 2>&1; then
+  echo "using native promtool"
+  if ! ( cd "$work" && promtool check rules monitoring/prometheus/rules.yml monitoring/prometheus/alerts.yml ); then
+    die "promtool check rules FAILED for $flavor/$forge — see output above"
+  fi
+  echo "confirmed: promtool check rules PASSED ($flavor/$forge)"
+elif command -v docker >/dev/null 2>&1; then
+  echo "no native promtool; using docker run prom/prometheus:latest"
+  if ! docker run --rm -v "$work:/rules" -w /rules --entrypoint promtool prom/prometheus:latest \
+       check rules monitoring/prometheus/rules.yml monitoring/prometheus/alerts.yml; then
+    die "promtool check rules FAILED (via docker) for $flavor/$forge — see output above"
+  fi
+  echo "confirmed: promtool check rules PASSED via docker ($flavor/$forge)"
+elif command -v podman >/dev/null 2>&1; then
+  echo "no native promtool and no docker; using podman run prom/prometheus:latest"
+  if ! podman run --rm -v "$work:/rules:Z" -w /rules --entrypoint promtool prom/prometheus:latest \
+       check rules monitoring/prometheus/rules.yml monitoring/prometheus/alerts.yml; then
+    die "promtool check rules FAILED (via podman) for $flavor/$forge — see output above"
+  fi
+  echo "confirmed: promtool check rules PASSED via podman ($flavor/$forge)"
+else
+  echo "SKIPPING promtool check rules ($flavor/$forge): no native promtool and no docker/podman container engine found — install one to validate monitoring/prometheus/*.yml locally"
 fi
 
 # docs-check lie-injection (Task 11): the whole point of `make docs-check` is
