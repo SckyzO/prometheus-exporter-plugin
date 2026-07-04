@@ -154,7 +154,7 @@ esac
 # generated output plus arbitrary-directory deletion, both outside the
 # --dst sandbox. A single path component can never do that.
 case "$flavor" in
-  ''|*/*|*..*) die "invalid --flavor: must be a single path component" ;;
+  ''|.|*/*|*..*) die "invalid --flavor: must be a single path component" ;;
 esac
 
 if [ -d "$src/code" ] && [ ! -d "$src/code/$flavor" ]; then

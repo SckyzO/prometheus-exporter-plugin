@@ -61,6 +61,16 @@ run --src "$fixtures" --dst "$work/ab-dst" --flavor 'a/b' --forge none
 grep -q 'single path component' "$err" || fail "flavor 'a/b' rejected for the wrong reason: $(cat "$err")"
 [ -e "$work/ab-dst" ] && fail "flavor 'a/b' should be rejected before --dst is created"
 
+# 1c. A literal dot (current-directory reference) must be rejected to guard
+# against partial-path mutation: code/. is a valid path syntax that resolves
+# to code/ itself, causing mv(1) to fail with "same file" error when the
+# flatten step tries to mv code/./common → code/common. Reject it at validation
+# time with a clear message, not at mv(1) time with a cryptic error.
+run --src "$fixtures" --dst "$work/dot-dst" --flavor '.' --forge none
+[ "$rc" -ne 0 ] || fail "flavor '.' was accepted"
+grep -q 'single path component' "$err" || fail "flavor '.' rejected for the wrong reason: $(cat "$err")"
+[ -e "$work/dot-dst" ] && fail "flavor '.' should be rejected before --dst is created"
+
 # ---------------------------------------------------------------------------
 # Finding 4 (Important): --var KEY validated on first char only
 # ---------------------------------------------------------------------------
