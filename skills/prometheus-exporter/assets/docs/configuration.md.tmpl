@@ -1,0 +1,142 @@
+# Configuration Reference
+
+> Back to [README](../README.md)
+
+## Usage
+
+The exporter is configured entirely through command-line flags.
+
+**Basic execution:**
+
+```bash
+./@@EXPORTER_NAME@@ --web.listen-address=":@@DEFAULT_PORT@@"
+```
+
+**Using a configuration file for web settings (TLS/Basic Auth):**
+
+```bash
+./@@EXPORTER_NAME@@ --web.config.file=/path/to/web-config.yml
+```
+
+For the `web-config.yml` format, see
+[Prometheus's TLS/Basic Auth configuration reference](https://prometheus.io/docs/prometheus/latest/configuration/https/)
+— `@@EXPORTER_NAME@@` parses this file with the same `prometheus/exporter-toolkit` library
+Prometheus itself uses.
+
+**View help and every available flag:**
+
+```bash
+./@@EXPORTER_NAME@@ --help
+```
+
+### Command-line options
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--web.listen-address` | Address to listen on for web interface and telemetry | `:@@DEFAULT_PORT@@` |
+| `--web.config.file` | Path to a configuration file for TLS/Basic Auth | (none) |
+| `--log.level` | Log level: `debug`, `info`, `warn`, `error` | `info` |
+| `--log.format` | Log format: `json`, `text` | `text` |
+| `--web.disable-exporter-metrics` | Exclude Go runtime and process metrics from `/metrics` | `false` |
+| `--[no-]collector.<name>` | Enable or disable a collector (kingpin boolean flag) | see below |
+
+Individual collectors may also expose their own flags. The bundled `example` collector does:
+
+| Flag | Description | Default | Flavor |
+|------|-------------|---------|--------|
+| `--collector.example.timeout` | Per-request/per-command timeout for the `example` collector | `5s` | HTTP and CLI |
+| `--collector.example.target` | Base URL the `example` collector fetches | `@@DATA_SOURCE@@` | HTTP only |
+
+There is no single global command/request timeout — each collector owns its own, following
+the `example` collector's pattern above. Run `--help` after adding your own collectors to see
+the full, current flag list.
+
+### Available collectors
+
+| Collector | Default | Description |
+|-----------|---------|-------------|
+| `example` | enabled | Starter collector — replace with your real data source (see `CONTRIBUTING.md`) |
+| `http_client_requests` *(HTTP flavor)* | enabled | Self-instrumentation: HTTP request duration by outcome |
+| `command_exec` *(CLI flavor)* | enabled | Self-instrumentation: command execution duration by outcome |
+
+Both the `example` collector and the self-instrumentation histogram are registered through the
+same `--[no-]collector.<name>` mechanism — there is nothing special about self-instrumentation
+from the flag's point of view.
+
+### Enabling and disabling collectors
+
+Use `--[no-]collector.<name>` (kingpin boolean syntax) to enable or disable a collector.
+
+**Example: disable the self-instrumentation collector**
+
+```bash
+./@@EXPORTER_NAME@@ --no-collector.http_client_requests
+```
+
+**Example: custom timeout and logging**
+
+```bash
+./@@EXPORTER_NAME@@ \
+  --collector.example.timeout=10s \
+  --log.level=debug \
+  --log.format=json
+```
+
+---
+
+## Prometheus configuration
+
+```yaml
+scrape_configs:
+  - job_name: '@@EXPORTER_NAME@@'
+    scrape_interval: 30s
+    scrape_timeout: 30s
+    static_configs:
+      - targets: ['@@EXPORTER_NAME@@.example.internal:@@DEFAULT_PORT@@']
+```
+
+- **scrape_interval**: pick a value that comfortably exceeds how long a full scrape takes
+  against your real target — start at 30s and tighten only once you've measured
+  `@@NAMESPACE@@_exporter_collector_duration_seconds` under load.
+- **scrape_timeout**: should be equal to or less than `scrape_interval`, to avoid
+  `context_deadline_exceeded` errors piling up in Prometheus itself.
+
+Check the config:
+
+```bash
+promtool check-config prometheus.yml
+```
+
+### Internal exporter metrics
+
+Every collector, including the bundled `example` one, is wrapped by a shared status tracker
+that emits two self-monitoring metrics regardless of what the collector itself reports:
+
+| Metric | Description | Labels |
+|---|---|---|
+| `@@NAMESPACE@@_exporter_collector_success` | `1` if the last scrape emitted at least one metric and did not panic, `0` otherwise | `collector` |
+| `@@NAMESPACE@@_exporter_collector_duration_seconds` | Wall time of the last `Collect()` call | `collector` |
+
+These let you alert per-collector, independently of Prometheus's own global `up` metric.
+
+In addition, each I/O flavor exposes a histogram timing its own outbound calls:
+
+| Metric | Description | Labels | Flavor |
+|---|---|---|---|
+| `@@NAMESPACE@@_exporter_request_duration_seconds` | Duration of HTTP requests issued by collectors | `outcome` (`success`/`error`) | HTTP |
+| `@@NAMESPACE@@_exporter_command_duration_seconds` | Duration of external commands executed by collectors | `outcome` (`success`/`error`) | CLI |
+
+---
+
+### Performance considerations
+
+- **Per-collector timeouts**: raise a collector's own `--collector.<name>.timeout` flag if
+  your target is slow to respond — but remember Prometheus's `scrape_timeout` still applies
+  across *all* collectors combined, so a single slow collector can still starve the others.
+- **Scrape interval**: use an interval that comfortably exceeds your measured
+  `@@NAMESPACE@@_exporter_collector_duration_seconds` to avoid overlapping scrapes.
+- **Collector selection**: disable collectors you don't need to reduce load:
+
+  ```bash
+  ./@@EXPORTER_NAME@@ --no-collector.http_client_requests
+  ```
