@@ -136,17 +136,17 @@ esac
 # "clean", the way a plain `if grep ...; then` would, silently turns a
 # failed scan into a false PASS — same three-way discipline scaffold.sh's
 # own residual-sentinel guard applies, applied here too.
-echo "== grep-clean: no source-project name leaked under test/_work =="
+echo "== grep-clean: no source-project name / maintainer handle leaked under test/_work =="
 grep_rc=0
-hits=$(command grep -rinI slurm "$root/test/_work" 2>&1) || grep_rc=$?
+hits=$(command grep -rinI -e slurm -e sckyzo "$root/test/_work" 2>&1) || grep_rc=$?
 case "$grep_rc" in
   1) ;; # no match: clean
   0)
-    echo "$prog: error: 'slurm' found under test/_work (source-project leakage):" >&2
+    echo "$prog: error: 'slurm' or 'sckyzo' found under test/_work (source-project / maintainer-handle leakage):" >&2
     echo "$hits" >&2
     exit 1
     ;;
-  *) die "slurm grep scan of test/_work failed (grep exit $grep_rc): $hits" ;;
+  *) die "slurm/sckyzo grep scan of test/_work failed (grep exit $grep_rc): $hits" ;;
 esac
 
 # No @@VAR@@ sentinel may survive scaffolding, with the same narrow, named
