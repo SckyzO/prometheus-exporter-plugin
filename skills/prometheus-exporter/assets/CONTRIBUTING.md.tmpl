@@ -123,6 +123,13 @@ Plus:
   inputs), a `_Collect` test (real registry + `Gather`, comparing the exact exposition text),
   a `_Describe` test (pins the exact descriptor count), and an `_ErrorHandling` test (I/O
   failure -> zero metrics, no panic).
+- Metric names and label **keys** must be static: a plain string literal, or
+  `prometheus.BuildFQName(ns, sub, name)` with string-literal arguments — never a
+  computed/variable name or label key. This isn't just style: dynamic metric names and label
+  keys are a Prometheus anti-pattern on their own, and `make docs-check`
+  (`internal/collector/docs_check_test.go`) statically extracts every metric from source at
+  exactly this precision — anything it can't resolve this way is reported as an unverifiable
+  warning, not silently skipped.
 - Registration in `cmd/@@EXPORTER_NAME@@/main.go`'s registry at the
   `// @@COLLECTOR_REGISTRY@@` marker, with its own `--[no-]collector.<name>` flag (see
   `register()` in that file).
