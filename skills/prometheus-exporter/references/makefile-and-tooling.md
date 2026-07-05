@@ -19,14 +19,16 @@ document only covers the target that enforces it.
 `scripts/docker/tools/Dockerfile` is a single image bundling everything the
 Makefile's quality-gate targets need: a **pinned** Go toolchain
 (`golang:1.26.4-alpine`, pinned by tag *and* digest) plus a set of
-intentionally **floating** (`@latest`) auxiliary tools — golangci-lint,
-govulncheck, actionlint, zizmor, gitleaks, osv-scanner, gocyclo, misspell,
-ineffassign, deadcode. The split is deliberate: the Go toolchain is pinned for
-reproducible builds (the same source always produces the same binary), while
-the linters and scanners are kept current on every image rebuild so
-contributors always run the newest checks against the newest vulnerability
-data — pinning a security scanner would mean shipping stale CVE coverage on
-purpose.
+intentionally **floating** auxiliary tools. The Go-based linters and scanners —
+golangci-lint, govulncheck, actionlint, gitleaks, osv-scanner, gocyclo,
+misspell, ineffassign, deadcode — are installed via `go install ...@latest`
+to stay current; zizmor (static analysis for GitHub Actions) is installed via
+the Alpine package manager (`apk`) and is not pinned. The split is deliberate:
+the Go toolchain is pinned for reproducible builds (the same source always
+produces the same binary), while the linters and scanners are kept current on
+every image rebuild so contributors always run the newest checks against the
+newest vulnerability data — pinning a security scanner would mean shipping
+stale CVE coverage on purpose.
 
 A `git config --system --add safe.directory '*'` line in that Dockerfile is
 worth understanding on its own. This image always runs as root against a

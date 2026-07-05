@@ -45,7 +45,7 @@ scratch. `WithContext` is a documented no-op — slog resolves attributes from
 values handed to it directly, not from a `context.Context` — kept only for
 call sites that still expect that shape.
 
-## The registry: map-driven, lazily invoked
+## The registry: registration-driven, lazily invoked
 
 `main.go` never hardcodes a list of collector constructors to call:
 
