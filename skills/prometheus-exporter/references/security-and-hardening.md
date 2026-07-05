@@ -46,9 +46,9 @@ through a label.
 weak crypto, unsafe file inclusion, a missing request timeout — not "this
 label value happens to be a credential," which is a semantic judgment about
 what a piece of data *means*, not a pattern gosec's static rules can
-recognize. That gap is exactly why `exporter-reviewer` (§8.3) carries its
-own dedicated step for this: grep collector source and `docs/metrics.md` for
-anything that could carry a credential, read every match before reporting it
+recognize. That gap is exactly why `exporter-reviewer`'s Step 8 is dedicated
+to this: grep collector source and `docs/metrics.md` for anything that could
+carry a credential, read every match before reporting it
 (a variable literally named `token` is very often an unrelated identifier,
 not a secret), and treat a confirmed hit as high-severity regardless of how
 unlikely the exposure seems. Static analysis narrows where to look; it does
@@ -94,13 +94,18 @@ is the same category of guidance as the "unpinned tool versions" banner
 going, so the choice stays the operator's and not this scaffold's to make
 for them.
 
-**Honest gap:** the shipped `cmd/@@EXPORTER_NAME@@/main.go.tmpl` does not
-implement this check today — there is no bind-address inspection anywhere in
-`main()`. This is guidance for whoever extends `main()`'s startup sequence,
-not an asserted existing behavior; a reference that claimed otherwise would
-be exactly the kind of doc/code drift `make docs-check`
-(`docs-and-governance.md`) exists to catch when the claim is about a metric
-instead of a log line.
+**Shipped behavior:** `cmd/@@EXPORTER_NAME@@/main.go.tmpl` implements this
+check, right after `kingpin.Parse()` and logger construction and before
+`web.ListenAndServe` starts the server. `warnIfExposedAndUnauthenticated`
+walks every `--web.listen-address` value and calls `isLoopbackHost` on each
+one's host part: empty (a bare `:@@DEFAULT_PORT@@` binds every interface),
+anything outside `127.0.0.0/8`/`::1`, and anything other than the literal
+string `localhost` all count as non-loopback. If at least one configured
+address is non-loopback and `--web.config.file` is unset, it logs a single
+`log.Warn(...)` naming the offending address and pointing at
+`--web.config.file` for TLS/Basic Auth — then startup continues exactly as
+before. Nothing here refuses to start or changes a default; it only makes
+an already-exposed posture visible, per Rule 2.
 
 ## Rule 4: optional hardening via `--web.config.file`
 

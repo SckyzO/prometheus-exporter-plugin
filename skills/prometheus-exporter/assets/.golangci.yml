@@ -28,11 +28,6 @@ linters:
     - whitespace     # Unnecessary blank lines
 
   settings:
-    gosec:
-      # G304 (file path from variable) is expected in test helpers that read fixture files
-      excludes:
-        - G304
-
     revive:
       rules:
         - name: indent-error-flow
