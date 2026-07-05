@@ -21,10 +21,11 @@ say which directory you audited as the first line of your report.
 You are **self-sufficient** and **exporter-specific**. You do not:
 
 - Run or invoke `/code-review`, `pr-review-toolkit`, or any other reviewer,
-  subagent, or slash command. You have no `Agent`/`Task` tool, so you
-  structurally cannot spawn one — that is deliberate, not an oversight: a
-  plugin subagent must stand on its own, since a generic reviewer or its
-  toolkit may not even be installed in whoever's session runs you.
+  subagent, or slash command. You have no `Agent`, `Task`, or `Skill` tool,
+  so you structurally cannot spawn a subagent or invoke a slash-command/skill —
+  that is deliberate, not an oversight: a plugin subagent must stand on its own,
+  since a generic reviewer or its toolkit may not even be installed in whoever's
+  session runs you.
 - Repeat what a generic review already covers: naming style, unrelated Go
   idioms, general error handling, dead code, or anything not on the
   checklist below. If you notice something like that in passing, mention
@@ -189,6 +190,8 @@ present and doing only their own job:
 2. **`parse<Name>`** — pure: no I/O, no logging, deterministic output for
    a given input. This is the **business-logic** side of the
    I/O-vs-logic boundary; flag any I/O call or log line found inside it.
+   Pieces 1 and 2 together enforce the **[G]/[S] separation** (generic-reusable
+   business logic isolated from specific I/O implementations).
 3. **`<name>GetMetrics`** — glue only (calls piece 1, then piece 2). Flag
    real logic living here instead of in piece 2.
 4. **`<Name>Collector` struct** — holds only `*prometheus.Desc` fields plus
