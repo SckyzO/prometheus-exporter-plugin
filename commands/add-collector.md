@@ -136,7 +136,10 @@ write real documentation of what it actually does. Keep comments that explain
 a durable invariant of this exporter as-is (why `Collect` logs-and-returns
 zero metrics on error, why `StatusTracker` treats that as failure, why a
 duplicate label set breaks `Gather` for the whole scrape): those stay true for
-every collector, not just the one being replaced.
+every collector, not just the one being replaced. Within such a kept comment,
+any embedded `@@…@@` sentinel or `collector="example"` illustration must still
+be updated to the real namespace / new collector name — the "why" prose stays;
+the concrete example values get updated.
 
 **Adapt the shape to the user's real metrics**, not just the field count the
 template happens to ship:
@@ -163,7 +166,7 @@ template happens to ship:
 Read the flavor's test template(s):
 
 - http: `.../code/http/collector_test.go.tmpl` → write `internal/collector/<name>_test.go`
-- cli: `.../code/cli/collector_test.go.tmpl` **and** `.../code/cli/parser_test.go.tmpl` → merge both into one `internal/collector/<name>_test.go`. (The shipped repo keeps these split only because the *first* collector's files are generically named `collector_test.go`/`parser_test.go`; your new collector already has a unique name, so one file is simpler and matches the http flavor's own convention.)
+- cli: `.../code/cli/collector_test.go.tmpl` **and** `.../code/cli/parser_test.go.tmpl` → merge both into one `internal/collector/<name>_test.go`. (The shipped repo keeps these split only because the *first* collector's files are generically named `collector_test.go`/`parser_test.go`; your new collector already has a unique name, so one file is simpler and matches the http flavor's own convention.) Both templates declare `package collector` and have overlapping imports (`"os"`, `"testing"`, etc.); the merge must keep **one** `package collector` line and a **single deduplicated import block** — a literal concatenation would cause a duplicate-package/duplicate-import compile error.
 
 Apply the same identifier renames as step 3 (whichever of that table's rows
 actually occur in the test template — the endpoint-path/command rows won't,
