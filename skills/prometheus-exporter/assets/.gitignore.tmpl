@@ -1,0 +1,16 @@
+# Build output. Produced by this repo's own Makefile:
+#   /bin/    - `make build`         -> bin/@@EXPORTER_NAME@@
+#   /linux/  - `make docker-build`  -> linux/<arch>/@@EXPORTER_NAME@@ staging
+#              dir for the release image (self-removed on success; kept here
+#              as a safety net for a failed/interrupted run).
+/bin/
+/linux/
+
+# Go test/coverage artifacts. No Makefile target produces these today, but
+# they are the standard names `go test -coverprofile=...` / `go test -c`
+# write to when run by hand or wired into CI later.
+*.out
+coverage.*
+*.test
+
+.DS_Store

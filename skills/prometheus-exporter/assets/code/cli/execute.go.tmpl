@@ -1,0 +1,79 @@
+package collector
+
+import (
+	"context"
+	"fmt"
+	"os/exec"
+	"strings"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+)
+
+// CommandDuration times every Execute call, labeled by outcome ("success" or
+// "error"). It is declared once at package scope, not per collector, because
+// Prometheus metrics are meant to live for the process lifetime, not the
+// lifetime of whichever struct happens to touch them. Exported (capitalized)
+// so main.go's // @@COLLECTOR_REGISTRY@@ wiring (see registry.frag) can
+// register it directly on this exporter's own custom registry.
+//
+// Deliberately built with plain prometheus.NewHistogramVec, not
+// promauto.NewHistogramVec: promauto's factories auto-register into
+// prometheus.DefaultRegisterer, the process-wide global registry — but
+// main.go builds its own prometheus.NewRegistry() instead of using that
+// global one (see main.go's own comment on that line), and only collectors
+// reachable via register()/tracker.Add(...) ever reach /metrics. A
+// *prometheus.HistogramVec already implements prometheus.Collector, so
+// registry.frag registers this var the exact same way it registers every
+// other collector — no promauto, no second registry to thread through.
+//
+// Single process-wide histogram, labeled only by outcome: if /add-collector
+// later wires a second CLI-flavor collector that runs a different command,
+// both collectors' timings share these same "success"/"error" buckets and
+// are not distinguishable from each other by command. Fine for this
+// scaffold's one-collector v0.1 starting point; a per-command breakdown
+// would need an additional label threaded through every Execute call site.
+var CommandDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+	Name: "@@NAMESPACE@@_exporter_command_duration_seconds",
+	Help: "Duration in seconds of external commands issued by this exporter's collectors, by outcome.",
+}, []string{"outcome"})
+
+// Execute is the I/O boundary every collector in this flavor calls through,
+// instead of shelling out via os/exec directly. It is a package-level var,
+// not a plain function, specifically so tests can swap it for a stub that
+// returns fixture bytes (see collector_test.go's TestExampleCollector_Collect
+// and TestExampleCollector_ErrorHandling) — there is no live binary to run in
+// CI, and this indirection is what makes a collector testable without one.
+//
+// Cancellation and per-command timeouts are entirely the caller's
+// responsibility via ctx — see NewExampleCollector's timeout field and
+// exampleData's use of context.WithTimeout for this flavor's convention.
+// Threading the timeout through ctx like this, rather than Execute owning a
+// package-level timeout variable internally, is more idiomatic Go (the
+// caller controls cancellation, Execute just obeys it) and keeps this var
+// free of any mutable package state of its own.
+var Execute = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+	start := time.Now()
+
+	cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // G204: name is a fixed, developer-controlled command baked into each collector's own *Data method, never end-user input
+	out, err := cmd.CombinedOutput()
+
+	outcome := "success"
+	if err != nil {
+		outcome = "error"
+	}
+	CommandDuration.WithLabelValues(outcome).Observe(time.Since(start).Seconds())
+
+	if err != nil {
+		// A canceled/expired ctx is almost always the real cause behind the
+		// generic process error CombinedOutput returns in that case (e.g.
+		// "signal: killed"); surfacing ctx.Err() instead is a clearer signal
+		// to callers and their logs than the raw OS-level failure would be.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, fmt.Errorf("execute %s: %w", name, ctxErr)
+		}
+		return nil, fmt.Errorf("execute %s: %w: %s", name, err, strings.TrimSpace(string(out)))
+	}
+
+	return out, nil
+}

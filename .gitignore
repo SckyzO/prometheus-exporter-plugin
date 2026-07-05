@@ -1,0 +1,5 @@
+# scratch / throwaway scaffolds produced by the golden smoke test
+/tmp/
+/test/_work/
+*.log
+.DS_Store

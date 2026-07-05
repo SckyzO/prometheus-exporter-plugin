@@ -15,7 +15,9 @@
 Every task's requirements implicitly include this section. Values are verbatim from the design spec (`docs/design/2026-07-02-prometheus-exporter-plugin-design.md`).
 
 - **Reference exporter (derivation source, never shipped, never named in artifacts):** `~/Dev/work/apps_repo/exporters/slurm_exporter/slurm_exporter/`. Read the real files; do **not** reproduce templates from memory (spec §11).
-- **HARD — zero source mention:** `grep -rin -e slurm -e sckyzo` over the whole plugin tree **excluding `docs/`** must return **0**. `docs/design/` and `docs/plans/` are creation-history (this plan lives there) and are the only places the source may be named.
+- **HARD gate — SLURM-GREP (the source PROJECT is never named):** `grep -rin slurm . --exclude-dir=docs --exclude-dir=.git --exclude-dir=.superpowers --exclude-dir=test` must return **0**. The taught knowledge and templates stand on official Prometheus authority (`prometheus.io`), never on "distilled from <source project>" — so the source project is never named in any shipped file. `docs/design/` + `docs/plans/` are creation-history (this plan lives there) and are the only places it may appear. (Use `--exclude-dir=docs`, NOT `| grep -v '/docs/'` — GNU grep emits bare `docs/…` paths without a leading slash, so the pipe filter silently fails. RTK may wrap `grep` unreliably — use `command grep` if results look wrong.)
+- **Ownership in templates — always `@@OWNER@@`:** the generated exporter's owner/maintainer is the third party who runs `/new-prometheus-exporter`, represented by `@@OWNER@@` in scaffold templates — **never a hardcoded real handle**. This (not any secrecy rule) is the reason a real maintainer handle does not appear under `assets/`.
+- **Light hygiene — HANDLE-GREP (non-blocking, decided 2026-07-03):** `grep -rin sckyzo skills/ commands/ agents/` should be **0** — there is simply no reason for the maintainer's handle to appear in generic knowledge/templates, so it stays absent naturally. This is a hygiene check, **not a hard gate**: the maintainer openly authors the plugin, and `SckyzO` legitimately appears in the plugin's own manifest / LICENSE / README / root CLAUDE.md.
 - **Auto-portance:** the plugin depends on **no** personal `CLAUDE.md`/profile. OSS engineering principles are extracted and de-personalized inside the plugin (spec §7bis).
 - **Templating:** delimiter `@@VAR@@`. Substitution by `scaffold.sh` (`sh`+`sed` only) — **zero runtime dependency** beyond sh/sed. No brace template engine (collides with GoReleaser `{{ }}`, Actions `${{ }}`, Docker `${ }`). Flavor = directory selection, **no in-file conditionals**. A generated repo must contain **no residual `@@…@@`**.
 - **Container-first:** all dev tooling runs in a pinned `*-tools` image; auto-detect `docker` → `podman` → native fallback with an "unpinned versions" warning + `NATIVE=1` escape hatch.
@@ -92,7 +94,7 @@ Verify the current schema with the `claude-code-guide` agent or context7 (`code.
   "name": "prometheus-exporter",
   "version": "0.1.0",
   "description": "Scaffold and harden production-grade Go Prometheus exporters: architecture-first design, collector pattern with mockable I/O, container-first tooling, host-agnostic releases, health+business alerting, and a non-lying metrics-docs check.",
-  "author": { "name": "@@OWNER@@" },
+  "author": { "name": "SckyzO" },
   "license": "Apache-2.0",
   "keywords": ["prometheus", "exporter", "observability", "metrics", "grafana", "golang", "scaffold"],
   "homepage": "",
@@ -100,7 +102,7 @@ Verify the current schema with the `claude-code-guide` agent or context7 (`code.
 }
 ```
 
-Note: `@@OWNER@@` here is a literal placeholder to fill with the real plugin author at publish time (this is the plugin's *own* manifest, not a scaffold template) — replace before v0.1 tag. Leave `homepage`/`repository` empty until the repo is pushed.
+Note: the author is the real handle `SckyzO` (maintainer decision — the plugin's own manifest is exempt from HANDLE-GREP; see Global Constraints). Do **not** use the `@@OWNER@@` scaffold sentinel here — this is the shipped manifest, not a template. Leave `homepage`/`repository` empty until the repo is pushed, then fill with the real URL.
 
 - [ ] **Step 3: Write `.claude-plugin/marketplace.json` (self-marketplace)**
 
@@ -109,7 +111,7 @@ Verify schema first (context7 / claude-code-guide). The repo lists itself as the
 ```json
 {
   "name": "prometheus-exporter-marketplace",
-  "owner": { "name": "@@OWNER@@" },
+  "owner": { "name": "SckyzO" },
   "plugins": [
     { "name": "prometheus-exporter", "source": "./", "description": "Scaffold and harden production-grade Go Prometheus exporters." }
   ]
@@ -166,8 +168,8 @@ v0.1 (MVP): skill + arch phase + `/new-prometheus-exporter` + `/add-collector` +
 
 - [ ] **Step 7: Grep gate + commit**
 
-Run: `grep -rin -e slurm -e sckyzo . --include='*.md' --include='*.json' | grep -v '/docs/'`
-Expected: empty.
+Run SLURM-GREP: `grep -rin slurm . --include='*.md' --include='*.json' | grep -v '/docs/'`
+Expected: empty. (These root files legitimately carry `SckyzO` — README install path, CLAUDE.md author — so HANDLE-GREP is scoped to `skills/ commands/ agents/`, not the root; do **not** grep `sckyzo` here.)
 ```bash
 git -c commit.gpgsign=false add CLAUDE.md README.md ROADMAP.md TODO.md CHANGELOG.md LICENSE
 git -c commit.gpgsign=false commit -m "docs(plugin): add root governance (CLAUDE, README, ROADMAP, TODO, CHANGELOG, LICENSE)"
@@ -279,10 +281,9 @@ git -c commit.gpgsign=false commit -m "feat(scaffold): add dependency-free @@VAR
 
 **Interfaces (the flavor seam — consumed by Tasks 5, 8, 16):**
 - `main.go` defines and exposes:
-  - `type Collector = prometheus.Collector` alias used by factories.
-  - `func register(name string, c prometheus.Collector, enabledByDefault bool)` — appends to the registry and auto-creates `--[no-]collector.<name>` (kingpin negation), wraps with StatusTracker.
+  - `func register(name string, newFn func() prometheus.Collector, enabledByDefault bool)` — a **lazy constructor** (collectors are built after kingpin `Parse()`, else flag pointers read zero); appends a `registryEntry` and auto-creates `--[no-]collector.<name>` (kingpin negation), wraps with StatusTracker. (No `type Collector` alias — use `prometheus.Collector` directly.)
   - Marker `// @@CLIENT_INIT@@` — where flavor client construction is inserted (HTTP: `client := newClient(cfg)`; CLI: nothing).
-  - Marker `// @@COLLECTOR_REGISTRY@@` — where `register("<name>", New<Name>Collector(deps…), true)` lines are inserted by scaffold/`add-collector`.
+  - Marker `// @@COLLECTOR_REGISTRY@@` — where `register("<name>", func() prometheus.Collector { return New<Name>Collector(deps…) }, true)` lines are inserted by scaffold/`add-collector` (closure wraps the factory so construction happens post-`Parse()`).
   - `const namespace = "@@NAMESPACE@@"`.
 - Flavor collector constructor signatures the seam expects:
   - HTTP: `func New<Name>Collector(logger *Logger, client *Client) prometheus.Collector`
@@ -296,10 +297,10 @@ git -c commit.gpgsign=false commit -m "feat(scaffold): add dependency-free @@VAR
 
 **Transform:**
 - `go.mod.tmpl`: `module @@MODULE_PATH@@`; keep `go 1.26.x`; keep the dep set (`client_golang`, `exporter-toolkit`, `common`, `kingpin/v2`) with the **exact versions from the reference `go.mod`**. **context7-verify** `webflag.AddFlags` / `web.ListenAndServe` signatures against the pinned `exporter-toolkit` version (spec §12 open item) and adjust `main.go.tmpl` to match.
-- `main.go.tmpl`: keep [G] — registry map-driven, auto flags, StatusTracker wrapping, `RegisterExecMetrics`/cache metrics hooks (guard cache hook behind a no-op for HTTP), exporter-toolkit web flags, endpoints `/metrics` (OpenMetrics) `/healthz` `/`, signal-aware shutdown. Replace the hardcoded collector registrations with the two markers above + the `register()` helper. Replace `slurm`/binary specifics with `@@NAMESPACE@@`/`@@EXPORTER_NAME@@`/`@@DEFAULT_PORT@@`. Remove Slurm-only flags (`--slurm.bin-path`, feature-set, sacct). Keep `--command.timeout` only in the CLI wiring (move out of common if CLI-specific).
+- `main.go.tmpl`: keep [G] — registry map-driven, auto flags, StatusTracker wrapping, exporter-toolkit web flags, endpoints `/metrics` (OpenMetrics) `/healthz` `/`, signal-aware shutdown. Exec/request-timing self-instrumentation and cache metrics are **flavor/variant-owned, NOT in common** (HTTP wires request timing in `client.go`; CLI wires `RegisterExecMetrics` in `execute.go`; cache = v0.2). Replace the hardcoded collector registrations with the two markers above + the `register()` helper. Replace `slurm`/binary specifics with `@@NAMESPACE@@`/`@@EXPORTER_NAME@@`/`@@DEFAULT_PORT@@`. Remove Slurm-only flags (`--slurm.bin-path`, feature-set, sacct). Keep `--command.timeout` only in the CLI wiring (move out of common if CLI-specific).
 - `status_tracker.go.tmpl`, `logger.go.tmpl`: pure [G]; only rename package/import paths to `@@MODULE_PATH@@`; strip any Slurm comment.
-- **de-identify:** grep the four generated files for `slurm`/`sckyzo` → 0.
-- **scaffold.sh mapping refinement:** `code/common/main.go` → `cmd/@@EXPORTER_NAME@@/main.go`; `code/common/{status_tracker,logger}.go` → `internal/collector/` and `internal/logger/` respectively; `code/common/go.mod` → `./go.mod`. Encode these as explicit mapping rules; re-run `test/scaffold_test.sh` (adjust fixture if needed) to keep it green.
+- **de-identify:** SLURM-GREP the four generated files → 0.
+- **Asset layout = mirror the final repo tree (REVISED from concern-grouping — decision 2026-07-04).** Common templates live at their FINAL repo-relative paths under `assets/`: `assets/go.mod.tmpl`, `assets/cmd/@@EXPORTER_NAME@@/main.go.tmpl`, `assets/internal/collector/status_tracker.go.tmpl`, `assets/internal/logger/logger.go.tmpl`. `scaffold.sh` does **NO** per-file/per-concern mapping table (avoids the central-hardcoded-list anti-pattern). The ONLY staging exception is flavor selection: change `scaffold.sh`'s flavor-flatten so `code/<flavor>/*` lands in `internal/collector/` (not `code/`), then `rm -rf code/`. Update `test/scaffold_test.sh` fixture + assertions to match (common files at final paths; flavor asserts `internal/collector/client.go`); keep both suites green. All later concern dirs (`build/`, `packaging/`, `docs/`, `monitoring/`, `release/`) follow the same rule in their tasks: template sits at its final repo-relative path under `assets/`, no mapping.
 
 - [ ] **Step 1: Read the four source files in full.**
 - [ ] **Step 2: Write the four `.tmpl` files** applying the transform.
@@ -338,7 +339,7 @@ Expected: files listed; `GREP CLEAN`. (Full compile happens in Task 7.)
   - `ExampleCollector struct{ items, healthy *prometheus.Desc; … }`
   - `NewExampleCollector(logger, client)`; `Describe`; `Collect` → on error: `log + return` (0 metrics → StatusTracker marks failed).
 - [ ] **Step 3: Write the failing triad `collector_test.go.tmpl`** — `TestParseExample` (fixture bytes), `TestExampleCollector_Collect` (httptest.Server returns fixture → `NewRegistry`+`Gather` → assert 2 metrics), `TestExampleCollector_Describe` (exact desc count), `TestExampleCollector_ErrorHandling` (server 500 / closed → `Collect` yields 0 metrics, no panic). Include a `testdata/example.json` fixture template.
-- [ ] **Step 4: Write `wiring.go.tmpl`** — provides the two-marker fill: in `main.go` the scaffold inserts `client := newClient(cfg.dataSource, cfg.timeout)` at `// @@CLIENT_INIT@@` and `register("example", NewExampleCollector(logger, client), true)` at `// @@COLLECTOR_REGISTRY@@`. Implement insertion as sed-marker replacement rules that `scaffold.sh` applies for HTTP flavor (marker → flavor snippet file), keeping "no in-file conditionals".
+- [ ] **Step 4: Write `wiring.go.tmpl`** — provides the two-marker fill: in `main.go` the scaffold inserts `client := newClient(cfg.dataSource, cfg.timeout)` at `// @@CLIENT_INIT@@` and `register("example", func() prometheus.Collector { return NewExampleCollector(logger, client) }, true)` at `// @@COLLECTOR_REGISTRY@@`. Implement insertion as sed-marker replacement rules that `scaffold.sh` applies for HTTP flavor (marker → flavor snippet file), keeping "no in-file conditionals".
 - [ ] **Step 5: Materialize + grep check** (compile deferred to Task 7): scaffold HTTP, assert `internal/collector/collector.go` + `_test.go` + `client.go` present, markers filled, grep-clean.
 - [ ] **Step 6: Commit** `feat(templates): add HTTP flavor (client, example collector, test triad, wiring)`.
 
@@ -412,7 +413,7 @@ Expected: scaffold OK → `make build` PASS → `make check` PASS → grep clean
 - Keep the 5-piece shape + error contract identical to HTTP. Replace Slurm parsing with a **generic** parser: `parseExample(b) ([]kv, error)` splitting `key<whitespace>value` lines → gauge `@@NAMESPACE@@_example{key=…}`. `exampleData(ctx)` → `Execute(ctx, "@@DATA_SOURCE@@", "@@DATA_SOURCE_ARGS@@"…)`.
 - **Anonymize fixtures:** `testdata/example.txt` = generic `key value` lines, no Slurm output.
 - de-identify all five files → grep 0.
-- `wiring.go.tmpl`: CLI client-init snippet is empty; registry line `register("example", NewExampleCollector(logger), true)`.
+- **Wiring = two frag files** `code/cli/wiring/{client_init.frag, registry.frag}` (same mechanism as HTTP; scaffold injects at the `main.go` markers — see the progress-ledger "Wiring MECHANISM" standing decision). CLI `client_init.frag` = empty (or a `--command.timeout` flag decl); `registry.frag` = `register("example", func() prometheus.Collector { return NewExampleCollector(logger) }, true)`. Register the CLI exec-timing self-instrumentation metric as a collector via the same seam (plain `prometheus.New*`, NOT promauto).
 
 - [ ] **Step 1: Read the source files in full.**
 - [ ] **Step 2: Write the five `.tmpl` files + `testdata/example.txt`.**
@@ -662,10 +663,10 @@ Expected: `make check` (now including `docs-check`) PASS; lie-injection sub-chec
 
 Run: `sh test/golden-smoke.sh --all`
 Expected: every matrix cell PASS; grep clean; lie-injection behaves; skips (if any) logged.
-- [ ] **Step 4: Repo-wide zero-source gate**
+- [ ] **Step 4: Repo-wide zero-source gate (two scoped checks)**
 
-Run: `grep -rin -e slurm -e sckyzo . | grep -v '/docs/' | grep -v '/test/_work/'`
-Expected: empty.
+Run SLURM-GREP: `grep -rin slurm . --exclude-dir=docs --exclude-dir=.git --exclude-dir=.superpowers --exclude-dir=test` → Expected: empty.
+Run HANDLE-GREP: `grep -rin sckyzo skills/ commands/ agents/` → Expected: empty. (Manifest/LICENSE/README/CLAUDE.md root exempt — see Global Constraints.)
 - [ ] **Step 5: Commit** `test(ci): add full golden matrix and plugin CI (validate + zero-source grep + golden)`.
 
 ---
@@ -688,8 +689,9 @@ git tag v0.1.0
 ```
 - [ ] **Step 5: Final validate + grep**
 
-Run: `claude plugin validate . && grep -rin -e slurm -e sckyzo . | grep -v '/docs/' | grep -v '/test/_work/' || echo "ALL CLEAN"`
-Expected: validate PASS; `ALL CLEAN`.
+Run: `claude plugin validate .` → Expected: PASS.
+Run SLURM-GREP: `grep -rin slurm . --exclude-dir=docs --exclude-dir=.git --exclude-dir=.superpowers --exclude-dir=test` → Expected: empty.
+Run HANDLE-GREP: `grep -rin sckyzo skills/ commands/ agents/` → Expected: empty.
 
 ---
 
