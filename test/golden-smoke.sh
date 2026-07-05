@@ -18,19 +18,22 @@
 # Usage:
 #   test/golden-smoke.sh --flavor <http|cli> --forge <github|none>
 #
-# v0.1 (Task 7) wires real values for exactly one combination: --flavor http
-# --forge none. The case switch below is deliberately structured so Tasks
-# 9/14/22 can add a branch per additional flavor/forge combination later
-# (mirroring scaffold.sh's own --forge github|none: a small, explicit,
-# hardcoded set, not a discovered/growing registry) — an unwired combination
-# fails loudly with a clear message instead of guessing at plausible-looking
-# values, which is what "logs any step it skips explicitly" (see the header
-# of each phase below) means for this script's own scope, as opposed to a
-# runtime environment gap (e.g. a missing optional tool), which is instead
-# handled inside the Makefile itself (actionlint/zizmor skip gracefully when
-# .github/workflows/ is absent — see Makefile.tmpl) and simply surfaces here
-# because this script never redirects make's own stdout/stderr away from
-# the caller's terminal.
+# v0.1 wires real values for three combinations so far: --flavor http --forge
+# none (Task 7), --flavor cli --forge none (Task 9), and --flavor http
+# --forge github (Task 14 - the first forge=github golden run, so this is
+# also the first time actionlint/zizmor lint real workflow content instead of
+# skipping on an absent .github/workflows/). The case switch below is
+# deliberately structured so a later task can add --flavor cli --forge github
+# the same way (mirroring scaffold.sh's own --forge github|none: a small,
+# explicit, hardcoded set, not a discovered/growing registry) — an unwired
+# combination fails loudly with a clear message instead of guessing at
+# plausible-looking values, which is what "logs any step it skips explicitly"
+# (see the header of each phase below) means for this script's own scope, as
+# opposed to a runtime environment gap (e.g. a missing optional tool), which
+# is instead handled inside the Makefile itself (actionlint/zizmor skip
+# gracefully when .github/workflows/ is absent — see Makefile.tmpl) and
+# simply surfaces here because this script never redirects make's own
+# stdout/stderr away from the caller's terminal.
 #
 # POSIX sh + sed + grep + make, same dependency discipline as scaffold.sh
 # itself. `make build`/`make check` additionally need a Go toolchain and,
@@ -124,10 +127,55 @@ case "$flavor-$forge" in
       --var OWNER=acme \
       --var LICENSE=apache-2.0
     ;;
+  http-github)
+    sh "$assets/scaffold.sh" \
+      --src "$assets" --dst "$work" \
+      --flavor http --forge github --force \
+      --var EXPORTER_NAME=demo_exporter \
+      --var NAMESPACE=demo \
+      --var MODULE_PATH=example.com/demo_exporter \
+      --var DATA_SOURCE=http://localhost:9999 \
+      --var DATA_SOURCE_PATH=/api/example \
+      --var DEFAULT_PORT=9999 \
+      --var OWNER=acme \
+      --var LICENSE=apache-2.0
+    ;;
   *)
-    die "no golden @@VAR@@ values wired yet for --flavor $flavor --forge $forge (http+none and cli+none supported; see Tasks 14/22 for github)"
+    die "no golden @@VAR@@ values wired yet for --flavor $flavor --forge $forge (http+none, cli+none, and http+github supported; see Task 22 for cli+github)"
     ;;
 esac
+
+# Forge matrix (Task 14): .github/ (the whole opt-out GitHub layer - workflows,
+# dependabot.yml, CODEOWNERS, issue/PR templates) must exist if and only if
+# --forge github was requested. Checked immediately after scaffolding, same
+# reasoning as the grep-clean checks below: fail fast, before burning a full
+# build+check cycle on a scaffold that already got the forge layer wrong.
+echo "== .github/ presence matches --forge ($flavor/$forge) =="
+if [ "$forge" = github ]; then
+  [ -d "$work/.github/workflows" ] || die ".github/workflows/ missing after a --forge github scaffold ($flavor/$forge)"
+  echo "confirmed: .github/workflows/ present ($flavor/$forge)"
+else
+  [ -d "$work/.github" ] && die ".github/ present after a --forge $forge scaffold - the GitHub layer should have been dropped ($flavor/$forge)"
+  echo "confirmed: .github/ absent ($flavor/$forge)"
+fi
+
+# git-init the scaffold (Task 14): a real /new-prometheus-exporter run leaves
+# an actual repo behind, and by the time anyone runs `make check` on it,
+# `git init` has happened - it is the single most basic step of "create a new
+# project", well before a first commit or a remote. This was never load-
+# bearing for any EARLIER golden combination (http-none, cli-none) because
+# --forge none ships no .github/workflows/ at all, so actionlint/zizmor
+# always took the Makefile's own "no .github/workflows found" skip path
+# before either tool's own git-repository requirement could ever matter.
+# http-github is the first combination that actually gives them real content
+# to lint, and actionlint hard-requires running inside a git repository to
+# even start ("no project was found in any parent directories") - found
+# empirically running this exact combination while building this task, not
+# a hypothetical. `-c init.defaultBranch=main` only pins the branch name Git
+# reports for this throwaway repo (silences Git's own advice noise); nothing
+# here reads it back.
+echo "== git init ($flavor/$forge), matching a real post-scaffold repo =="
+( cd "$work" && git -c init.defaultBranch=main init -q )
 
 # Both grep-clean checks below run BEFORE any build, deliberately: `make
 # build`/`make check` produce a compiled bin/@@EXPORTER_NAME@@ binary inside

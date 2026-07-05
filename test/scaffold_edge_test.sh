@@ -152,13 +152,16 @@ run --src "$fixtures" --dst "$work/nonempty-dst" --force \
 [ -f "$work/nonempty-dst/marker.txt" ] || fail "--force should merge, not wipe, pre-existing --dst content"
 [ -f "$work/nonempty-dst/cmd/redis_exporter/main.go" ] || fail "--force run did not scaffold"
 
-# 6b. --forge github retains both the top-level github/ dir and release/github/.
+# 6b. --forge github retains .github/ (mirror-layout: the whole GitHub layer
+# lives at this one path, not the stale pre-mirror release/github/ + github/
+# pair). --forge none (exercised throughout the rest of this suite via the
+# fixture's own .github/keep.txt) already proves the drop side.
 run --src "$fixtures" --dst "$work/forge-dst" \
   --flavor http --forge github \
   --var EXPORTER_NAME=redis_exporter --var NAMESPACE=redis --var OWNER=acme
 [ "$rc" -eq 0 ] || fail "--forge github run failed, rc=$rc: $(cat "$err")"
-[ -d "$work/forge-dst/github" ] || fail "--forge github should retain top-level github/"
-[ -d "$work/forge-dst/release/github" ] || fail "--forge github should retain release/github/"
+[ -d "$work/forge-dst/.github" ] || fail "--forge github should retain .github/"
+[ -f "$work/forge-dst/.github/keep.txt" ] || fail "--forge github should retain .github/keep.txt"
 
 # 6c. special-char value round-trip: /, &, and \ all substitute literally in
 # file CONTENT. Deliberately uses OWNER (a content-only sentinel in this

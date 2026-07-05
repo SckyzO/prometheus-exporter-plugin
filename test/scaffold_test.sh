@@ -25,8 +25,8 @@ grep -q 'namespace = "redis"' "$work/out/cmd/redis_exporter/main.go" || fail "@@
 [ ! -d "$work/out/code" ] || fail "code/ staging tree should be removed after flavor selection"
 # common file at its final (root) path survives flavor selection untouched
 [ -f "$work/out/keep.txt" ] || fail "common file at final path missing"
-# forge none: github dir dropped
-[ ! -d "$work/out/github" ] || fail "forge=none should drop github/"
+# forge none: .github/ (the whole GitHub layer) dropped
+[ ! -d "$work/out/.github" ] || fail "forge=none should drop .github/"
 # no residual sentinels anywhere
 if grep -rn '@@[A-Z_]*@@' "$work/out"; then fail "residual @@VAR@@ left"; fi
 # .tmpl suffix stripped

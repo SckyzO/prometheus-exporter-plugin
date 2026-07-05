@@ -23,6 +23,23 @@ FROM golang:1.26.4-alpine@sha256:3ad57304ad93bbec8548a0437ad9e06a455660655d9af01
 RUN apk add --no-cache git bash curl ca-certificates findutils \
         shellcheck zizmor build-base
 
+# This image always runs as root (no USER below) against a bind-mounted repo
+# owned by whatever host UID ran `make` (see Makefile's IN_TOOLS: `-v
+# $(CURDIR):/repo`) - a UID mismatch Git's own "dubious ownership" check
+# (CVE-2022-24765 hardening) refuses by default with "fatal: detected
+# dubious ownership in repository at '/repo'". That check exists to stop one
+# LOCAL USER trusting a repo planted by ANOTHER local user/process; it does
+# not apply here - this container only ever touches the single repo its
+# caller explicitly bind-mounted, nothing it wasn't already handed. Trusting
+# any directory system-wide is safe in that narrow context and needed for
+# more than actionlint's own git-repository requirement (see actionlint's
+# guard in Makefile.tmpl): Go's own `-buildvcs` auto-detection shells out to
+# `git status --porcelain` on every `go build`/`go test` once main.go's
+# module sits under ANY .git tree, so a bare `git init` (the very first thing
+# a real new repo gets) without this would break plain `make build` too, not
+# just actionlint - found empirically running this exact sequence.
+RUN git config --system --add safe.directory '*'
+
 # Static-analysis tools used by `make report` (the same set goreportcard.com
 # runs server-side), by `make check` (lint + vet + test + vuln + actionlint),
 # and by `make vuln` / `make actionlint`. Deliberately floating (@latest):

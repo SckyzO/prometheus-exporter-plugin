@@ -159,13 +159,25 @@ vuln: native-warning tools-image
 # --forge none (no workflows at all) must guard the call itself, or `check`
 # would never pass on such a repo. Verified empirically against actionlint,
 # not assumed.
+#
+# actionlint ALSO hard-requires running inside a git repository - the exact
+# same "no project was found in any parent directories" error, for a
+# DIFFERENT reason (its own project-root detection, not the workflows
+# directory) - fires even with .github/workflows/ present, on a freshly
+# scaffolded repo before `git init`. --forge none never exercises this at all
+# (it never reaches actionlint in the first place, see above), so this was
+# only found once a --forge github scaffold's real workflow content made it
+# to this target - guarded the same way, with its own distinct message,
+# rather than one skip reason silently covering two different causes.
 .PHONY: actionlint
 actionlint: native-warning tools-image
-	@if [ -d .github/workflows ]; then \
+	@if [ ! -d .github/workflows ]; then \
+	  echo "Skipping actionlint: no .github/workflows/ found (--forge none, or none added yet)"; \
+	elif [ ! -d .git ]; then \
+	  echo "Skipping actionlint: not a git repository yet (run 'git init' first - actionlint requires one to detect the project root, even with .github/workflows/ present)"; \
+	else \
 	  echo "Running actionlint"; \
 	  $(IN_TOOLS) -c 'actionlint -color'; \
-	else \
-	  echo "Skipping actionlint: no .github/workflows/ found (--forge none, or none added yet)"; \
 	fi
 
 # zizmor - static analysis (security) for GitHub Actions. --offline keeps

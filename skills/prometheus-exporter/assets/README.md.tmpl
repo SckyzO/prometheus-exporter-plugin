@@ -164,13 +164,16 @@ with verifiable supply-chain provenance:
   own OIDC identity:
 
   ```bash
-  cosign verify @@OWNER@@/@@EXPORTER_NAME@@:latest \
+  cosign verify ghcr.io/@@OWNER@@/@@EXPORTER_NAME@@:latest \
     --certificate-identity-regexp 'https://github.com/@@OWNER@@/@@EXPORTER_NAME@@/.github/workflows/release.yml@.*' \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com
   ```
 
-  Adjust the identity regexp and issuer if releases are cut from a different CI provider (or
-  signed via an interactive login) instead of GitHub Actions.
+  Published to GHCR only by default (no extra registry secrets required) - see
+  `.goreleaser.yaml`'s `dockers_v2` section to add a second registry. Adjust the identity
+  regexp and issuer if releases are cut from a different CI provider (or signed via an
+  interactive login) instead of GitHub Actions. Note the image path is lowercased even if
+  your GitHub handle isn't (`ghcr.io`/OCI registries require lowercase repository names).
 
 - **Signed checksums.** Every release ships a checksums file plus a Sigstore bundle for
   offline verification:

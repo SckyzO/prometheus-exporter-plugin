@@ -32,7 +32,11 @@
 #     already sit at their final repo-relative path under assets/ (e.g.
 #     go.mod.tmpl, cmd/<name>/main.go.tmpl, internal/logger/logger.go.tmpl)
 #     and are copied straight through by the cp -R above.
-#   - When --forge none, drops release/github/ and top-level github/.
+#   - When --forge none, drops .github/ (the whole GitHub layer: workflows,
+#     dependabot.yml, CODEOWNERS, issue/PR templates). Mirror-layout means
+#     that is the ONLY forge-conditional directory: everything else under
+#     assets/ (including .goreleaser*.yaml) already sits at its final,
+#     always-shipped repo-relative path and is untouched by --forge.
 #   - Substitutes every @@KEY@@ (content and path components) for each --var.
 #   - Strips the .tmpl suffix from file names.
 #   - Fills main.go's // @@CLIENT_INIT@@ and // @@COLLECTOR_REGISTRY@@
@@ -248,10 +252,14 @@ if [ -f "$dst/internal/collector/metrics.md.tmpl" ]; then
   mv "$dst/internal/collector/metrics.md.tmpl" "$dst/docs/metrics.md.tmpl"
 fi
 
-# Forge selection: drop GitHub-only directories when the user opts out.
-# rm -rf on a path that doesn't exist (e.g. no release/ yet) is a silent no-op.
+# Forge selection: drop the GitHub-only layer when the user opts out.
+# Mirror-layout (assets/.github/... -> final .github/...) means this is the
+# ONE forge-conditional directory; .goreleaser.yaml/.goreleaser.dev.yaml and
+# everything else under assets/ are host-agnostic and always shipped
+# regardless of --forge. rm -rf on a path that doesn't exist (e.g. a test
+# fixture --src with no .github/ of its own) is a silent no-op.
 if [ "$forge" = none ]; then
-  rm -rf "$dst/release/github" "$dst/github"
+  rm -rf "$dst/.github"
 fi
 
 # Substitute @@KEY@@ sentinels in file contents. Materialize the file list

@@ -1,0 +1,225 @@
+# .goreleaser.yaml — release pipeline for @@EXPORTER_NAME@@.
+#
+# Host-agnostic: this file is always scaffolded, regardless of --forge.
+# `goreleaser build` and `goreleaser release --clean --snapshot` run entirely
+# locally and need no forge at all - only a container engine (for the Docker
+# images) and, for the signing/SBOM steps, cosign and syft on PATH. A repo
+# scaffolded with --forge none stays fully versioned and releasable this way;
+# see docs/release-process.md for the manual-release flow when there is no
+# CI to drive it. `goreleaser check` validates this file's schema without
+# building anything.
+#
+# GoReleaser config schema verified against the current GoReleaser major
+# (v2, latest stable 2.16.0) via its own docs before writing this file -
+# see this task's report for what changed as a result (notably: dockers_v2's
+# `extra_files` requirement, and `sboms.args` needing an explicit override to
+# actually produce CycloneDX instead of the tool's own SPDX default).
+
+version: 2
+
+project_name: @@EXPORTER_NAME@@
+
+release:
+  github:
+    owner: @@OWNER@@
+  name_template: "{{ .ProjectName }} v{{ .Version }}"
+  # Auto-detects a pre-release tag (anything containing "-", e.g. v1.2.0-rc1)
+  # and marks it as a pre-release on GitHub; a stable tag (v1.2.0) publishes
+  # normally. See docs/release-process.md's "Release candidate tag" section
+  # for the RC workflow this enables.
+  prerelease: auto
+
+builds:
+  - id: @@EXPORTER_NAME@@
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - "386"
+      - arm64
+    binary: "{{ .ProjectName }}"
+    main: "./cmd/@@EXPORTER_NAME@@"
+    ldflags:
+      - "-s -w"
+      - "-X=github.com/prometheus/common/version.Version={{.Version}}"
+      - "-X=github.com/prometheus/common/version.Revision={{.Commit}}"
+      - "-X=github.com/prometheus/common/version.Branch={{.Branch}}"
+      - "-X=github.com/prometheus/common/version.BuildUser={{.Env.BUILD_USER}}"
+      - "-X=github.com/prometheus/common/version.BuildDate={{.Env.BUILD_DATE}}"
+    env:
+      - CGO_ENABLED=0
+
+archives:
+  - id: @@EXPORTER_NAME@@-release-archive
+    name_template: "{{ .ProjectName }}-{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "{{ .ProjectName }}_checksums.txt"
+
+# Supply-chain artefacts. Three things are produced and independently
+# verifiable on every release (see README.md's "Security & supply chain"
+# section for the operator-facing verification recipes):
+#
+#   1. SBOM (CycloneDX) per archive - what's inside each tarball/zip.
+#   2. Cosign signature on the checksum file - proves the release artefacts
+#      weren't tampered with after build.
+#   3. Cosign signatures on the multi-arch Docker manifests - see
+#      docker_signs below.
+#
+# All signatures are keyless via Sigstore: the signing identity is the CI
+# workflow itself, attested by its own OIDC token - never a long-lived
+# private key checked in anywhere. Consumers verify with `cosign verify` /
+# `cosign verify-blob`, no public key distribution required.
+sboms:
+  - artifacts: archive
+    # syft's own GoReleaser default emits SPDX; this project standardizes on
+    # CycloneDX, so the output format is pinned explicitly rather than left
+    # on the tool's default (verified via GoReleaser's current sbom docs -
+    # the reference this was derived from has this same override missing,
+    # so it silently produces SPDX despite documenting CycloneDX).
+    args: ["$artifact", "--output", "cyclonedx-json=$document"]
+
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sigstore.json"
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+    output: true
+
+docker_signs:
+  - cmd: cosign
+    artifacts: manifests
+    output: true
+    args:
+      - sign
+      - "--yes"
+      - "${artifact}@${digest}"
+
+# Docker images: standard + minimal, both multi-arch (linux/amd64+arm64),
+# published to GHCR only by default. GHCR needs no secret beyond the
+# `GITHUB_TOKEN` every Actions run already has (see the release workflow's
+# `packages: write` permission, if the GitHub layer is in use) - add a
+# second registry (e.g. Docker Hub) by appending an image below plus a
+# matching `docker login`/secrets pair in the release workflow. Not wired by
+# default so a fresh scaffold's release pipeline never fails on a registry
+# credential the operator hasn't configured yet.
+#
+# dockers_v2 collapses what would otherwise be 4 `dockers` + 2
+# `docker_manifests` entries (per-arch builds x manifest combination x
+# variant) into 2, building true multi-arch manifests via `docker buildx`
+# directly. It is still marked experimental upstream as of GoReleaser 2.16 -
+# re-validate via a snapshot/RC build after bumping the pinned version below.
+#
+# Deliberate deviation from GoReleaser's own recommended dockers_v2 usage:
+# its docs explicitly recommend COPYing a binary GoReleaser already
+# cross-compiled - dockers_v2's build context is an ephemeral directory that
+# contains no source files by design, specifically to avoid rebuilding.
+# Dockerfile/Dockerfile.minimal here are deliberately self-contained
+# multi-stage builds instead (see either file's own header comment): a bare
+# `docker build .` works immediately after scaffolding, with no GoReleaser/CI
+# precondition at all. `extra_files` below stages exactly the source tree
+# those Dockerfiles COPY, so the exact same Dockerfile that works locally
+# also works here - at the cost of a slower, QEMU-emulated non-native-arch
+# build during release instead of an instant COPY. Acceptable for an
+# infrequent release pipeline; the local `make docker-build`/`docker build .`
+# path (this task's hot path) pays none of that cost.
+dockers_v2:
+  - id: standard
+    dockerfile: Dockerfile
+    extra_files:
+      - go.mod
+      - go.sum
+      - cmd
+      - internal
+    images:
+      - 'ghcr.io/{{ tolower "@@OWNER@@" }}/{{ tolower .ProjectName }}'
+    tags:
+      - "{{ .Version }}"
+      - '{{ if eq .Prerelease "" }}{{ .Major }}.{{ .Minor }}{{ end }}'
+      - '{{ if eq .Prerelease "" }}{{ .Major }}{{ end }}'
+      - '{{ if eq .Prerelease "" }}latest{{ end }}'
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    sbom: "true"
+    labels:
+      "org.opencontainers.image.title": "@@EXPORTER_NAME@@"
+      "org.opencontainers.image.description": "Prometheus exporter that collects metrics from @@DATA_SOURCE@@"
+      "org.opencontainers.image.licenses": "@@LICENSE@@"
+      "org.opencontainers.image.source": "https://github.com/@@OWNER@@/@@EXPORTER_NAME@@"
+      "org.opencontainers.image.documentation": "https://github.com/@@OWNER@@/@@EXPORTER_NAME@@/blob/master/README.md"
+      "org.opencontainers.image.created": "{{ .Date }}"
+      "org.opencontainers.image.revision": "{{ .FullCommit }}"
+      "org.opencontainers.image.version": "{{ .Version }}"
+    build_args:
+      VERSION: "{{ .Version }}"
+      COMMIT: "{{ .FullCommit }}"
+      BRANCH: "{{ .Branch }}"
+      BUILD_USER: "goreleaser"
+      BUILD_DATE: "{{ .Date }}"
+
+  - id: minimal
+    dockerfile: Dockerfile.minimal
+    extra_files:
+      - go.mod
+      - go.sum
+      - cmd
+      - internal
+    images:
+      - 'ghcr.io/{{ tolower "@@OWNER@@" }}/{{ tolower .ProjectName }}'
+    tags:
+      - "{{ .Version }}-minimal"
+      - '{{ if eq .Prerelease "" }}{{ .Major }}.{{ .Minor }}-minimal{{ end }}'
+      - '{{ if eq .Prerelease "" }}{{ .Major }}-minimal{{ end }}'
+      - '{{ if eq .Prerelease "" }}latest-minimal{{ end }}'
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    sbom: "true"
+    labels:
+      "org.opencontainers.image.title": "@@EXPORTER_NAME@@ (minimal)"
+      "org.opencontainers.image.description": "Prometheus exporter that collects metrics from @@DATA_SOURCE@@ (minimal variant, distroless)"
+      "org.opencontainers.image.licenses": "@@LICENSE@@"
+      "org.opencontainers.image.source": "https://github.com/@@OWNER@@/@@EXPORTER_NAME@@"
+      "org.opencontainers.image.documentation": "https://github.com/@@OWNER@@/@@EXPORTER_NAME@@/blob/master/README.md"
+      "org.opencontainers.image.created": "{{ .Date }}"
+      "org.opencontainers.image.revision": "{{ .FullCommit }}"
+      "org.opencontainers.image.version": "{{ .Version }}"
+    build_args:
+      VERSION: "{{ .Version }}"
+      COMMIT: "{{ .FullCommit }}"
+      BRANCH: "{{ .Branch }}"
+      BUILD_USER: "goreleaser"
+      BUILD_DATE: "{{ .Date }}"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+      - "^style:"
+      - "^refactor:"
+      - "^perf:"
+      - "^build:"
+  groups:
+    - title: "Features"
+      regexp: "^.*feat[(\\w)]*:+.*$"
+      order: 0
+    - title: "Bug Fixes"
+      regexp: "^.*fix[(\\w)]*:+.*$"
+      order: 1
+    - title: "Other Changes"
+      order: 999
