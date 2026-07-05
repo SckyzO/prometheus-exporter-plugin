@@ -27,8 +27,10 @@
   projects already share.
 - **Maintainer handle:** `SckyzO` — the same person maintains both
   repositories. It legitimately appears in *this* plugin's own
-  `.claude-plugin/plugin.json`, `LICENSE`, `README.md`, and root `CLAUDE.md`
-  (self-attribution, not a leak). It must never appear under `skills/`,
+  `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`,
+  `README.md`, and root `CLAUDE.md` (self-attribution, not a leak). The stock
+  Apache-2.0 `LICENSE` keeps its bracketed appendix placeholder unfilled per
+  convention, so the handle does not appear there. It must never appear under `skills/`,
   `commands/`, `agents/`, or `assets/` — checked by
   `test/zero-source-grep.sh`'s HANDLE-GREP (hygiene, non-blocking) — and
   templates always attribute the *generated* exporter to `@@OWNER@@`, a

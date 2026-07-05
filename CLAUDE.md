@@ -101,8 +101,11 @@ As a light hygiene check (not a hard gate), the maintainer's handle should
 also stay absent from `skills/`, `commands/`, and `agents/`: generic
 knowledge has no reason to credit anyone. This repository's own credited
 maintainer, named above, is a separate concern — it legitimately appears in
-this file, the manifest, LICENSE, and README. See `docs/design/re-sync.md`
-for the concrete strings and mapping.
+this file, the `.claude-plugin/` manifests, and README. (The stock
+Apache-2.0 `LICENSE` keeps its bracketed `[name of copyright owner]`
+placeholder in the "how to apply" appendix, per Apache convention, so the
+handle does not appear there.) See `docs/design/re-sync.md` for the
+concrete strings and mapping.
 
 ## Re-sync rule
 
