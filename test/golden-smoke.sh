@@ -17,23 +17,28 @@
 #
 # Usage:
 #   test/golden-smoke.sh --flavor <http|cli> --forge <github|none>
+#   test/golden-smoke.sh --all
 #
-# v0.1 wires real values for three combinations so far: --flavor http --forge
-# none (Task 7), --flavor cli --forge none (Task 9), and --flavor http
-# --forge github (Task 14 - the first forge=github golden run, so this is
-# also the first time actionlint/zizmor lint real workflow content instead of
-# skipping on an absent .github/workflows/). The case switch below is
-# deliberately structured so a later task can add --flavor cli --forge github
-# the same way (mirroring scaffold.sh's own --forge github|none: a small,
-# explicit, hardcoded set, not a discovered/growing registry) — an unwired
+# Each of the 4 cells in the {http,cli} x {none,github} matrix has its own
+# hardcoded --var set below, wired one at a time across several tasks:
+# http+none (Task 7), cli+none (Task 9), http+github (Task 14 - the first
+# forge=github golden run, so also the first time actionlint/zizmor lint
+# real workflow content instead of skipping on an absent .github/workflows/),
+# and cli+github (Task 22, completing the matrix). The case switch below is
+# a small, explicit, hardcoded set, not a discovered/growing registry -
+# mirroring scaffold.sh's own --forge github|none - so an unwired
 # combination fails loudly with a clear message instead of guessing at
 # plausible-looking values, which is what "logs any step it skips explicitly"
-# (see the header of each phase below) means for this script's own scope, as
+# (see the header of each phase below) means for THIS script's own scope, as
 # opposed to a runtime environment gap (e.g. a missing optional tool), which
 # is instead handled inside the Makefile itself (actionlint/zizmor skip
 # gracefully when .github/workflows/ is absent — see Makefile.tmpl) and
 # simply surfaces here because this script never redirects make's own
 # stdout/stderr away from the caller's terminal.
+#
+# --all (Task 22) runs all 4 matrix cells in one invocation - see the
+# dispatch block right after argument parsing below for how each cell stays
+# isolated from the others' own pass/fail.
 #
 # POSIX sh + sed + grep + make, same dependency discipline as scaffold.sh
 # itself. `make build`/`make check` additionally need a Go toolchain and,
@@ -52,6 +57,7 @@ prog=$(basename "$0")
 usage() {
   cat <<EOF >&2
 Usage: $prog --flavor <http|cli> --forge <github|none>
+       $prog --all
 EOF
 }
 
@@ -62,6 +68,7 @@ die() {
 
 flavor=""
 forge=""
+all=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --flavor)
@@ -74,6 +81,10 @@ while [ $# -gt 0 ]; do
       forge=$2
       shift 2
       ;;
+    --all)
+      all=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -84,8 +95,64 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-[ -n "$flavor" ] || die "--flavor is required"
-[ -n "$forge" ] || die "--forge is required"
+# --all runs the full matrix and is mutually exclusive with a single
+# --flavor/--forge cell: mixing them would leave it ambiguous whether the
+# caller wants one cell or all four, and silently picking one interpretation
+# over the other is exactly the kind of guess this script's fail-closed
+# discipline (see header, and the grep exit-code handling further down)
+# refuses to make anywhere else.
+if [ "$all" -eq 1 ]; then
+  [ -z "$flavor" ] && [ -z "$forge" ] || die "--all cannot be combined with --flavor/--forge"
+else
+  [ -n "$flavor" ] || die "--flavor is required (or pass --all to run the full matrix)"
+  [ -n "$forge" ] || die "--forge is required (or pass --all to run the full matrix)"
+fi
+
+# --all (Task 22): re-invoke this same script, once per matrix cell, as a
+# FRESH sh PROCESS rather than a sourced/called function - the isolation a
+# plain function call sharing this process would not give for free. Every
+# cell below is written with set -eu and die() (die calls exit), which is
+# exactly right for a single --flavor/--forge invocation (fail immediately,
+# loudly) but wrong for a driver that wants to run all 4 cells and report
+# every failure together: a shared-process function call would let cell 1's
+# die() tear down the whole --all run before cells 2-4 ever got a chance.
+# Sequential, deliberately not backgrounded: every cell hardcodes the same
+# EXPORTER_NAME (demo_exporter, see the case switch below), so two cells
+# building the SAME tools image tag at once (Makefile.tmpl's tools-image
+# target, keyed only on EXPORTER_NAME) would race on that tag and its mtime
+# stamp file - running one cell fully to completion before starting the
+# next sidesteps that entirely, and also means the 2nd-4th cells reuse the
+# 1st cell's already-built tools image instead of rebuilding it.
+if [ "$all" -eq 1 ]; then
+  echo "== golden-smoke.sh --all: running the full matrix {http,cli} x {none,github} =="
+  overall_rc=0
+  summary=""
+  for cell in http-none http-github cli-none cli-github; do
+    cell_flavor=${cell%-*}
+    cell_forge=${cell#*-}
+    echo ""
+    echo "=================================================================="
+    echo "== matrix cell: $cell_flavor/$cell_forge =="
+    echo "=================================================================="
+    if sh "$here/$prog" --flavor "$cell_flavor" --forge "$cell_forge"; then
+      summary="$summary
+  $cell_flavor/$cell_forge: PASS"
+    else
+      summary="$summary
+  $cell_flavor/$cell_forge: FAIL"
+      overall_rc=1
+    fi
+  done
+  echo ""
+  echo "== golden-smoke.sh --all: matrix summary =="
+  printf '%s\n' "$summary"
+  if [ "$overall_rc" -ne 0 ]; then
+    echo "$prog --all: FAIL - at least one matrix cell failed, see summary above" >&2
+  else
+    echo "$prog --all: PASS - all 4 matrix cells green"
+  fi
+  exit "$overall_rc"
+fi
 
 work="$root/test/_work/$flavor-$forge"
 
@@ -140,8 +207,21 @@ case "$flavor-$forge" in
       --var OWNER=acme \
       --var LICENSE=apache-2.0
     ;;
+  cli-github)
+    sh "$assets/scaffold.sh" \
+      --src "$assets" --dst "$work" \
+      --flavor cli --forge github --force \
+      --var EXPORTER_NAME=demo_exporter \
+      --var NAMESPACE=demo \
+      --var MODULE_PATH=example.com/demo_exporter \
+      --var DATA_SOURCE=demo_cli \
+      --var DATA_SOURCE_PATH=unused \
+      --var DEFAULT_PORT=9999 \
+      --var OWNER=acme \
+      --var LICENSE=apache-2.0
+    ;;
   *)
-    die "no golden @@VAR@@ values wired yet for --flavor $flavor --forge $forge (http+none, cli+none, and http+github supported; see Task 22 for cli+github)"
+    die "no golden @@VAR@@ values wired for --flavor $flavor --forge $forge (only http+none, cli+none, http+github, cli+github are wired)"
     ;;
 esac
 
@@ -341,6 +421,124 @@ elif command -v podman >/dev/null 2>&1; then
   echo "confirmed: docker build PASSED via podman ($flavor/$forge)"
 else
   echo "SKIPPING docker build ($flavor/$forge): no docker/podman container engine found — install one to validate Dockerfile locally"
+fi
+
+# Mechanical /add-collector sub-check (Task 22, optional per the task's own
+# brief — deferred from Task 16's by-hand proof, see that task's report).
+# /add-collector itself is assistant-driven (name validation, endpoint and
+# metric choices, alert tiering — real judgment calls, not something to
+# script), so this does NOT simulate the whole command: it mechanically
+# exercises only the SCRIPTABLE backbone every real run also does — copy
+# the flavor's own collector template, rename its identifiers, splice a
+# register(...) call at the // @@COLLECTOR_REGISTRY@@ marker, add a
+# docs/metrics.md row — then make build + make docs-check (this
+# sub-check's own literal, deliberately narrow scope). The goal is to catch
+# a FUTURE template/marker edit that would break /add-collector, not to
+# re-validate everything Task 16 already proved by hand.
+#
+# Runs once, only for http/none: the mechanism under test (marker
+# anchoring, @@VAR@@ substitution order, docs-check) does not vary by
+# --forge, so repeating it per forge variant would buy nothing. Scoped to
+# the http flavor only, not cli too — flagged as a follow-up in this task's
+# report rather than doubling the unverified surface here.
+#
+# Deliberately builds ONLY the non-test half of the triad (no
+# queue_test.go): copying the TEST template for a 2nd collector requires
+# first dropping several shared package-level declarations (the
+# statusTrackerSuccessMetric const, TestRequestDuration_CustomRegistryReachable,
+# — see commands/add-collector.md's own "shared-declaration exclusion
+# list"), a balanced-block deletion that is real template-shape-specific
+# surgery, not a mechanical rename — exactly the kind of fragile scripting
+# this sub-check's own brief warns against shipping. make build/docs-check
+# need no test file at all, so skipping it sidesteps that fragility
+# entirely rather than attempting it unreliably.
+#
+# ORDER MATTERS below, and was wrong on the first attempt while writing
+# this sub-check (caught empirically, not by inspection, then fixed): the
+# identifier rename (example->queue) MUST run BEFORE @@VAR@@ substitution,
+# not after. @@MODULE_PATH@@'s real value in this golden fixture is
+# example.com/demo_exporter, which contains the substring "example" too —
+# renaming AFTER substitution corrupts it into queue.com/demo_exporter and
+# go build fails ("no required module provides package queue.com/...").
+# Renaming first is safe in both directions: no @@VAR@@ sentinel NAME
+# contains "example".
+if [ "$flavor" = http ] && [ "$forge" = none ]; then
+  echo "== mechanical /add-collector sub-check ($flavor/$forge): scaffolded templates still support adding a 2nd collector =="
+  addc_tmpl="$assets/code/http/collector.go.tmpl"
+  addc_client_frag="$assets/code/http/wiring/client_init.frag"
+  addc_registry_frag="$assets/code/http/wiring/registry.frag"
+  addc_main="$work/cmd/demo_exporter/main.go"
+  addc_metrics_doc="$work/docs/metrics.md"
+  addc_qclient="$work/internal/collector/.addc_client_init.frag.tmp"
+  addc_qregistry="$work/internal/collector/.addc_registry.frag.tmp"
+
+  # 1. Materialize queue.go: rename identifiers + the two metric-name
+  # literals (items/healthy -> queue_items/queue_healthy — avoiding a
+  # same-name collision with the example collector's own demo_items/
+  # demo_healthy, which neither make build nor make docs-check would catch
+  # on their own: both are AST/compile-level checks, not a live registry
+  # check) BEFORE substituting @@VAR@@.
+  sed \
+    -e 's/@@NAMESPACE@@_items/@@NAMESPACE@@_queue_items/' \
+    -e 's/@@NAMESPACE@@_healthy/@@NAMESPACE@@_queue_healthy/' \
+    -e 's/example/queue/g' \
+    -e 's/Example/Queue/g' \
+    "$addc_tmpl" > "$work/internal/collector/queue.go.tmp"
+  sed \
+    -e 's/@@MODULE_PATH@@/example.com\/demo_exporter/g' \
+    -e 's/@@DATA_SOURCE_PATH@@/\/api\/queue/g' \
+    -e 's/@@NAMESPACE@@/demo/g' \
+    "$work/internal/collector/queue.go.tmp" > "$work/internal/collector/queue.go"
+  rm -f "$work/internal/collector/queue.go.tmp"
+
+  # 2. Build queue's own client_init/registry fragments (same rename, same
+  # order) and splice them at the SAME two markers scaffold.sh itself used
+  # — the markers survive scaffolding verbatim for exactly this reuse (see
+  # scaffold.sh's own comment on why /add-collector needs them intact).
+  # registry.frag also carries the http_client_requests self-instrumentation
+  # registration (shared, already wired once by scaffold.sh) — filtered out
+  # of this copy so it is not registered a second time.
+  sed -e 's/example/queue/g' -e 's/Example/Queue/g' "$addc_client_frag" \
+    | sed -e 's/@@DATA_SOURCE@@/http:\/\/localhost:9999/g' > "$addc_qclient"
+  sed -e 's/example/queue/g' -e 's/Example/Queue/g' "$addc_registry_frag" \
+    | grep -v 'register("http_client_requests"' > "$addc_qregistry"
+
+  grep -q '^[[:blank:]]*// @@CLIENT_INIT@@[[:blank:]]*$' "$addc_main" || die "add-collector sub-check: no standalone // @@CLIENT_INIT@@ marker in $addc_main"
+  sed -e '\|^[[:blank:]]*// @@CLIENT_INIT@@[[:blank:]]*$|r '"$addc_qclient" "$addc_main" > "$addc_main.tmp" && mv "$addc_main.tmp" "$addc_main"
+  grep -q '^[[:blank:]]*// @@COLLECTOR_REGISTRY@@[[:blank:]]*$' "$addc_main" || die "add-collector sub-check: no standalone // @@COLLECTOR_REGISTRY@@ marker in $addc_main"
+  sed -e '\|^[[:blank:]]*// @@COLLECTOR_REGISTRY@@[[:blank:]]*$|r '"$addc_qregistry" "$addc_main" > "$addc_main.tmp" && mv "$addc_main.tmp" "$addc_main"
+  rm -f "$addc_qclient" "$addc_qregistry"
+
+  # Regression-lock, mirroring scaffold_edge_test.sh's own exact-count check
+  # for this same class of bug: an unanchored marker match would ALSO splice
+  # into register()'s own doc-comment prose mention of
+  # // @@COLLECTOR_REGISTRY@@, and either miscount here or fail to compile.
+  addc_regcount=$(grep -c 'register("queue"' "$addc_main")
+  [ "$addc_regcount" -eq 1 ] || die "add-collector sub-check: expected exactly 1 injected register(\"queue\" call, found $addc_regcount ($flavor/$forge)"
+
+  # 3. docs/metrics.md row — minimal, matching the shipped 4-cell format.
+  cat >> "$addc_metrics_doc" <<'EOF'
+
+## QueueCollector
+
+Defined in `internal/collector/queue.go`.
+
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `demo_queue_items` | Gauge | - | Number of items reported by the queue target. |
+| `demo_queue_healthy` | Gauge | - | Whether the queue target reports itself healthy (1) or not (0). |
+EOF
+
+  echo "== add-collector sub-check: make build ($flavor/$forge) =="
+  if ! ( cd "$work" && make build ); then
+    die "add-collector sub-check: make build FAILED after mechanically adding queue — a template/marker change likely broke /add-collector ($flavor/$forge)"
+  fi
+
+  echo "== add-collector sub-check: make docs-check ($flavor/$forge) =="
+  if ! ( cd "$work" && make docs-check ); then
+    die "add-collector sub-check: make docs-check FAILED after mechanically adding queue — docs/metrics.md and internal/collector/queue.go disagree ($flavor/$forge)"
+  fi
+  echo "confirmed: add-collector sub-check PASSED ($flavor/$forge)"
 fi
 
 echo "$prog: PASS — $flavor/$forge scaffold + build + check green"

@@ -1,0 +1,116 @@
+# Plugin CI - the anti-bit-rot gate for THIS repo (the prometheus-exporter
+# plugin itself). Distinct from skills/prometheus-exporter/assets/.github/
+# workflows/ci.yml.tmpl, which ships INSIDE every scaffolded exporter and
+# lints/builds/tests THAT repo - this file guards the scaffolder that
+# produces it. Four independent gates:
+#
+#   - claude-plugin-validate: the manifest is actually a valid Claude Code
+#     plugin (falls back to a jq structural check if the CLI can't be
+#     installed - see that job's own step comments).
+#   - zero-source-grep: this plugin's taught knowledge must never leak the
+#     reference project's name, and the maintainer's personal handle must
+#     stay out of the taught skill/command/agent content specifically - see
+#     test/zero-source-grep.sh (which this job just calls) for exactly what
+#     that checks and why, and CLAUDE.md's Global Constraints for the
+#     policy itself. Deliberately extracted into that script rather than
+#     inlined in this YAML: this workflow file would otherwise have to
+#     spell out the literal reference-project name it's checking for,
+#     tripping the very gate it runs (the same self-reference problem
+#     test/golden-smoke.sh's own detector already needed an exemption for).
+#   - scaffold-unit-tests: the two fast, Go-free, network-free unit suites
+#     for scaffold.sh itself.
+#   - golden-smoke: the full {http,cli} x {none,github} matrix - scaffolds
+#     a real exporter 4 ways and runs each through make build/check,
+#     promtool, a guarded docker build, and the docs-check lie-injection
+#     round-trip. Gated behind scaffold-unit-tests: no reason to burn
+#     several minutes of Docker builds on 4 full scaffolds if scaffold.sh
+#     itself is already known broken by its own cheap unit tests.
+#
+# Every job needs nothing beyond what ubuntu-latest ships out of the box
+# (git, make, docker, jq) plus, for claude-plugin-validate, a
+# network-reachable install script - no actions/setup-* step anywhere, and
+# only ONE third-party action in this entire file (actions/checkout).
+
+name: Plugin CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  claude-plugin-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      # Native, non-interactive installer - the method code.claude.com/docs
+      # documents for exactly this case ("Install Claude Code Natively").
+      # Never allowed to fail the STEP itself: if the install fails
+      # (offline mirror, transient network), the next step's own
+      # `command -v claude` check falls back instead of this job dying here
+      # on a confusing curl/bash trace.
+      - name: Install Claude Code CLI (best-effort)
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash || echo "::warning::native Claude Code install failed - claude-plugin-validate will fall back to the jq structural check"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # `claude plugin validate --strict` is a pure local manifest check -
+      # no ANTHROPIC_API_KEY / login needed (verified while writing this
+      # workflow: it passes with HOME pointed at an empty, credential-free
+      # directory). When the CLI genuinely isn't installable in this
+      # runner, fall back to a jq-based shape check of .claude-plugin/*.json
+      # - strictly weaker (it cannot catch a field the real validator would
+      # reject, only gross structural breakage: not JSON, not an object,
+      # missing a required key) - and say so out loud via ::warning:: rather
+      # than silently reporting green on a check that didn't really run.
+      - name: claude plugin validate (jq fallback if CLI unavailable)
+        run: |
+          set -eu
+          if command -v claude >/dev/null 2>&1 && claude --version >/dev/null 2>&1; then
+            echo "claude CLI available ($(claude --version)); running the real validator"
+            claude plugin validate . --strict
+          else
+            echo "::warning::claude CLI not available in this runner after the documented native install - falling back to a jq structural check of .claude-plugin/*.json. This is NOT equivalent to 'claude plugin validate .': it only confirms the manifests are valid JSON objects carrying the fields the schema requires, not full schema/semantic validation."
+            command -v jq >/dev/null 2>&1 || { echo "::error::jq not found either - cannot run even the fallback check" >&2; exit 1; }
+            jq -e 'type == "object" and (.name|type=="string") and (.description|type=="string") and (.author.name|type=="string") and (.license|type=="string")' .claude-plugin/plugin.json >/dev/null \
+              || { echo "::error::.claude-plugin/plugin.json failed the fallback structural check" >&2; exit 1; }
+            jq -e 'type == "object" and (.name|type=="string") and (.owner.name|type=="string") and (.plugins|type=="array") and (.plugins|length > 0)' .claude-plugin/marketplace.json >/dev/null \
+              || { echo "::error::.claude-plugin/marketplace.json failed the fallback structural check" >&2; exit 1; }
+            echo "jq structural fallback check passed"
+          fi
+
+  zero-source-grep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: repo-wide zero-source-leak gates (see test/zero-source-grep.sh)
+        run: sh test/zero-source-grep.sh
+
+  scaffold-unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: scaffold.sh unit + edge-case tests (no Go, no network)
+        run: |
+          sh test/scaffold_test.sh
+          sh test/scaffold_edge_test.sh
+
+  golden-smoke:
+    needs: scaffold-unit-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: golden smoke matrix (--all) - scaffold x4, build, check, promtool, docker
+        run: sh test/golden-smoke.sh --all
