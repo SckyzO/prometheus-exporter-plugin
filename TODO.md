@@ -16,28 +16,30 @@ contributor can see where the build stands without reading all 23 tasks.
 - [x] **Milestone 0: Plugin skeleton** (Tasks 1-2). Manifest,
       self-marketplace, and root governance files. Provable with
       `claude plugin validate .`.
-- [ ] **Milestone 1: Templating engine** (Task 3). `scaffold.sh` and its
+- [x] **Milestone 1: Templating engine** (Task 3). `scaffold.sh` and its
       unit test. Provable with a green scaffold unit test.
-- [ ] **Milestone 2: Minimal HTTP exporter that builds** (Tasks 4-7). The
+- [x] **Milestone 2: Minimal HTTP exporter that builds** (Tasks 4-7). The
       flavor-agnostic core plus the HTTP flavor and its Makefile. Provable
       with a green golden HTTP build.
-- [ ] **Milestone 3: CLI flavor** (Tasks 8-9). Provable with a green golden
+- [x] **Milestone 3: CLI flavor** (Tasks 8-9). Provable with a green golden
       CLI build.
-- [ ] **Milestone 4: Docs discipline + non-lying metrics check** (Tasks
+- [x] **Milestone 4: Docs discipline + non-lying metrics check** (Tasks
       10-11). Templated operator docs and `make docs-check`.
-- [ ] **Milestone 5: Observability shipped with the exporter** (Task 12).
+- [x] **Milestone 5: Observability shipped with the exporter** (Task 12).
       Health and business alerts, recording rules, and the health
       dashboard.
-- [ ] **Milestone 6: Packaging + host-agnostic release** (Tasks 13-14).
+- [x] **Milestone 6: Packaging + host-agnostic release** (Tasks 13-14).
       Docker, compose, systemd, GoReleaser, the opt-out GitHub layer, and
       the license set.
-- [ ] **Milestone 7: Executable components** (Tasks 15-17).
+- [x] **Milestone 7: Executable components** (Tasks 15-17).
       `/new-prometheus-exporter`, `/add-collector`, and `exporter-reviewer`.
-- [ ] **Milestone 8: The skill** (Tasks 18-21). `SKILL.md` router and the
+- [x] **Milestone 8: The skill** (Tasks 18-21). `SKILL.md` router and the
       10 reference documents.
 - [ ] **Milestone 9: Plugin CI, golden gate, dogfooding** (Tasks 22-23).
-      The full golden matrix, this plugin's own CI, `docs/design/re-sync.md`,
-      and the `v0.1.0` tag.
+      The full golden matrix, this plugin's own CI, and
+      `docs/design/re-sync.md` are done, and the `[0.1.0]` entry is in
+      `CHANGELOG.md`; the `v0.1.0` tag and release are a maintainer action
+      taken separately from this checklist.
 
 ## After v0.1
 
