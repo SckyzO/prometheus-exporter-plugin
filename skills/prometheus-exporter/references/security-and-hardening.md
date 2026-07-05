@@ -70,7 +70,7 @@ never forced on. `SECURITY.md.tmpl` states the reasoning plainly: *"the
 exporter itself does not force a particular hardening posture by default —
 the right one depends on your network, and an unannounced change to a
 security-relevant default would be a breaking change."* The right posture
-for a exporter reachable only from a private, already-firewalled scrape
+for an exporter reachable only from a private, already-firewalled scrape
 network is not the right posture for one reachable from anywhere — this
 scaffold cannot know which situation a given deployment is in, so it
 documents both the risk and the opt-in fix (Rule 4) instead of guessing.

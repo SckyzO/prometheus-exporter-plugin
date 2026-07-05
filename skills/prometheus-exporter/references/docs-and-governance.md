@@ -70,10 +70,11 @@ under `internal/collector/` via `go/ast`, statically resolving every
 `prometheus.NewDesc(...)` call and every Opts-based constructor
 (`NewHistogramVec`/`NewCounterVec`/`NewGaugeVec`/`NewSummaryVec` and their
 non-Vec `NewHistogram`/`NewCounter`/`NewGauge`/`NewSummary` forms) it finds
-— resolving a metric name built from a plain string literal or a
-`prometheus.BuildFQName(ns, sub, name)` call with three literal arguments
-exactly alike (both are the idiomatic, static way to compose a name;
-neither is treated as more suspect than the other). It then parses
+— resolving a metric name built from a plain string literal exactly the
+same way as one built from a `prometheus.BuildFQName(ns, sub, name)` call
+whose three arguments are themselves literals (both are the idiomatic,
+static way to compose a name; neither is treated as more suspect than the
+other). It then parses
 `docs/metrics.md`'s own table rows and diffs the two sets in **both
 directions, with different consequences**:
 
