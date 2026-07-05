@@ -73,11 +73,24 @@ actually been run and shown green.
 The taught knowledge and templates stand on official Prometheus authority
 (`prometheus.io`), never on "distilled from <a specific project>". So no
 shipped file, including this one, may name the production reference exporter
-this plugin's patterns were derived from. Before every commit, search the
-tree (excluding `docs/`) for that exporter's name and confirm it returns no
-output — this is a hard gate. `docs/` is the only exemption: it holds the
-design and planning history of how the plugin came to be, and nothing under
-it is ever loaded by the plugin at runtime.
+this plugin's patterns were derived from. Before every commit, run
+`test/zero-source-grep.sh` — the canonical, runnable implementation of
+this gate — and confirm it passes; this is a hard gate.
+
+The scan excludes `docs/` (the design and planning history of how the
+plugin came to be, never loaded by the plugin at runtime), `.git/` and
+`.superpowers/` (version control and scratch state, not shipped
+artifacts), and `test/` (the harness legitimately contains the detector
+word as its own search pattern, which is why it excludes itself from the
+walk). This repository's own root `.github/` is excluded for the same
+reason: its CI workflow calls the harness and would otherwise have to
+spell out, in its own YAML, the exact word the harness is checking for.
+That exemption does **not** extend to the taught templates shipped under
+`skills/prometheus-exporter/assets/.github/` — those are fully scanned,
+because a leak there would ship inside every generated exporter, which is
+a real defect, not a self-reference artifact. See
+`test/zero-source-grep.sh` for the exact exclude set and how it tells the
+two `.github/` directories apart.
 
 Scaffold templates always attribute the generated exporter to `@@OWNER@@` —
 its own creator, the third party who runs `/new-prometheus-exporter` — never

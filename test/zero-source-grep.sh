@@ -6,7 +6,7 @@
 # never has to spell out the literal word "slurm" in its own YAML — it would
 # otherwise trip the very gate it's running, the same self-reference problem
 # test/golden-smoke.sh's own detector already had to be exempted from (Task
-# 7's decision, see CLAUDE.md's Global Constraints).
+# 7's decision, see CLAUDE.md's Zero-source-mention rule).
 #
 # Same three-way grep exit-code discipline test/golden-smoke.sh already
 # uses: 0 = match found (bad), 1 = no match (clean), 2+ = the scan itself
@@ -29,7 +29,7 @@ die() {
 
 # SLURM-GREP: this plugin's taught knowledge stands on prometheus.io/Go
 # authority, never on naming the reference project it was derived from —
-# see CLAUDE.md's Global Constraints. docs/, .git/, .superpowers/, and
+# see CLAUDE.md's Zero-source-mention rule. docs/, .git/, .superpowers/, and
 # test/ are excluded from the walk itself (established Task 7 exclude-dir
 # list, unchanged here).
 #
@@ -66,8 +66,9 @@ esac
 # HANDLE-GREP: non-blocking-by-design hygiene, scoped to the taught content
 # under skills/ commands/ agents/ only — the maintainer's own real handle
 # legitimately appears in .claude-plugin/*.json, LICENSE, README.md, and
-# the root CLAUDE.md (exempt by design — see CLAUDE.md's Global
-# Constraints). .github/ was never in this check's path list, so no
+# the root CLAUDE.md (exempt by design — see CLAUDE.md's
+# Zero-source-mention rule). .github/ was never in this check's path
+# list, so no
 # basename-collision concern applies here.
 echo "== HANDLE-GREP (maintainer handle absent from taught content) =="
 rc=0

@@ -11,7 +11,7 @@
 #     reference project's name, and the maintainer's personal handle must
 #     stay out of the taught skill/command/agent content specifically - see
 #     test/zero-source-grep.sh (which this job just calls) for exactly what
-#     that checks and why, and CLAUDE.md's Global Constraints for the
+#     that checks and why, and CLAUDE.md's Zero-source-mention rule for the
 #     policy itself. Deliberately extracted into that script rather than
 #     inlined in this YAML: this workflow file would otherwise have to
 #     spell out the literal reference-project name it's checking for,
