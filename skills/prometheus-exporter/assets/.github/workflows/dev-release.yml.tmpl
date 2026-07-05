@@ -16,8 +16,6 @@ permissions:
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write # needed to write releases
     steps:
       - name: Checkout
         # fetch-depth: 0 already retrieves all tags (the fetch refspec
