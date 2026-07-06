@@ -232,7 +232,7 @@ func main() {
 	// Wait for every background-refresh collector's goroutine to finish (if
 	// any were registered — see backgroundCollectors above), bounded so a
 	// collector whose refresh is genuinely stuck never hangs process exit.
-	for _, bc := range backgroundCollectors {
+	for _, bc := range backgroundCollectors { //nolint:gosec // G602: a for-range over a slice never indexes out of bounds (there is no explicit index expression), so G602 is a false positive here
 		select {
 		case <-bc.Done():
 		case <-time.After(5 * time.Second):
