@@ -1,0 +1,263 @@
+package collector
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"fmt"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+
+	"@@MODULE_PATH@@/internal/logger"
+)
+
+// exampleMetric is one parsed key/value line from the example data source —
+// for example the line "foo 1" parses to {Key: "foo", Value: 1}. This is a
+// placeholder shape documenting the pattern, not any real target's real
+// output. Replace it, and parseExample below, with your actual data
+// source's real parsing logic when adapting this collector.
+type exampleMetric struct {
+	Key   string
+	Value float64
+}
+
+// exampleData is this collector's only I/O: it runs the configured command
+// and returns its raw output. Kept separate from parsing (parseExample,
+// below) so parsing stays pure and unit-testable without running a real
+// command. The per-command timeout is applied here, around the single
+// Execute call, rather than inside Execute itself — see execute.go's own
+// doc comment for why that split is deliberate.
+func (c *ExampleCollector) exampleData(ctx context.Context) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+	return Execute(ctx, "@@DATA_SOURCE@@")
+}
+
+// parseExample decodes exampleData's raw output into one exampleMetric per
+// non-blank line. Pure: no I/O, no logging, no side effects, so every input
+// maps deterministically to an output — this is what makes it
+// unit-testable with plain byte fixtures (see the test file's
+// TestParseExample).
+//
+// The expected shape is one "key value" pair per line, arbitrary
+// whitespace-separated, for example:
+//
+//	foo 1
+//	bar 2
+//
+// Blank lines are skipped. Anything else — a line that isn't exactly two
+// whitespace-separated fields, whose second field isn't a number, or whose
+// key repeats a key already seen earlier in the same input — is a parse
+// error, for the same duplicate-label-set reason documented in the
+// synchronous flavor's own parseExample (collector.go.tmpl): refresh, below,
+// emits one MustNewConstMetric per entry sharing the same descriptor and
+// labeled only by key, so two entries with the same key would produce two
+// metrics with an identical label set — something Registry.Gather rejects
+// at scrape time. Rejecting the duplicate here, at parse time, keeps that
+// failure inside this collector's own refresh, which fails open (logs and
+// keeps the previous cache — see refresh's own doc comment) instead of
+// surfacing downstream as a Gather error that would blank out every OTHER
+// collector's metrics for that scrape too.
+func parseExample(b []byte) ([]exampleMetric, error) {
+	var metrics []exampleMetric
+	seen := make(map[string]struct{})
+
+	scanner := bufio.NewScanner(bytes.NewReader(b))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			return nil, fmt.Errorf("parse example line %q: want exactly 2 whitespace-separated fields, got %d", line, len(fields))
+		}
+
+		value, err := strconv.ParseFloat(fields[1], 64)
+		if err != nil {
+			return nil, fmt.Errorf("parse example line %q: value %q is not a number: %w", line, fields[1], err)
+		}
+
+		key := fields[0]
+		if _, dup := seen[key]; dup {
+			return nil, fmt.Errorf("parse example line %q: duplicate key %q (each key must appear at most once per scrape)", line, key)
+		}
+		seen[key] = struct{}{}
+
+		metrics = append(metrics, exampleMetric{Key: key, Value: value})
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan example output: %w", err)
+	}
+
+	return metrics, nil
+}
+
+// exampleGetMetrics is the glue between the I/O step (exampleData) and the
+// pure parsing step (parseExample): the shape every collector in this
+// exporter follows, regardless of flavor. refresh, below, calls this on its
+// own background schedule; nothing else in this file runs the command
+// directly.
+func (c *ExampleCollector) exampleGetMetrics(ctx context.Context) ([]exampleMetric, error) {
+	data, err := c.exampleData(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return parseExample(data)
+}
+
+// ExampleCollector is the background-refresh variant materialized by
+// /add-collector --variant background. Unlike the synchronous collector
+// (collector.go.tmpl), Collect never runs the command: a background
+// goroutine (started by Start, below) refreshes a cached metric slice on a
+// fixed interval, and Collect only ever reads that cache under mu. This
+// decouples scrape cadence from fetch cadence entirely, so a scrape never
+// blocks on a slow or expensive command, no matter how long it takes.
+type ExampleCollector struct {
+	timeout  time.Duration
+	interval time.Duration
+	log      *logger.Logger
+
+	entries         *prometheus.Desc
+	value           *prometheus.Desc
+	lastRefreshDesc *prometheus.Desc
+
+	// mu guards cached and lastRefresh: refresh (below) writes them from the
+	// background goroutine started by Start, Collect reads them from
+	// whichever goroutine calls it (a Prometheus scrape). RWMutex, not a
+	// plain Mutex, because Collect only ever reads.
+	mu          sync.RWMutex
+	cached      []prometheus.Metric
+	lastRefresh time.Time
+
+	// done is closed when the background goroutine launched by Start exits.
+	// main.go waits on Done() (via the backgroundCollector seam) after the
+	// HTTP server has shut down, so the process doesn't exit mid-refresh.
+	done chan struct{}
+}
+
+// NewExampleCollector builds the collector and its Descs. It is pure: it
+// starts no goroutine and performs no I/O, which is what makes it
+// constructible in tests with no background refresh running. Call Start
+// once, after construction, to begin refreshing.
+func NewExampleCollector(log *logger.Logger, timeout, interval time.Duration) *ExampleCollector {
+	return &ExampleCollector{
+		timeout:  timeout,
+		interval: interval,
+		log:      log,
+		entries: prometheus.NewDesc(
+			"@@NAMESPACE@@_example_entries",
+			"Number of key/value entries parsed from the example data source in the last scrape.",
+			nil, nil,
+		),
+		value: prometheus.NewDesc(
+			"@@NAMESPACE@@_example",
+			"Value reported by the example data source, by key.",
+			[]string{"key"}, nil,
+		),
+		lastRefreshDesc: prometheus.NewDesc(
+			"@@NAMESPACE@@_example_last_refresh_timestamp_seconds",
+			"Unix time of the last successful example refresh. Alert if time() - this > 2 x the collector's configured interval.",
+			nil, nil,
+		),
+		done: make(chan struct{}),
+	}
+}
+
+// Start launches the background refresh goroutine. Call once, after
+// construction. The first refresh runs immediately (so the cache starts
+// filling as soon as the process starts) without Start itself waiting for
+// it — a slow first fetch never blocks process startup. The goroutine exits
+// when ctx is cancelled; Done() can then be used to wait for it to finish.
+func (c *ExampleCollector) Start(ctx context.Context) {
+	go func() {
+		defer close(c.done)
+		c.refresh(ctx)
+		ticker := time.NewTicker(c.interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				c.refresh(ctx)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
+// Done returns a channel that is closed when the background goroutine
+// started by Start has fully exited. main.go's shutdown seam waits on this
+// (bounded, so a stuck refresh can't hang process exit forever) after the
+// HTTP server itself has stopped.
+func (c *ExampleCollector) Done() <-chan struct{} {
+	return c.done
+}
+
+// refresh performs the one flavor-specific I/O call (exampleGetMetrics, via
+// the package-level Execute) and, on success, atomically replaces the
+// cache. On error it logs and returns, leaving the previous cache and
+// lastRefresh untouched — fail-open: a transient failure serves the
+// last-known-good data instead of dropping the series, and the freshness
+// gauge (below) is the signal that a refresh is stale, not a dropped
+// scrape.
+func (c *ExampleCollector) refresh(ctx context.Context) {
+	metrics, err := c.exampleGetMetrics(ctx)
+	if err != nil {
+		c.log.Error("Failed to refresh example metrics — keeping previous cache", "err", err)
+		return
+	}
+
+	cached := make([]prometheus.Metric, 0, len(metrics)+1)
+	cached = append(cached, prometheus.MustNewConstMetric(c.entries, prometheus.GaugeValue, float64(len(metrics))))
+	for _, m := range metrics {
+		cached = append(cached, prometheus.MustNewConstMetric(c.value, prometheus.GaugeValue, m.Value, m.Key))
+	}
+
+	c.mu.Lock()
+	c.cached = cached
+	c.lastRefresh = time.Now()
+	c.mu.Unlock()
+}
+
+// Describe sends every one of this collector's descriptors, including the
+// freshness gauge. Constant regardless of scrape or refresh outcome, which
+// is what makes prometheus.DescribeByCollect unnecessary here.
+func (c *ExampleCollector) Describe(ch chan<- *prometheus.Desc) {
+	ch <- c.entries
+	ch <- c.value
+	ch <- c.lastRefreshDesc
+}
+
+// Collect replays the cached metrics from the last successful refresh —
+// O(cached size), never runs the command, never blocks on it. It then
+// ALWAYS sends the freshness gauge, even before any refresh has ever
+// completed (value 0 in that case, since a zero time.Time's Unix() is a
+// large negative, not a meaningful "ancient" epoch marker) — see the
+// collector-authoring rule in collector.go.tmpl's Collect for why a
+// collector must never emit zero metrics on what it considers a healthy
+// outcome: StatusTracker counts emitted metrics per scrape, and an empty
+// cache before the first refresh completes is a normal startup window, not
+// a failure. The freshness gauge alone guarantees at least one metric every
+// scrape, so StatusTracker reports this collector as alive; the gauge's own
+// value (0 until the first refresh lands) is the separate, correct signal
+// for staleness — see NewExampleCollector's lastRefreshDesc help text.
+func (c *ExampleCollector) Collect(ch chan<- prometheus.Metric) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	for _, m := range c.cached {
+		ch <- m
+	}
+
+	refreshUnix := 0.0
+	if !c.lastRefresh.IsZero() {
+		refreshUnix = float64(c.lastRefresh.Unix())
+	}
+	ch <- prometheus.MustNewConstMetric(c.lastRefreshDesc, prometheus.GaugeValue, refreshUnix)
+}
