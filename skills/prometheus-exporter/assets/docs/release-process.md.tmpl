@@ -23,7 +23,7 @@ The goal is to keep releases:
 Always release from a dedicated branch — never commit straight to the default branch.
 
 ```bash
-git checkout master && git pull
+git checkout main && git pull
 git checkout -b fix/vX.Y.Z       # use feat/vX.Y for minor releases
 ```
 
@@ -262,7 +262,7 @@ For breaking changes, include a **migration table** in the CHANGELOG:
 
 ```bash
 git push -u origin fix/vX.Y.Z
-gh pr create --base master --head fix/vX.Y.Z \
+gh pr create --base main --head fix/vX.Y.Z \
   --title "fix(vX.Y.Z): <theme> + N community PRs" \
   --body-file /tmp/pr_body.md
 ```
@@ -329,7 +329,7 @@ publishes it as a pre-release automatically, so users won't grab it by accident 
 automation that only tracks the floating `latest` pointer.
 
 ```bash
-git checkout master && git pull
+git checkout main && git pull
 git tag -a vX.Y.Z-rc1 -m "vX.Y.Z release candidate 1"
 git push origin vX.Y.Z-rc1
 ```
@@ -351,7 +351,7 @@ For a patch that only touches docs, tests, or a clearly isolated bug, the RC dan
 overkill. Build the binary from the merged default branch and ship it manually to staging:
 
 ```bash
-git checkout master && git pull
+git checkout main && git pull
 make build
 
 scp bin/@@EXPORTER_NAME@@ staging:/usr/local/bin/@@EXPORTER_NAME@@.next

@@ -320,6 +320,45 @@ case "$grep_rc" in
   *) die "residual-sentinel scan of $work failed (grep exit $grep_rc): $hits" ;;
 esac
 
+# Task 1 (tranche A hardening): no `master`-branch assumption may survive
+# scaffolding. release-process.md.tmpl used to hardcode `git checkout
+# master` / `gh pr create --base master`, which silently breaks the
+# playbook for any repo whose default branch is `main` (GitHub's default
+# since 2020, and this plugin's own `git -c init.defaultBranch=main init`
+# above). Same three-way grep exit-code discipline as the residual-@@VAR@@
+# check above: 0 = match found (bad), 1 = no match (clean), 2+ = the scan
+# itself failed — never treat "not 0" as a blanket pass.
+echo "== no master-branch assumption in generated docs/release-process.md ($flavor/$forge) =="
+release_doc="$work/docs/release-process.md"
+[ -f "$release_doc" ] || die "docs/release-process.md missing after scaffold — cannot check for a master-branch assumption ($flavor/$forge)"
+grep_rc=0
+hits=$(command grep -nE 'git checkout master|--base master' "$release_doc" 2>&1) || grep_rc=$?
+case "$grep_rc" in
+  1) ;; # no match: clean
+  0)
+    echo "$prog: error: master-branch assumption left in $release_doc:" >&2
+    echo "$hits" >&2
+    exit 1
+    ;;
+  *) die "master-branch scan of $release_doc failed (grep exit $grep_rc): $hits" ;;
+esac
+
+# .github/workflows/dev-release.yml only exists for --forge github (asserted
+# above); when present, its push trigger must include `main` so a freshly
+# scaffolded repo using the modern default branch name still gets a dev
+# release built on every push. Guarded on the file's own existence (rather
+# than re-testing --forge) so a --forge none cell, which never creates this
+# file, skips cleanly instead of failing on a file that was never supposed
+# to exist.
+echo "== dev-release.yml triggers on main, when present ($flavor/$forge) =="
+dev_release_wf="$work/.github/workflows/dev-release.yml"
+if [ -f "$dev_release_wf" ]; then
+  grep -q 'main' "$dev_release_wf" || die "dev-release.yml does not trigger on main ($flavor/$forge)"
+  echo "confirmed: dev-release.yml triggers on main ($flavor/$forge)"
+else
+  echo "SKIPPING dev-release.yml main-trigger check ($flavor/$forge): no .github/workflows/dev-release.yml (forge=none)"
+fi
+
 echo "== make build ($flavor/$forge) =="
 if ! ( cd "$work" && make build ); then
   die "make build FAILED for $flavor/$forge — see output above"
