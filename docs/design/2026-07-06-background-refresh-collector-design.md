@@ -165,10 +165,25 @@ loop and a cache:
 
 7. **Interval flag** `--collector.<name>.interval`, a `Duration`, drives the
    ticker. **No lookback flag** — lookback is a `sacct`-specific accounting
-   window, not a general concept. Default: **1 minute** (see Open questions —
-   flagged for maintainer confirmation). The scrape never blocks regardless of
-   the interval, so the interval trades data freshness against backend load
-   only.
+   window, not a general concept. Default: **5 minutes** — the conservative
+   choice for the slow/expensive backends this variant exists to serve (12
+   backend calls/hour, not 60), and consistent with both studied exporters'
+   own `5m` defaults. Easily lowered per-collector. The scrape never blocks
+   regardless of the interval, so the interval trades data freshness against
+   backend load only.
+
+8. **Discoverable at design time — the architecture phase asks.** The
+   background-refresh option must not be something a user stumbles onto only
+   after scaffolding. During the architecture-first design phase (the
+   `prometheus-exporter` skill's step 0 and the `/design-exporter` command),
+   if the user has not already signalled that their target is slow or
+   expensive, **proactively ask** whether any data source is costly enough to
+   refresh in the background instead of on every scrape. Record the answer in
+   the design brief's existing `## Architecture decisions` section — this is
+   one more architecture decision alongside the flavor choice, so **the brief's
+   frozen 4-header contract is unchanged** (nothing new is added to the
+   `## Scaffold inputs` keys the golden check guards). A "yes" is the signal
+   for the later `/add-collector --variant background` step.
 
 ## Template surface (files)
 
@@ -195,9 +210,23 @@ today, `add-collector.md` §3), while **never** shipping into a scaffolded repo.
   synchronous template, apply the same identifier renames plus the interval
   flag, and use the `Start(ctx)` + `append(backgroundCollectors, …)` registry
   snippet (Decision 3) instead of the plain deferred `register(...)`.
+- `commands/design-exporter.md` — add the slow/expensive-backend probe of
+  Decision 8 to the architecture-decision questions, and record the result
+  under the brief's `## Architecture decisions`.
+- `skills/prometheus-exporter/references/exporter-architecture.md` — document
+  background-refresh as an architecture decision to weigh (alongside the flavor
+  choice), so the skill's step-0 design phase surfaces it.
+- `skills/prometheus-exporter/SKILL.md` — a one-line pointer in the step-0
+  architecture phase so the probe is asked whether the user reaches the feature
+  via `/design-exporter` or the skill directly.
 
 **Explicitly NOT modified:** the synchronous `code/<flavor>/collector.go.tmpl`
-and the default `/new` path — both stay byte-for-byte as they are.
+and the default `/new` path — both stay byte-for-byte as they are. The brief's
+frozen 4-header format contract (`## Provenance`, `## Architecture decisions`,
+`## Scaffold inputs`, `## Open questions / assumptions`) is **untouched** — the
+background-refresh need is recorded as free-form prose under the existing
+`## Architecture decisions` header, so the discovery-inputs golden check still
+passes verbatim.
 
 ## Testing
 
@@ -227,20 +256,18 @@ and the default `/new` path — both stay byte-for-byte as they are.
   does not deliver the "scrape never blocks" guarantee the driving case needs.
   Explicit fast-follow if a use case appears; it would reuse most of this
   epic's cache + freshness + always-emit core.
-- **Auto-selecting the background variant from the `/design-exporter` brief.**
-  A future tie-in (a slow-backend target could be flagged in the brief's
-  `## Architecture decisions`), not built here.
+- **Fully automatic brief→scaffold of a background collector.** The design
+  phase *asks and records* the need (Decision 8) and the user then runs
+  `/add-collector --variant background`; wiring `/new` to emit a background
+  *example* collector straight from the brief, with no `/add-collector` step,
+  is a possible fast-follow, not built here.
 - **A live-binary signal test in the golden harness.**
 
 ## Open questions / decisions to confirm
 
-1. **Default interval (Decision 7).** Proposed **1m**: fresh enough for most
-   backends, and because the scrape never blocks, this is purely one backend
-   call per minute regardless of scrape frequency. Both studied exporters
-   happen to default to `5m`; a TS4500-class backend may well want `5m` too.
-   Easily overridden per-collector; flagged for the maintainer to set the
-   default they prefer. **Not a backward-compatibility concern** (new feature,
-   no existing users).
+1. **Default interval (Decision 7).** ✅ **Resolved: `5m`** — the conservative
+   default for the slow/expensive backends this variant targets, consistent
+   with both studied exporters. Overridable per-collector.
 2. **`--variant background` argument vs. an interactive question in
    `/add-collector`.** A flag is scriptable and explicit; a question is
    discoverable and matches the command's existing conversational step 2.
