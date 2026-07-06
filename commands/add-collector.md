@@ -65,7 +65,7 @@ before deriving anything else from it or touching a single file:
 (fetches on a fixed interval in a goroutine, serving the last cached result
 on every scrape; use when the backend is slow or expensive enough that a
 scrape should never wait on it directly — see
-`references/exporter-architecture.md`'s background-refresh note). Decide
+`${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/references/exporter-architecture.md`'s background-refresh note). Decide
 which applies to this collector before going further:
 
 - If $ARGUMENTS included a trailing `--variant background` token, strip it
