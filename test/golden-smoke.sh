@@ -446,13 +446,16 @@ echo "confirmed: make docs-check PASSES again after reverting the injected lie (
 # script repeatedly benefits from the layer cache instead of re-pulling/
 # re-compiling the Go toolchain layer every time.
 echo "== docker build ($flavor/$forge) =="
+engine=""
 if command -v docker >/dev/null 2>&1; then
+  engine=docker
   echo "using docker"
   if ! ( cd "$work" && docker build -f Dockerfile -t "golden-smoke-$flavor-$forge:latest" . ); then
     die "docker build FAILED for $flavor/$forge — see output above"
   fi
   echo "confirmed: docker build PASSED ($flavor/$forge)"
 elif command -v podman >/dev/null 2>&1; then
+  engine=podman
   echo "no docker; using podman"
   if ! ( cd "$work" && podman build -f Dockerfile -t "golden-smoke-$flavor-$forge:latest" . ); then
     die "docker build FAILED (via podman) for $flavor/$forge — see output above"
@@ -460,6 +463,72 @@ elif command -v podman >/dev/null 2>&1; then
   echo "confirmed: docker build PASSED via podman ($flavor/$forge)"
 else
   echo "SKIPPING docker build ($flavor/$forge): no docker/podman container engine found — install one to validate Dockerfile locally"
+fi
+
+# Guarded Dockerfile.minimal build (Task 2, tranche A hardening): the
+# distroless/minimal image variant ships to every scaffolded exporter but,
+# until now, was never actually built here — only Dockerfile was. Reuses
+# the SAME $engine the standard build immediately above already resolved
+# (docker, podman, or empty) — no second command -v docker/podman
+# detection: if the standard build above found no engine, $engine is still
+# empty here and this step SKIPs for the identical reason, rather than
+# re-probing from scratch.
+echo "== docker build Dockerfile.minimal ($flavor/$forge) =="
+if [ "$engine" = docker ]; then
+  if ! ( cd "$work" && docker build -f Dockerfile.minimal -t "golden-smoke-min-$flavor-$forge:latest" . ); then
+    die "docker build (Dockerfile.minimal) FAILED for $flavor/$forge — see output above"
+  fi
+  echo "confirmed: docker build (Dockerfile.minimal) PASSED ($flavor/$forge)"
+elif [ "$engine" = podman ]; then
+  if ! ( cd "$work" && podman build -f Dockerfile.minimal -t "golden-smoke-min-$flavor-$forge:latest" . ); then
+    die "docker build (Dockerfile.minimal) FAILED (via podman) for $flavor/$forge — see output above"
+  fi
+  echo "confirmed: docker build (Dockerfile.minimal) PASSED via podman ($flavor/$forge)"
+else
+  echo "SKIPPING docker build Dockerfile.minimal ($flavor/$forge): no docker/podman container engine found (same as the standard Dockerfile build above)"
+fi
+
+# Compose config validation (Task 2): docker-compose.yml and
+# docker-compose.minimal.yml both ship to every scaffolded exporter but,
+# until now, neither was ever parsed by anything. `compose ... config -q`
+# needs no env — both templates default IMAGE and HOST_PORT via
+# ${VAR:-default} — and exits non-zero on a malformed file, so a clean run
+# here actually proves valid compose syntax rather than just the files'
+# presence on disk.
+#
+# Still gated on the SAME $engine resolved by the standard build above, not
+# a fresh docker/podman probe: an empty $engine SKIPs immediately, for the
+# identical reason the two builds above did. What IS checked fresh here is
+# narrower than the engine choice itself — whether that already-resolved
+# engine also has a working "compose" subcommand, since the compose plugin
+# can be absent even when the engine binary is present. podman's compose
+# story is split across two possible providers (a registered `podman
+# compose` external helper, or the standalone podman-compose script), so
+# both are tried before giving up.
+echo "== compose config validation ($flavor/$forge) =="
+compose_cmd=""
+if [ "$engine" = docker ] && docker compose version >/dev/null 2>&1; then
+  compose_cmd="docker compose"
+elif [ "$engine" = podman ] && podman compose version >/dev/null 2>&1; then
+  compose_cmd="podman compose"
+elif [ "$engine" = podman ] && command -v podman-compose >/dev/null 2>&1; then
+  compose_cmd="podman-compose"
+fi
+
+if [ -n "$compose_cmd" ]; then
+  for compose_file in docker-compose.yml docker-compose.minimal.yml; do
+    echo "validating $compose_file via $compose_cmd ($flavor/$forge)"
+    if ! ( cd "$work" && $compose_cmd -f "$compose_file" config -q ); then
+      die "$compose_cmd -f $compose_file config FAILED for $flavor/$forge — see output above"
+    fi
+    echo "confirmed: $compose_file is valid compose syntax ($flavor/$forge)"
+  done
+elif [ -z "$engine" ]; then
+  echo "SKIPPING compose config validation ($flavor/$forge): no docker/podman container engine found (same as the standard Dockerfile build above)"
+elif [ "$engine" = docker ]; then
+  echo "SKIPPING compose config validation ($flavor/$forge): docker found but the compose plugin is unavailable (docker compose version failed) — install the compose plugin to validate compose files locally"
+else
+  echo "SKIPPING compose config validation ($flavor/$forge): podman found but no compose provider is available (tried podman compose and podman-compose) — install one to validate compose files locally"
 fi
 
 # Mechanical /add-collector sub-check (Task 22, optional per the task's own
