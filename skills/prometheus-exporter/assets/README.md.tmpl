@@ -31,8 +31,8 @@ and exposes them at `/metrics` for scraping.
 - Signal-aware shutdown: `SIGTERM`/`SIGINT` drain in-flight requests before exiting.
 - Container-first tooling — a container engine (Docker or Podman) is the only development
   requirement; every quality gate also runs on the host Go toolchain via `NATIVE=1`.
-- Multi-arch, signed container images with a CycloneDX SBOM per release (see
-  [Security & supply chain](#security--supply-chain)).
+- Multi-arch, signed container images, each with a CycloneDX SBOM available via
+  `make sbom-image` (see [Security & supply chain](#security--supply-chain)).
 - Starter Prometheus alerting rules and a ready-to-import Grafana health dashboard under
   [`monitoring/`](monitoring/).
 
@@ -134,6 +134,7 @@ Tagged releases publish signed, checksummed binaries with a CycloneDX SBOM attac
 | | `make docker-run` | Starts the compose stack (override `DOCKER_IMAGE=`/`DOCKER_TAG=`) |
 | | `make docker-build-minimal` | Builds the minimal, distroless image tagged `@@EXPORTER_NAME@@:dev-minimal` |
 | | `make docker-run-minimal` | Starts the minimal compose stack (`container_name` and `HOST_PORT` — see [Docker](#docker) above) |
+| | `make sbom-image` | Generates a CycloneDX SBOM for the container image via `syft` (needs `syft` on `PATH`; run after `make docker-build`) |
 
 `make check`, `make report`, and `make report-deps` run **inside a container** — contributors
 only need Docker or Podman, no host Go install required.
@@ -179,7 +180,10 @@ with verifiable supply-chain provenance:
   offline verification:
   `cosign verify-blob --bundle @@EXPORTER_NAME@@_checksums.txt.sigstore.json @@EXPORTER_NAME@@_checksums.txt`.
 - **CycloneDX SBOM.** One `*.sbom.json` per release archive, listing every compiled Go module
-  with its version and package URL.
+  with its version and package URL. The container image gets its own CycloneDX SBOM on demand
+  via `make sbom-image` (syft) — see [docs/release-process.md](docs/release-process.md); it
+  also carries a supplementary SPDX attestation that `docker buildx` embeds in the image
+  manifest automatically at build time.
 - **Two image variants.** A standard image (includes a shell, easiest to debug) and a minimal
   image (distroless, non-root, no shell, no package manager) are published side by side —
   prefer the minimal one once you've confirmed the standard image works for your target.

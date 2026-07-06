@@ -52,6 +52,22 @@ here=$(CDPATH= cd "$(dirname "$0")" && pwd)
 root=$(CDPATH= cd "$here/.." && pwd)
 assets="$root/skills/prometheus-exporter/assets"
 
+# keep in sync with the goreleaser binary version pinned in
+# assets/.github/workflows/release.yml.tmpl
+GORELEASER_VERSION=2.16.0
+
+# Pinned syft image tag for this harness's OWN containerized fallback (used
+# below when native syft is not on PATH - see the image-SBOM step). Unlike
+# GORELEASER_VERSION above, nothing in the shipped templates pins a syft
+# version to keep this "in sync" with: Makefile.tmpl's sbom-image target
+# just requires "syft on PATH" (any version), and .goreleaser.yaml.tmpl's
+# own header comment says the same for the archive sboms: step. Confirmed
+# by running `docker run --rm anchore/syft:v1.46.0 version` before wiring
+# it in: image tags on Docker Hub carry a leading "v" (GitVersion reports
+# bare "1.46.0"), same split as GORELEASER_VERSION/goreleaser's own tags
+# below. Bump periodically; there is no drift to detect, just staleness.
+SYFT_VERSION=1.46.0
+
 prog=$(basename "$0")
 
 usage() {
@@ -320,6 +336,45 @@ case "$grep_rc" in
   *) die "residual-sentinel scan of $work failed (grep exit $grep_rc): $hits" ;;
 esac
 
+# Task 1 (tranche A hardening): no `master`-branch assumption may survive
+# scaffolding. release-process.md.tmpl used to hardcode `git checkout
+# master` / `gh pr create --base master`, which silently breaks the
+# playbook for any repo whose default branch is `main` (GitHub's default
+# since 2020, and this plugin's own `git -c init.defaultBranch=main init`
+# above). Same three-way grep exit-code discipline as the residual-@@VAR@@
+# check above: 0 = match found (bad), 1 = no match (clean), 2+ = the scan
+# itself failed — never treat "not 0" as a blanket pass.
+echo "== no master-branch assumption in generated docs/release-process.md ($flavor/$forge) =="
+release_doc="$work/docs/release-process.md"
+[ -f "$release_doc" ] || die "docs/release-process.md missing after scaffold — cannot check for a master-branch assumption ($flavor/$forge)"
+grep_rc=0
+hits=$(command grep -nE 'git checkout master|--base master' "$release_doc" 2>&1) || grep_rc=$?
+case "$grep_rc" in
+  1) ;; # no match: clean
+  0)
+    echo "$prog: error: master-branch assumption left in $release_doc:" >&2
+    echo "$hits" >&2
+    exit 1
+    ;;
+  *) die "master-branch scan of $release_doc failed (grep exit $grep_rc): $hits" ;;
+esac
+
+# .github/workflows/dev-release.yml only exists for --forge github (asserted
+# above); when present, its push trigger must include `main` so a freshly
+# scaffolded repo using the modern default branch name still gets a dev
+# release built on every push. Guarded on the file's own existence (rather
+# than re-testing --forge) so a --forge none cell, which never creates this
+# file, skips cleanly instead of failing on a file that was never supposed
+# to exist.
+echo "== dev-release.yml triggers on main, when present ($flavor/$forge) =="
+dev_release_wf="$work/.github/workflows/dev-release.yml"
+if [ -f "$dev_release_wf" ]; then
+  grep -q 'main' "$dev_release_wf" || die "dev-release.yml does not trigger on main ($flavor/$forge)"
+  echo "confirmed: dev-release.yml triggers on main ($flavor/$forge)"
+else
+  echo "SKIPPING dev-release.yml main-trigger check ($flavor/$forge): no .github/workflows/dev-release.yml (forge=none)"
+fi
+
 echo "== make build ($flavor/$forge) =="
 if ! ( cd "$work" && make build ); then
   die "make build FAILED for $flavor/$forge — see output above"
@@ -407,13 +462,16 @@ echo "confirmed: make docs-check PASSES again after reverting the injected lie (
 # script repeatedly benefits from the layer cache instead of re-pulling/
 # re-compiling the Go toolchain layer every time.
 echo "== docker build ($flavor/$forge) =="
+engine=""
 if command -v docker >/dev/null 2>&1; then
+  engine=docker
   echo "using docker"
   if ! ( cd "$work" && docker build -f Dockerfile -t "golden-smoke-$flavor-$forge:latest" . ); then
     die "docker build FAILED for $flavor/$forge — see output above"
   fi
   echo "confirmed: docker build PASSED ($flavor/$forge)"
 elif command -v podman >/dev/null 2>&1; then
+  engine=podman
   echo "no docker; using podman"
   if ! ( cd "$work" && podman build -f Dockerfile -t "golden-smoke-$flavor-$forge:latest" . ); then
     die "docker build FAILED (via podman) for $flavor/$forge — see output above"
@@ -421,6 +479,186 @@ elif command -v podman >/dev/null 2>&1; then
   echo "confirmed: docker build PASSED via podman ($flavor/$forge)"
 else
   echo "SKIPPING docker build ($flavor/$forge): no docker/podman container engine found — install one to validate Dockerfile locally"
+fi
+
+# Canonical CycloneDX image SBOM (Task 4, tranche A hardening): until now,
+# the container image's only SBOM was the BuildKit-native SPDX attestation
+# dockers_v2's own `sbom: "true"` bakes into the manifest at release time
+# (see .goreleaser.yaml.tmpl) — GoReleaser cannot itself produce a
+# CycloneDX SBOM for an image it builds (its sboms: block only ever accepts
+# archive artifacts, a documented upstream limitation), so the image's
+# canonical, uniform-with-the-archives CycloneDX SBOM instead comes from
+# the new `make sbom-image` target (syft), proved here against the exact
+# image the docker build step immediately above just produced
+# ($image_ref). The SPDX attestation is untouched by any of this — this is
+# additive, not a replacement.
+#
+# Same layered, never-silent-pass discipline as every guarded step above,
+# reusing the SAME $engine the standard build already resolved (no fresh
+# docker/podman probe):
+#   1. $engine set (an image actually got built above) AND native syft on
+#      PATH -> run the REAL `make sbom-image` target, dogfooding Step 1
+#      itself rather than merely proving "syft works somehow".
+#   2. $engine = docker, no native syft -> the fallback a native-syft-less
+#      CI runner needs: `docker save` to a tarball, then a pinned,
+#      version-checked anchore/syft:$SYFT_VERSION container scanning that
+#      tarball via the documented `docker-archive:` source scheme.
+#   3. $engine = podman, no native syft -> explicit SKIP (this fallback is
+#      only wired for docker's `docker save`, same scoping call as the
+#      goreleaser-check step above for podman).
+#   4. no engine at all -> explicit SKIP (nothing was built to SBOM).
+# A real failure in tier 1 or 2 calls die — never swallowed as a SKIP.
+#
+# The CycloneDX marker is matched tolerant of surrounding whitespace around
+# the colon (`"bomFormat"[[:space:]]*:[[:space:]]*"CycloneDX"`): confirmed
+# empirically against real syft 1.46.0 output that it emits compact JSON
+# with NO space after the colon (`"bomFormat":"CycloneDX"`), not the
+# spaced-out form a hand-written example might suggest — asserting the
+# literal spaced form would have made this check fail on real output.
+echo "== image SBOM: CycloneDX via make sbom-image / syft ($flavor/$forge) =="
+image_ref="golden-smoke-$flavor-$forge:latest"
+sbom_out="$work/demo_exporter.image.cdx.json"
+bom_marker='"bomFormat"[[:space:]]*:[[:space:]]*"CycloneDX"'
+if [ -n "$engine" ] && command -v syft >/dev/null 2>&1; then
+  echo "using native syft: make sbom-image IMAGE=$image_ref"
+  if ! ( cd "$work" && make sbom-image "IMAGE=$image_ref" ); then
+    die "make sbom-image FAILED for $flavor/$forge — see output above"
+  fi
+  [ -f "$sbom_out" ] || die "make sbom-image reported success but $sbom_out was not created ($flavor/$forge)"
+  grep -Eq "$bom_marker" "$sbom_out" || die "make sbom-image output $sbom_out is not a CycloneDX SBOM (no bomFormat:CycloneDX marker) ($flavor/$forge)"
+  echo "confirmed: make sbom-image produced a CycloneDX SBOM ($flavor/$forge)"
+elif [ "$engine" = docker ]; then
+  echo "no native syft; using docker save + docker run anchore/syft:v${SYFT_VERSION}"
+  image_tar="$work/.golden-smoke-image.tar"
+  if ! docker save "$image_ref" -o "$image_tar"; then
+    die "docker save $image_ref FAILED for $flavor/$forge — see output above"
+  fi
+  if ! docker run --rm -v "$work":/w "anchore/syft:v${SYFT_VERSION}" \
+       docker-archive:/w/.golden-smoke-image.tar -o cyclonedx-json=/w/demo_exporter.image.cdx.json; then
+    rm -f "$image_tar"
+    die "syft (via docker, docker-archive) FAILED to generate an image SBOM for $flavor/$forge — see output above"
+  fi
+  rm -f "$image_tar"
+  [ -f "$sbom_out" ] || die "syft (via docker) reported success but $sbom_out was not created ($flavor/$forge)"
+  grep -Eq "$bom_marker" "$sbom_out" || die "syft (via docker) output $sbom_out is not a CycloneDX SBOM (no bomFormat:CycloneDX marker) ($flavor/$forge)"
+  echo "confirmed: docker-archive syft scan produced a CycloneDX SBOM ($flavor/$forge)"
+elif [ "$engine" = podman ]; then
+  echo "SKIPPING image SBOM check ($flavor/$forge): podman found but no native syft, and this check's containerized fallback is only wired for docker (docker save) — install syft, or docker, to generate a local image SBOM"
+else
+  echo "SKIPPING image SBOM check ($flavor/$forge): no docker/podman container engine found and no native syft on PATH (same as the standard Dockerfile build above)"
+fi
+
+# Guarded Dockerfile.minimal build (Task 2, tranche A hardening): the
+# distroless/minimal image variant ships to every scaffolded exporter but,
+# until now, was never actually built here — only Dockerfile was. Reuses
+# the SAME $engine the standard build immediately above already resolved
+# (docker, podman, or empty) — no second command -v docker/podman
+# detection: if the standard build above found no engine, $engine is still
+# empty here and this step SKIPs for the identical reason, rather than
+# re-probing from scratch.
+echo "== docker build Dockerfile.minimal ($flavor/$forge) =="
+if [ "$engine" = docker ]; then
+  if ! ( cd "$work" && docker build -f Dockerfile.minimal -t "golden-smoke-min-$flavor-$forge:latest" . ); then
+    die "docker build (Dockerfile.minimal) FAILED for $flavor/$forge — see output above"
+  fi
+  echo "confirmed: docker build (Dockerfile.minimal) PASSED ($flavor/$forge)"
+elif [ "$engine" = podman ]; then
+  if ! ( cd "$work" && podman build -f Dockerfile.minimal -t "golden-smoke-min-$flavor-$forge:latest" . ); then
+    die "docker build (Dockerfile.minimal) FAILED (via podman) for $flavor/$forge — see output above"
+  fi
+  echo "confirmed: docker build (Dockerfile.minimal) PASSED via podman ($flavor/$forge)"
+else
+  echo "SKIPPING docker build Dockerfile.minimal ($flavor/$forge): no docker/podman container engine found (same as the standard Dockerfile build above)"
+fi
+
+# Compose config validation (Task 2): docker-compose.yml and
+# docker-compose.minimal.yml both ship to every scaffolded exporter but,
+# until now, neither was ever parsed by anything. `compose ... config -q`
+# needs no env — both templates default IMAGE and HOST_PORT via
+# ${VAR:-default} — and exits non-zero on a malformed file, so a clean run
+# here actually proves valid compose syntax rather than just the files'
+# presence on disk.
+#
+# Still gated on the SAME $engine resolved by the standard build above, not
+# a fresh docker/podman probe: an empty $engine SKIPs immediately, for the
+# identical reason the two builds above did. What IS checked fresh here is
+# narrower than the engine choice itself — whether that already-resolved
+# engine also has a working "compose" subcommand, since the compose plugin
+# can be absent even when the engine binary is present. podman's compose
+# story is split across two possible providers (a registered `podman
+# compose` external helper, or the standalone podman-compose script), so
+# both are tried before giving up.
+echo "== compose config validation ($flavor/$forge) =="
+compose_cmd=""
+if [ "$engine" = docker ] && docker compose version >/dev/null 2>&1; then
+  compose_cmd="docker compose"
+elif [ "$engine" = podman ] && podman compose version >/dev/null 2>&1; then
+  compose_cmd="podman compose"
+elif [ "$engine" = podman ] && command -v podman-compose >/dev/null 2>&1; then
+  compose_cmd="podman-compose"
+fi
+
+if [ -n "$compose_cmd" ]; then
+  for compose_file in docker-compose.yml docker-compose.minimal.yml; do
+    echo "validating $compose_file via $compose_cmd ($flavor/$forge)"
+    if ! ( cd "$work" && $compose_cmd -f "$compose_file" config -q ); then
+      die "$compose_cmd -f $compose_file config FAILED for $flavor/$forge — see output above"
+    fi
+    echo "confirmed: $compose_file is valid compose syntax ($flavor/$forge)"
+  done
+elif [ -z "$engine" ]; then
+  echo "SKIPPING compose config validation ($flavor/$forge): no docker/podman container engine found (same as the standard Dockerfile build above)"
+elif [ "$engine" = docker ]; then
+  echo "SKIPPING compose config validation ($flavor/$forge): docker found but the compose plugin is unavailable (docker compose version failed) — install the compose plugin to validate compose files locally"
+else
+  echo "SKIPPING compose config validation ($flavor/$forge): podman found but no compose provider is available (tried podman compose and podman-compose) — install one to validate compose files locally"
+fi
+
+# goreleaser check (Task 3, tranche A hardening): .goreleaser.yaml ships to
+# every scaffolded exporter regardless of --forge (release is host-agnostic;
+# only .github/ itself is forge-gated — see .goreleaser.yaml.tmpl's own
+# header comment), so this step runs in every cell, not just github ones.
+# `goreleaser check` validates the file's schema without building anything.
+# Same container-first / graceful-skip idiom as the promtool and docker
+# build steps above: native `goreleaser` on PATH first, then the SAME
+# $engine already resolved by the docker build step above if it is docker
+# (no fresh docker probe — same reasoning as the Dockerfile.minimal build's
+# own comment above); podman is not wired as a third tier here since it was
+# never confirmed against this exact image/mount combination, so a
+# podman-only host gets an explicit SKIP rather than an unverified path. A
+# schema error must fail the cell outright (die), never be swallowed as a
+# SKIP.
+#
+# `check` needs a git remote despite its own docs describing it as a pure
+# syntax check: empirically (found while wiring this step) it builds a real
+# SCM client from .goreleaser.yaml's release.github config, and that
+# hard-fails ("no remote configured to list refs from") against the bare
+# `git init` above, which deliberately stops short of adding one (see that
+# step's own comment on why — it mirrors a real post-scaffold repo before a
+# first commit or remote exists). The remote is added here instead, right
+# before the one check that actually needs it, rather than retrofitting the
+# earlier git-init step for every cell including ones that never reach this
+# far. The URL is never dialed — reconfirmed with `docker run --network
+# none` — only its owner/repo shape is parsed locally, so a fake,
+# unreachable one is fine. Hardcoded to acme/demo_exporter, matching the
+# OWNER/EXPORTER_NAME every golden cell already hardcodes in its own --var
+# set above.
+echo "== goreleaser check ($flavor/$forge) =="
+( cd "$work" && git remote add origin https://github.com/acme/demo_exporter.git )
+if command -v goreleaser >/dev/null 2>&1; then
+  echo "using native goreleaser"
+  if ! ( cd "$work" && goreleaser check ); then
+    die "goreleaser check FAILED for $flavor/$forge — see output above"
+  fi
+  echo "confirmed: goreleaser check PASSED ($flavor/$forge)"
+elif [ "$engine" = docker ]; then
+  echo "no native goreleaser; using docker run goreleaser/goreleaser:v${GORELEASER_VERSION}"
+  if ! docker run --rm -v "$work":/w -w /w "goreleaser/goreleaser:v${GORELEASER_VERSION}" check; then
+    die "goreleaser check FAILED (via docker) for $flavor/$forge — see output above"
+  fi
+  echo "confirmed: goreleaser check PASSED via docker ($flavor/$forge)"
+else
+  echo "SKIPPING goreleaser check ($flavor/$forge): no native goreleaser and no docker found (podman not wired for this check) — install goreleaser or docker to validate .goreleaser.yaml locally"
 fi
 
 # Mechanical /add-collector sub-check (Task 22, optional per the task's own

@@ -155,10 +155,11 @@ documents this one doesn't duplicate:
 
 - **`cicd-and-release.md`**: keyless `cosign` signing of both binaries
   (`signs`, via a Sigstore bundle over the checksums file) and container
-  image manifests (`docker_signs`), a CycloneDX SBOM per release archive
-  *and* a second, independent buildx-attestation SBOM per image, and the
-  weekly `govulncheck`/Trivy/Scorecard workflows when the GitHub layer is
-  in use.
+  image manifests (`docker_signs`), a CycloneDX SBOM per release archive, a
+  CycloneDX SBOM for the container image via `make sbom-image`, plus a
+  supplementary buildx-native SPDX attestation embedded in the image
+  manifest, and the weekly `govulncheck`/Trivy/Scorecard workflows when the
+  GitHub layer is in use.
 - **`packaging-and-ops.md`**: non-root by default on both image variants,
   with the minimal variant additionally removing the shell and package
   manager a compromised process could otherwise pivot from.

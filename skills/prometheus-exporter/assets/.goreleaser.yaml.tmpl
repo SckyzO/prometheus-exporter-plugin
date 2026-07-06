@@ -61,15 +61,26 @@ archives:
 checksum:
   name_template: "{{ .ProjectName }}_checksums.txt"
 
-# Supply-chain artefacts. Three things are produced and independently
-# verifiable on every release (see README.md's "Security & supply chain"
-# section for the operator-facing verification recipes):
+# Supply-chain artefacts. Four things make up this project's SBOM/signing
+# story (see README.md's "Security & supply chain" section for the
+# operator-facing verification recipes):
 #
-#   1. SBOM (CycloneDX) per archive - what's inside each tarball/zip.
-#   2. Cosign signature on the checksum file - proves the release artefacts
-#      weren't tampered with after build.
-#   3. Cosign signatures on the multi-arch Docker manifests - see
-#      docker_signs below.
+#   1. SBOM (CycloneDX) per archive, produced automatically on every
+#      release - what's inside each tarball/zip.
+#   2. SBOM (CycloneDX) for the container image, generated on demand via
+#      `make sbom-image` (syft) - GoReleaser cannot produce this itself
+#      (sboms: below only ever accepts archive artifacts, a documented
+#      upstream limitation, not a missing config knob); see
+#      docs/release-process.md. The image ALSO carries a supplementary,
+#      registry-embedded SPDX attestation from dockers_v2's own
+#      `sbom: "true"` (below), produced automatically on every release -
+#      a different format, not a substitute for the CycloneDX artefact
+#      `make sbom-image` produces.
+#   3. Cosign signature on the checksum file, produced automatically on
+#      every release - proves the release artefacts weren't tampered with
+#      after build.
+#   4. Cosign signatures on the multi-arch Docker manifests, produced
+#      automatically on every release - see docker_signs below.
 #
 # All signatures are keyless via Sigstore: the signing identity is the CI
 # workflow itself, attested by its own OIDC token - never a long-lived

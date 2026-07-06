@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-06
+
+Hardening tranche: prove the shipped-but-unexercised release artifacts in the
+golden test, standardize on `main`, and give the container image a canonical
+CycloneDX SBOM. No user-facing feature changes.
+
+### Added
+
+- **`make sbom-image`** — generates a CycloneDX SBOM for the container image
+  via syft, so the image carries a canonical CycloneDX bill of materials
+  matching the release archives. The BuildKit-native SPDX attestation is
+  retained as a supplementary embedded layer.
+- Golden-test coverage for three previously-unexercised templates: the
+  distroless `Dockerfile.minimal` build, `docker compose config` validation
+  of both compose files, and `goreleaser check` (pinned to the same
+  GoReleaser version the release workflow uses).
+
+### Changed
+
+- The default branch is `main` throughout the release runbook and the
+  dev-release workflow trigger (previously `master`).
+- SBOM documentation across the templates and references now describes the
+  supply-chain artifacts accurately: CycloneDX for archives and image, plus
+  the supplementary SPDX buildx attestation on the image.
+
 ## [0.1.0] - 2026-07-05
 
 Initial release: an end-to-end plugin for creating and hardening Go
