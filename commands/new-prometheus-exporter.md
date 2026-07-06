@@ -60,10 +60,10 @@ layer selections (`--flavor`, `--forge`) that are **not** template variables
 — they choose which files get copied, not text substituted into them.
 
 If a brief was consumed in step 0, `DATA_SOURCE`, `DATA_SOURCE_PATH`,
-`NAMESPACE`, `DEFAULT_PORT`, and the flavor arrive pre-filled from its
-`## Scaffold inputs` section — confirm them with the user rather than
-re-asking; `MODULE_PATH`, `OWNER`, and `LICENSE` are always asked here
-regardless.
+`NAMESPACE`, and `DEFAULT_PORT` arrive pre-filled from its `## Scaffold
+inputs` section, and the I/O flavor from its `## Architecture decisions`
+section — confirm them with the user rather than re-asking;
+`MODULE_PATH`, `OWNER`, and `LICENSE` are always asked here regardless.
 
 | Variable | Meaning | HTTP example | CLI example |
 |---|---|---|---|

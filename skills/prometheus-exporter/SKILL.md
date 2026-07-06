@@ -8,7 +8,7 @@ this plugin: an opinionated, end-to-end path from an architecture decision
 to a releasable, documented, monitored repository. It is a router — the
 reasoning behind each step lives in the reference files under
 `references/`; open the one a step points to before acting on it, rather
-than trying to hold all ten in context at once.
+than trying to hold all eleven in context at once.
 
 **Scope**: Go exporters only. The I/O flavor is `http` (default) or `cli`
 today; a database flavor and a design-led business-dashboard command are

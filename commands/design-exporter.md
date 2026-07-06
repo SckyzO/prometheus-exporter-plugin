@@ -33,19 +33,19 @@ Ask, in this order, moving to the next rung only when the current one is
 genuinely unavailable. A higher rung is *supplemented* by a lower one where
 the lower adds detail the higher left silent — never replaced by it:
 
-1. **Local API spec** — is an OpenAPI/Swagger document or a `.proto` file
-   available, and at what path? If yes, read it directly and extract per
-   `discovery-inputs.md`'s OpenAPI/gRPC rules.
-2. **Docs folder or URL** — if no spec, is there a docs folder in this
-   repository, or a URL to the target's own documentation? If yes, read or
-   fetch it.
-3. **context7** — if neither of the above grounded the design, try
+1. **Local API spec** (rung 1) — is an OpenAPI/Swagger document or a
+   `.proto` file available, and at what path? If yes, read it directly and
+   extract per `discovery-inputs.md`'s OpenAPI/gRPC rules.
+2. **Docs folder or URL** (rung 2) — if no spec, is there a docs folder in
+   this repository, or a URL to the target's own documentation? If yes,
+   read or fetch it.
+3. **context7** (rung 3) — if neither of the above grounded the design, try
    `resolve-library-id` against the target, then `query-docs` for its API
    surface. Treat "not installed" and "no match" as a skip, not a failure —
    never guess a nearby library's shape instead.
-4. **Dialogue** — if nothing above grounded the design, fall back to the
-   question flow in `exporter-architecture.md`. Always available, so the
-   walk always has somewhere to land.
+4. **Dialogue** (rung 5) — if nothing above grounded the design, fall back
+   to the question flow in `exporter-architecture.md`. Always available,
+   so the walk always has somewhere to land.
 
 Record, for the brief's `## Provenance` section: which rung(s) actually
 grounded the design, and — for every rung skipped, including the

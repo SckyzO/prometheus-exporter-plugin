@@ -385,7 +385,7 @@ Keep every existing bullet in this section intact as the no-brief path.
 
 - [ ] **Step 2: Step 1 — note pre-filled variables**
 
-In "## 1. Collect the template variables", after the sentence introducing the variable table, add one sentence: if a brief was consumed in step 0, `DATA_SOURCE`, `DATA_SOURCE_PATH`, `NAMESPACE`, `DEFAULT_PORT`, and the flavor arrive pre-filled from its `## Scaffold inputs` — confirm rather than re-ask them; `MODULE_PATH`, `OWNER`, and `LICENSE` are always asked here.
+In "## 1. Collect the template variables", after the sentence introducing the variable table, add one sentence: if a brief was consumed in step 0, `DATA_SOURCE`, `DATA_SOURCE_PATH`, `NAMESPACE`, and `DEFAULT_PORT` arrive pre-filled from its `## Scaffold inputs` section, and the I/O flavor from its `## Architecture decisions` section — confirm rather than re-ask them; `MODULE_PATH`, `OWNER`, and `LICENSE` are always asked here.
 
 - [ ] **Step 3: Manual trace against the fixture**
 
