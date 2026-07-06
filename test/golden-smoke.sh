@@ -52,6 +52,10 @@ here=$(CDPATH= cd "$(dirname "$0")" && pwd)
 root=$(CDPATH= cd "$here/.." && pwd)
 assets="$root/skills/prometheus-exporter/assets"
 
+# keep in sync with the goreleaser binary version pinned in
+# assets/.github/workflows/release.yml.tmpl
+GORELEASER_VERSION=2.16.0
+
 prog=$(basename "$0")
 
 usage() {
@@ -529,6 +533,53 @@ elif [ "$engine" = docker ]; then
   echo "SKIPPING compose config validation ($flavor/$forge): docker found but the compose plugin is unavailable (docker compose version failed) — install the compose plugin to validate compose files locally"
 else
   echo "SKIPPING compose config validation ($flavor/$forge): podman found but no compose provider is available (tried podman compose and podman-compose) — install one to validate compose files locally"
+fi
+
+# goreleaser check (Task 3, tranche A hardening): .goreleaser.yaml ships to
+# every scaffolded exporter regardless of --forge (release is host-agnostic;
+# only .github/ itself is forge-gated — see .goreleaser.yaml.tmpl's own
+# header comment), so this step runs in every cell, not just github ones.
+# `goreleaser check` validates the file's schema without building anything.
+# Same container-first / graceful-skip idiom as the promtool and docker
+# build steps above: native `goreleaser` on PATH first, then the SAME
+# $engine already resolved by the docker build step above if it is docker
+# (no fresh docker probe — same reasoning as the Dockerfile.minimal build's
+# own comment above); podman is not wired as a third tier here since it was
+# never confirmed against this exact image/mount combination, so a
+# podman-only host gets an explicit SKIP rather than an unverified path. A
+# schema error must fail the cell outright (die), never be swallowed as a
+# SKIP.
+#
+# `check` needs a git remote despite its own docs describing it as a pure
+# syntax check: empirically (found while wiring this step) it builds a real
+# SCM client from .goreleaser.yaml's release.github config, and that
+# hard-fails ("no remote configured to list refs from") against the bare
+# `git init` above, which deliberately stops short of adding one (see that
+# step's own comment on why — it mirrors a real post-scaffold repo before a
+# first commit or remote exists). The remote is added here instead, right
+# before the one check that actually needs it, rather than retrofitting the
+# earlier git-init step for every cell including ones that never reach this
+# far. The URL is never dialed — reconfirmed with `docker run --network
+# none` — only its owner/repo shape is parsed locally, so a fake,
+# unreachable one is fine. Hardcoded to acme/demo_exporter, matching the
+# OWNER/EXPORTER_NAME every golden cell already hardcodes in its own --var
+# set above.
+echo "== goreleaser check ($flavor/$forge) =="
+( cd "$work" && git remote add origin https://github.com/acme/demo_exporter.git )
+if command -v goreleaser >/dev/null 2>&1; then
+  echo "using native goreleaser"
+  if ! ( cd "$work" && goreleaser check ); then
+    die "goreleaser check FAILED for $flavor/$forge — see output above"
+  fi
+  echo "confirmed: goreleaser check PASSED ($flavor/$forge)"
+elif [ "$engine" = docker ]; then
+  echo "no native goreleaser; using docker run goreleaser/goreleaser:v${GORELEASER_VERSION}"
+  if ! docker run --rm -v "$work":/w -w /w "goreleaser/goreleaser:v${GORELEASER_VERSION}" check; then
+    die "goreleaser check FAILED (via docker) for $flavor/$forge — see output above"
+  fi
+  echo "confirmed: goreleaser check PASSED via docker ($flavor/$forge)"
+else
+  echo "SKIPPING goreleaser check ($flavor/$forge): no native goreleaser and no docker found (podman not wired for this check) — install goreleaser or docker to validate .goreleaser.yaml locally"
 fi
 
 # Mechanical /add-collector sub-check (Task 22, optional per the task's own
