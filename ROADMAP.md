@@ -24,6 +24,13 @@ it points to.
 
 ## v0.2
 
+- **Discovery inputs for the architecture phase.** Today step 0 discovers a
+  target's API surface through context7 alone. Broaden it to accept, in
+  preference order: a local API spec (OpenAPI/Swagger, gRPC `.proto`), a
+  docs folder or URL to analyze, context7, and a live-target probe — with
+  graceful degradation when context7 lacks the target or isn't installed.
+  This strengthens needs-framing for exporters of internal or proprietary
+  programs, whose docs context7 will not have.
 - A third I/O flavor: **DB**.
 - `/generate-dashboard`: a design-led command that generates a business
   Grafana dashboard, complementing the generic health dashboard shipped in
