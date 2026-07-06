@@ -189,8 +189,8 @@ self-instrumentation: it gets a `--[no-]collector.http_client_requests` (or
 "register the I/O timing metric" hook function distinct from this — timing
 self-instrumentation is a collector, full stop, registered the same way any
 other one is. A cache layer sitting in front of a collector's `*Data` call is
-a v0.2 variant not shipped today (`collector-pattern.md`'s "Variants"
-section); when it lands, it would follow the same pattern — its own metric,
+a v0.2 variant not shipped today (`collector-pattern.md`'s "Collector
+variants" section); when it lands, it would follow the same pattern — its own metric,
 wired through `register(...)` — rather than introduce a new mechanism
 alongside this one.
 
@@ -342,10 +342,10 @@ from the branch that calls `os.Exit(1)`; any other error calls `stop()` first
 deferred call including the `defer stop()` above it — before exiting
 non-zero.
 
-This same `ctx` is the hook a future background-refresh collector variant
-(`collector-pattern.md`'s "Variants" section — not shipped today) would
-derive its own cancellation from, rather than each such collector inventing
-its own signal handling independently.
+This same `ctx` is the hook the background-refresh collector variant
+(`collector-pattern.md`'s "Collector variants" section) derives its own
+cancellation from, rather than each such collector inventing its own signal
+handling independently.
 
 ## What this scaffold does not do
 
