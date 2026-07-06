@@ -67,7 +67,7 @@ explicitly, with the user, never assumed on their behalf — all six:
 3. **I/O flavor** (`http` or `cli`), following directly from the data
    source.
 4. **Collector list**, one resource per collector, in the order they will
-   be built. For each collector on this list, also ask: is this data source
+   be built. For each collector on this list, also ask: is this backend
    slow or expensive enough (seconds per call, rate-limited, or otherwise
    not built for high-frequency polling) that it should refresh on a fixed
    background interval instead of synchronously on every scrape? Do not
