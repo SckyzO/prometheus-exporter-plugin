@@ -94,6 +94,34 @@ func main() {
 	// closure created at the markers below may reference it.
 	var log *logger.Logger
 
+	// ctx is created up-front, before the // @@CLIENT_INIT@@ /
+	// // @@COLLECTOR_REGISTRY@@ markers below, so a background-refresh
+	// collector variant registered at that marker can capture it in its
+	// register() closure (for c.Start(ctx)) — the same early-declaration
+	// rationale as log just above: the closure only dereferences ctx later,
+	// after kingpin.Parse(), when the registry loop actually invokes it.
+	// signal.NotifyContext needs no flags, so calling it before
+	// kingpin.Parse() is fine, and an early SIGTERM/SIGINT simply cancels ctx
+	// and drains cleanly. It traps SIGTERM/SIGINT to drive graceful shutdown
+	// (server.Shutdown below) and to cancel any background collector's
+	// goroutine.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stop()
+
+	// backgroundCollector is the minimal shutdown-wait seam every
+	// background-refresh collector variant satisfies (Start/Done, see
+	// internal/collector's background_collector.go once /add-collector has
+	// added one). backgroundCollectors stays empty in a purely synchronous
+	// exporter — the wait loop after web.ListenAndServe below still runs
+	// (over an empty slice, so it is an immediate no-op), which is what
+	// lets this seam ship unconditionally without special-casing "no
+	// background collectors are registered". /add-collector's background
+	// branch appends to this slice inside its register(...) closure at the
+	// // @@COLLECTOR_REGISTRY@@ marker below; nothing else in main.go changes
+	// when one is added.
+	type backgroundCollector interface{ Done() <-chan struct{} }
+	var backgroundCollectors []backgroundCollector
+
 	// @@CLIENT_INIT@@
 
 	// @@COLLECTOR_REGISTRY@@
@@ -174,11 +202,10 @@ func main() {
 
 	// Signal-aware shutdown: on SIGTERM/SIGINT, drain in-flight requests for
 	// up to 5s via server.Shutdown instead of leaving the process to a bare
-	// kill. Any future background-refresh collector variant can derive its
-	// own cancellation from this same ctx.
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
-	defer stop()
-
+	// kill. ctx (and its stop) are declared up-front near var log above, so a
+	// background collector registered at the // @@COLLECTOR_REGISTRY@@ marker
+	// can capture ctx in its register() closure; the server built here and the
+	// shutdown goroutine below still reference that same ctx unchanged.
 	server := &http.Server{
 		ReadHeaderTimeout: 5 * time.Second, // Mitigate Slowloris attacks (G112).
 	}
@@ -201,6 +228,17 @@ func main() {
 	}
 
 	log.Info("Server stopped")
+
+	// Wait for every background-refresh collector's goroutine to finish (if
+	// any were registered — see backgroundCollectors above), bounded so a
+	// collector whose refresh is genuinely stuck never hangs process exit.
+	for _, bc := range backgroundCollectors {
+		select {
+		case <-bc.Done():
+		case <-time.After(5 * time.Second):
+			log.Warn("a background collector did not stop within 5s; exiting anyway")
+		}
+	}
 }
 
 // isLoopbackHost reports whether host — the address part of a
