@@ -33,17 +33,21 @@ yet.
 Before any code: choose the data source in order of preference — REST/API
 first, then gRPC, then a database, then CLI only as a last resort when no
 API exists — using context7 to confirm the target's actual endpoints and
-payload shapes rather than guessing. Decide single-target vs. multi-target
-(Prometheus's `/probe?target=` pattern, for an exporter that polls many
-remote instances at once); only single-target is implemented today, so a
-multi-target design becomes documented follow-up work, not something the
-scaffold produces. Decompose the target into one collector per resource,
-and set a cardinality budget — which labels, how many series, what flags
-will cap them — before writing a line of code. Output: the I/O flavor
-(`http`, the default, or `cli`) and the ordered collector list step 3 works
-through.
+payload shapes rather than guessing. Discovery can also be grounded in a
+local API spec (OpenAPI/Swagger/`.proto`) or a docs folder/URL, in
+preference order; `/design-exporter <target>` runs this phase and writes
+an architecture brief `/new-prometheus-exporter` can consume. Decide
+single-target vs. multi-target (Prometheus's `/probe?target=` pattern, for
+an exporter that polls many remote instances at once); only single-target
+is implemented today, so a multi-target design becomes documented
+follow-up work, not something the scaffold produces. Decompose the target
+into one collector per resource, and set a cardinality budget — which
+labels, how many series, what flags will cap them — before writing a line
+of code. Output: the I/O flavor (`http`, the default, or `cli`) and the
+ordered collector list step 3 works through.
 
 → `references/exporter-architecture.md`
+→ `references/discovery-inputs.md`
 
 ### 1. context7-first for Prometheus conventions
 
@@ -151,17 +155,19 @@ Anything version-sensitive or spec-defined — a target's actual API
 surface, Prometheus's current naming rules, a tool's current CLI flags —
 gets checked against up-to-date documentation via context7 before code is
 written or a claim is made, never assumed from memory. This applies at
-step 0 (the target's own API) and step 1 (Prometheus's own conventions)
-every time, not just once at project start.
+step 0 (the best available grounding for the target's API — a local spec,
+its docs, or context7) and step 1 (Prometheus's own conventions) every
+time, not just once at project start.
 
 ## Reference index
 
-All ten reference files live under `references/`, alongside the templates
-they document:
+All eleven reference files live under `references/`, alongside the
+templates they document:
 
 | Reference | Covers |
 |---|---|
 | `exporter-architecture.md` | Step 0 — source order, single/multi-target, collector decomposition, cardinality budget |
+| `discovery-inputs.md` | Step 0 — discovery input taxonomy, preference order, the degradation ladder, the architecture-brief format |
 | `prometheus-principles.md` | Step 1 — naming, types, labels, OpenMetrics, self-instrumentation |
 | `collector-pattern.md` | Step 3 — the mockable I/O boundary, the five-piece collector shape, the test triad |
 | `project-scaffold.md` | Step 2 — repository layout, registry wiring, flags, endpoints, signal-aware shutdown |

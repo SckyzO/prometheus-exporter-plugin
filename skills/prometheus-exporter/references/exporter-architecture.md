@@ -50,12 +50,16 @@ genuinely unavailable:
    that situation is common enough to deserve first-class support, not
    because CLI wrapping is the recommended starting point.
 
-Whichever rung you land on, use context7 against the **target's own**
+context7 is one of several grounding inputs, used in the ladder's
+preference order (local spec first, then docs, then context7). Whichever
+rung you land on, use context7 against the **target's own**
 documentation before writing a collector against it — its actual endpoints,
 payload shapes, authentication, and pagination, not a remembered or assumed
 shape. This is separate from, and happens before, the context7 lookup against
 `prometheus.io` in step 1 of the workflow (`prometheus-principles.md`), which
-verifies Prometheus's own conventions instead of the target's API.
+verifies Prometheus's own conventions instead of the target's API. See
+`discovery-inputs.md` for the full input ladder and per-source extraction
+method.
 
 ## 2. Single-target vs. multi-target
 
@@ -218,3 +222,8 @@ Before `/new-prometheus-exporter` runs, this phase should have produced:
 These six items are the inputs the rest of the workflow consumes — the
 scaffold takes the flavor and license; the per-collector loop takes the
 collector list; the release/observability step takes the alert candidates.
+
+When produced via `/design-exporter`, these six items are serialized into
+an architecture brief (`./exporter-design-brief.md`) that
+`/new-prometheus-exporter` consumes; see `discovery-inputs.md` for the
+format.
