@@ -236,11 +236,11 @@ Before `/new-prometheus-exporter` runs, this phase should have produced:
       and any reduction flag needed.
 - [ ] **Candidate business alert(s)** per collector, even as a one-line note.
 
-These six items are the inputs the rest of the workflow consumes — the
+These seven items are the inputs the rest of the workflow consumes — the
 scaffold takes the flavor and license; the per-collector loop takes the
 collector list; the release/observability step takes the alert candidates.
 
-When produced via `/design-exporter`, these six items are serialized into
+When produced via `/design-exporter`, these seven items are serialized into
 an architecture brief (`./exporter-design-brief.md`) that
 `/new-prometheus-exporter` consumes; see `discovery-inputs.md` for the
 format.
