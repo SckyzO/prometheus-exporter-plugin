@@ -157,7 +157,21 @@ func TestExampleCollector_ErrorKeepsPreviousCache(t *testing.T) {
 	}()
 
 	c.Start(ctx)
-	time.Sleep(150 * time.Millisecond) // first (successful) refresh + at least one failed refresh
+
+	// Wait for backend call 3 to start, rather than sleeping a fixed
+	// duration: refresh runs synchronously on Start's single goroutine, so
+	// the ticker cannot dispatch call 3 until call 2 (the first failing,
+	// 500 refresh) has fully returned — its error branch included. Seeing
+	// calls reach 3 is therefore a deterministic proof that call 2's whole
+	// error path, not merely the server's response, has already completed,
+	// which a fixed sleep can only ever approximate.
+	deadline := time.Now().Add(2 * time.Second)
+	for calls.Load() < 3 {
+		if time.Now().After(deadline) {
+			t.Fatalf("calls = %d after 2s, want >= 3: a failing refresh's error path never completed", calls.Load())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 
 	reg := prometheus.NewRegistry()
 	if err := reg.Register(c); err != nil {
@@ -167,8 +181,14 @@ func TestExampleCollector_ErrorKeepsPreviousCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GatherAndCount: %v", err)
 	}
-	if count == 0 {
-		t.Fatal("GatherAndCount = 0, want > 0: the previous cache must survive a later refresh error")
+	// A surviving cache emits exactly 3 metrics on a scrape: the 2 cached
+	// business metrics (items, healthy) from the successful first refresh,
+	// plus the freshness gauge Collect always emits regardless of cache
+	// state. A wrongly-cleared cache would emit only 1 (the gauge alone) —
+	// count > 0 cannot tell those two outcomes apart, since the gauge alone
+	// already satisfies "> 0". Assert the exact count instead.
+	if count != 3 {
+		t.Fatalf("GatherAndCount = %d, want 3 (2 cached metrics + freshness gauge): the previous cache must survive a later refresh error", count)
 	}
 }
 
