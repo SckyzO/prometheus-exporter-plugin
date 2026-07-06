@@ -794,6 +794,107 @@ EOF
     die "add-collector sub-check: make docs-check FAILED after mechanically adding queue — docs/metrics.md and internal/collector/queue.go disagree ($flavor/$forge)"
   fi
   echo "confirmed: add-collector sub-check PASSED ($flavor/$forge)"
+
+  # Background-refresh collector epic (docs/plans/2026-07-06-background-
+  # refresh-collector.md, Task 7): extend this SAME http/none /add-collector
+  # sub-check to ALSO mechanically exercise the NEW --variant background
+  # branch, right after the synchronous "queue" sub-check above. Named
+  # "tape" after this epic's own driving case
+  # (docs/design/2026-07-06-background-refresh-collector-design.md's IBM
+  # TS4500 tape library) — deliberately distinct from "queue" above, so the
+  # two mechanical sub-checks never collide on an identifier or a metric
+  # name in the same package. Same rename-before-substitute ordering
+  # discipline as the queue sub-check above (see its own comment for why:
+  # @@MODULE_PATH@@'s value contains the substring "example" too).
+  echo "== mechanical /add-collector --variant background sub-check ($flavor/$forge): background template compiles and wires into the Done() seam =="
+  addc_bg_tmpl="$assets/code/http/variants/background_collector.go.tmpl"
+  addc_bg_main="$work/cmd/demo_exporter/main.go"
+  addc_bg_metrics_doc="$work/docs/metrics.md"
+  addc_bg_client="$work/internal/collector/.addc_bg_client_init.frag.tmp"
+  addc_bg_registry="$work/internal/collector/.addc_bg_registry.frag.tmp"
+
+  [ -f "$addc_bg_tmpl" ] || die "background collector template missing: $addc_bg_tmpl"
+
+  # 1. Materialize tape.go: identical rename-then-substitute order as queue
+  # above.
+  sed \
+    -e 's/@@NAMESPACE@@_items/@@NAMESPACE@@_tape_items/' \
+    -e 's/@@NAMESPACE@@_healthy/@@NAMESPACE@@_tape_healthy/' \
+    -e 's/example/tape/g' \
+    -e 's/Example/Tape/g' \
+    "$addc_bg_tmpl" > "$work/internal/collector/tape.go.tmp"
+  sed \
+    -e 's/@@MODULE_PATH@@/example.com\/demo_exporter/g' \
+    -e 's/@@DATA_SOURCE_PATH@@/\/api\/tape/g' \
+    -e 's/@@NAMESPACE@@/demo/g' \
+    "$work/internal/collector/tape.go.tmp" > "$work/internal/collector/tape.go"
+  rm -f "$work/internal/collector/tape.go.tmp"
+
+  # 2. Flags under // @@CLIENT_INIT@@ (target, timeout, interval) — the
+  # SAME marker the queue sub-check already injected into above; the marker
+  # comment itself survives every previous injection (see scaffold.sh's own
+  # comment on why), so it is still there to reuse.
+  cat > "$addc_bg_client" <<'EOF'
+	tapeTarget := kingpin.Flag("collector.tape.target", "Base URL the tape collector scrapes.").Default("http://localhost:9999").String()
+	tapeTimeout := kingpin.Flag("collector.tape.timeout", "Per-request timeout for the tape collector.").Default("5s").Duration()
+	tapeInterval := kingpin.Flag("collector.tape.interval", "Refresh interval for the tape collector.").Default("5m").Duration()
+EOF
+  grep -q '^[[:blank:]]*// @@CLIENT_INIT@@[[:blank:]]*$' "$addc_bg_main" || die "add-collector background sub-check: no standalone // @@CLIENT_INIT@@ marker in $addc_bg_main"
+  sed -e '\|^[[:blank:]]*// @@CLIENT_INIT@@[[:blank:]]*$|r '"$addc_bg_client" "$addc_bg_main" > "$addc_bg_main.tmp" && mv "$addc_bg_main.tmp" "$addc_bg_main"
+  rm -f "$addc_bg_client"
+
+  # 3. Registry snippet under // @@COLLECTOR_REGISTRY@@: eager-construct +
+  # Start(ctx) + append(backgroundCollectors, ...) ALL INSIDE the
+  # register(...) closure (see commands/add-collector.md §5's own note on
+  # why: this splice point sits BEFORE kingpin.Parse() in main.go, so log
+  # is still nil and every flag pointer still holds its zero value there —
+  # the closure defers all of this to the registry loop later in main(),
+  # which runs after Parse() and after log is assigned).
+  cat > "$addc_bg_registry" <<'EOF'
+	register("tape", func() prometheus.Collector {
+		tapeColl := collector.NewTapeCollector(log, collector.NewClient(*tapeTarget, *tapeTimeout), *tapeInterval)
+		tapeColl.Start(ctx)
+		backgroundCollectors = append(backgroundCollectors, tapeColl)
+		return tapeColl
+	}, true)
+EOF
+  grep -q '^[[:blank:]]*// @@COLLECTOR_REGISTRY@@[[:blank:]]*$' "$addc_bg_main" || die "add-collector background sub-check: no standalone // @@COLLECTOR_REGISTRY@@ marker in $addc_bg_main"
+  sed -e '\|^[[:blank:]]*// @@COLLECTOR_REGISTRY@@[[:blank:]]*$|r '"$addc_bg_registry" "$addc_bg_main" > "$addc_bg_main.tmp" && mv "$addc_bg_main.tmp" "$addc_bg_main"
+  rm -f "$addc_bg_registry"
+
+  # Regression-lock, mirroring the queue sub-check's own exact-count guard
+  # above: an unanchored marker match would ALSO splice into register()'s
+  # own doc-comment prose mention of // @@COLLECTOR_REGISTRY@@.
+  addc_bg_regcount=$(grep -c 'register("tape"' "$addc_bg_main")
+  [ "$addc_bg_regcount" -eq 1 ] || die "add-collector background sub-check: expected exactly 1 injected register(\"tape\" call, found $addc_bg_regcount ($flavor/$forge)"
+  addc_bg_clientcount=$(grep -c 'tapeTarget := kingpin.Flag' "$addc_bg_main")
+  [ "$addc_bg_clientcount" -eq 1 ] || die "add-collector background sub-check: expected exactly 1 injected client_init copy, found $addc_bg_clientcount ($flavor/$forge)"
+
+  # 4. docs/metrics.md row, including the freshness gauge — the metric
+  # Decision 4/6 of the background-refresh design exist for.
+  cat >> "$addc_bg_metrics_doc" <<'EOF'
+
+## TapeCollector
+
+Defined in `internal/collector/tape.go`.
+
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `demo_tape_items` | Gauge | - | Number of items reported by the tape target. |
+| `demo_tape_healthy` | Gauge | - | Whether the tape target reports itself healthy (1) or not (0). |
+| `demo_tape_last_refresh_timestamp_seconds` | Gauge | - | Unix time of the last successful tape refresh. Alert if time() - this > 2 x the collector's configured interval. |
+EOF
+
+  echo "== add-collector background sub-check: make build ($flavor/$forge) =="
+  if ! ( cd "$work" && make build ); then
+    die "add-collector background sub-check: make build FAILED after mechanically adding tape — the background template or the Done() seam likely broke ($flavor/$forge)"
+  fi
+
+  echo "== add-collector background sub-check: make docs-check ($flavor/$forge) =="
+  if ! ( cd "$work" && make docs-check ); then
+    die "add-collector background sub-check: make docs-check FAILED after mechanically adding tape — docs/metrics.md and internal/collector/tape.go disagree ($flavor/$forge)"
+  fi
+  echo "confirmed: add-collector background sub-check PASSED ($flavor/$forge)"
 fi
 
 echo "$prog: PASS — $flavor/$forge scaffold + build + check green"
