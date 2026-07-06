@@ -358,7 +358,7 @@ docker-run-minimal:
 # inspect`) - it is NOT CycloneDX and it is NOT a substitute for the
 # artifact this target produces; the two are independent and both ship.
 .PHONY: sbom-image
-sbom-image: ## Generate a CycloneDX SBOM for the container image (needs syft on PATH; run after make docker-build)
+sbom-image:
 	@command -v syft >/dev/null 2>&1 || { echo "syft not found on PATH - install it (https://github.com/anchore/syft) to generate an image SBOM" >&2; exit 1; }
 	@echo "Generating $(EXPORTER_NAME).image.cdx.json for $(IMAGE)"
 	syft "$(IMAGE)" -o cyclonedx-json=$(EXPORTER_NAME).image.cdx.json
@@ -369,3 +369,4 @@ sbom-image: ## Generate a CycloneDX SBOM for the container image (needs syft on 
 clean:
 	@echo "Cleaning up"
 	rm -fr bin/
+	rm -f $(EXPORTER_NAME).image.cdx.json
