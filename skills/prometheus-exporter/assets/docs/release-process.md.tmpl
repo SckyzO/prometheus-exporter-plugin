@@ -389,6 +389,17 @@ binaries and container images (see [Security & supply chain](../README.md#securi
 Without a forge, run the equivalent locally: `goreleaser release --clean` (or
 `--snapshot` to build without publishing).
 
+GoReleaser's own SBOM step only ever covers the release **archives** (CycloneDX, via its
+`sboms:` block) plus an automatic, registry-embedded **SPDX** attestation on each container
+image (`dockers_v2 … sbom: "true"`) — it cannot generate a CycloneDX SBOM for an image it
+builds. For the container image's own canonical CycloneDX SBOM, run `make sbom-image` (needs
+`syft` on `PATH`, the same tool GoReleaser uses for the archives) against the tag you just
+published, e.g.:
+
+```bash
+make sbom-image IMAGE=ghcr.io/@@OWNER@@/@@EXPORTER_NAME@@:vX.Y.Z
+```
+
 ---
 
 ## 10. Handle PRs that don't ship in this release

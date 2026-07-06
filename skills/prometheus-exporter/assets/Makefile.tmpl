@@ -282,6 +282,15 @@ DOCKER_TAG         ?= dev
 DOCKER_REF         := $(DOCKER_IMAGE):$(DOCKER_TAG)
 DOCKER_REF_MINIMAL := $(DOCKER_IMAGE):$(DOCKER_TAG)-minimal
 
+# IMAGE is sbom-image's own override point (below), same ?= idiom as
+# DOCKER_IMAGE/DOCKER_TAG above: defaults to the standard local image this
+# section already builds, override on the command line to point sbom-image
+# at anything else already present in the local engine/registry instead,
+# e.g. the minimal variant or a pulled release tag:
+#   make sbom-image IMAGE=$(DOCKER_REF_MINIMAL)
+#   make sbom-image IMAGE=ghcr.io/<owner>/@@EXPORTER_NAME@@:vX.Y.Z
+IMAGE ?= $(DOCKER_REF)
+
 # Build args shared by every image build below. Both Dockerfiles declare
 # matching ARGs and inject them into their own build stage's -ldflags with
 # the exact same github.com/prometheus/common/version.* keys LDFLAGS (top of
@@ -329,6 +338,31 @@ docker-run-minimal:
 	@echo "Starting compose stack: $(DOCKER_REF_MINIMAL) (override DOCKER_IMAGE=/DOCKER_TAG= to change)"
 	IMAGE=$(DOCKER_REF_MINIMAL) $(CONTAINER_ENGINE) compose -f docker-compose.minimal.yml up -d
 	@echo "Metrics at http://localhost:@@DEFAULT_PORT@@/metrics"
+
+# CycloneDX SBOM for the container image (Tranche A hardening): GoReleaser's
+# own sboms: block (.goreleaser.yaml) can only catalog release ARCHIVES -
+# `artifacts:` never accepts an image value, a documented upstream
+# limitation, not a missing config knob - so the image's own canonical SBOM
+# has to come from a standalone syft invocation instead. This is that
+# invocation: run it after `make docker-build` (or against any other image
+# IMAGE points at). Unlike the four docker-* targets above, this one is NOT
+# gated on CONTAINER_ENGINE/IN_TOOLS - syft itself talks to the local
+# engine/registry directly, so the only real requirement is syft on PATH
+# (already a documented release-time dependency alongside cosign - see
+# .goreleaser.yaml's own header comment).
+#
+# The image ALSO carries a second, different SBOM layer: dockers_v2's own
+# `sbom: "true"` (.goreleaser.yaml) is a supplementary, buildx-native SPDX
+# attestation embedded directly in the image manifest at release time, for
+# registry-native tooling (`docker sbom`, `docker buildx imagetools
+# inspect`) - it is NOT CycloneDX and it is NOT a substitute for the
+# artifact this target produces; the two are independent and both ship.
+.PHONY: sbom-image
+sbom-image: ## Generate a CycloneDX SBOM for the container image (needs syft on PATH; run after make docker-build)
+	@command -v syft >/dev/null 2>&1 || { echo "syft not found on PATH - install it (https://github.com/anchore/syft) to generate an image SBOM" >&2; exit 1; }
+	@echo "Generating $(EXPORTER_NAME).image.cdx.json for $(IMAGE)"
+	syft "$(IMAGE)" -o cyclonedx-json=$(EXPORTER_NAME).image.cdx.json
+	@echo "wrote $(EXPORTER_NAME).image.cdx.json"
 
 # Cleans up build artifacts.
 .PHONY: clean

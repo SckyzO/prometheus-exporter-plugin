@@ -43,7 +43,9 @@ Only the latest release receives security fixes.
   `govulncheck` run on every pull request, and Dependabot-managed dependency updates across
   Go modules, GitHub Actions, and container base images.
 
-Released binaries and images are signed and carry a CycloneDX software bill of materials —
-see [Security & supply chain](README.md#security--supply-chain) in the README and
+Released binaries and images are signed. Binaries carry a CycloneDX software bill of materials;
+container images get their own CycloneDX SBOM via `make sbom-image`, plus a supplementary SPDX
+attestation embedded in the image manifest — see
+[Security & supply chain](README.md#security--supply-chain) in the README and
 [docs/release-process.md](docs/release-process.md) for the release pipeline that produces
 them.

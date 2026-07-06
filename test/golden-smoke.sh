@@ -56,6 +56,18 @@ assets="$root/skills/prometheus-exporter/assets"
 # assets/.github/workflows/release.yml.tmpl
 GORELEASER_VERSION=2.16.0
 
+# Pinned syft image tag for this harness's OWN containerized fallback (used
+# below when native syft is not on PATH - see the image-SBOM step). Unlike
+# GORELEASER_VERSION above, nothing in the shipped templates pins a syft
+# version to keep this "in sync" with: Makefile.tmpl's sbom-image target
+# just requires "syft on PATH" (any version), and .goreleaser.yaml.tmpl's
+# own header comment says the same for the archive sboms: step. Confirmed
+# by running `docker run --rm anchore/syft:v1.46.0 version` before wiring
+# it in: image tags on Docker Hub carry a leading "v" (GitVersion reports
+# bare "1.46.0"), same split as GORELEASER_VERSION/goreleaser's own tags
+# below. Bump periodically; there is no drift to detect, just staleness.
+SYFT_VERSION=1.46.0
+
 prog=$(basename "$0")
 
 usage() {
@@ -467,6 +479,73 @@ elif command -v podman >/dev/null 2>&1; then
   echo "confirmed: docker build PASSED via podman ($flavor/$forge)"
 else
   echo "SKIPPING docker build ($flavor/$forge): no docker/podman container engine found — install one to validate Dockerfile locally"
+fi
+
+# Canonical CycloneDX image SBOM (Task 4, tranche A hardening): until now,
+# the container image's only SBOM was the BuildKit-native SPDX attestation
+# dockers_v2's own `sbom: "true"` bakes into the manifest at release time
+# (see .goreleaser.yaml.tmpl) — GoReleaser cannot itself produce a
+# CycloneDX SBOM for an image it builds (its sboms: block only ever accepts
+# archive artifacts, a documented upstream limitation), so the image's
+# canonical, uniform-with-the-archives CycloneDX SBOM instead comes from
+# the new `make sbom-image` target (syft), proved here against the exact
+# image the docker build step immediately above just produced
+# ($image_ref). The SPDX attestation is untouched by any of this — this is
+# additive, not a replacement.
+#
+# Same layered, never-silent-pass discipline as every guarded step above,
+# reusing the SAME $engine the standard build already resolved (no fresh
+# docker/podman probe):
+#   1. $engine set (an image actually got built above) AND native syft on
+#      PATH -> run the REAL `make sbom-image` target, dogfooding Step 1
+#      itself rather than merely proving "syft works somehow".
+#   2. $engine = docker, no native syft -> the fallback a native-syft-less
+#      CI runner needs: `docker save` to a tarball, then a pinned,
+#      version-checked anchore/syft:$SYFT_VERSION container scanning that
+#      tarball via the documented `docker-archive:` source scheme.
+#   3. $engine = podman, no native syft -> explicit SKIP (this fallback is
+#      only wired for docker's `docker save`, same scoping call as the
+#      goreleaser-check step above for podman).
+#   4. no engine at all -> explicit SKIP (nothing was built to SBOM).
+# A real failure in tier 1 or 2 calls die — never swallowed as a SKIP.
+#
+# The CycloneDX marker is matched tolerant of surrounding whitespace around
+# the colon (`"bomFormat"[[:space:]]*:[[:space:]]*"CycloneDX"`): confirmed
+# empirically against real syft 1.46.0 output that it emits compact JSON
+# with NO space after the colon (`"bomFormat":"CycloneDX"`), not the
+# spaced-out form a hand-written example might suggest — asserting the
+# literal spaced form would have made this check fail on real output.
+echo "== image SBOM: CycloneDX via make sbom-image / syft ($flavor/$forge) =="
+image_ref="golden-smoke-$flavor-$forge:latest"
+sbom_out="$work/demo_exporter.image.cdx.json"
+bom_marker='"bomFormat"[[:space:]]*:[[:space:]]*"CycloneDX"'
+if [ -n "$engine" ] && command -v syft >/dev/null 2>&1; then
+  echo "using native syft: make sbom-image IMAGE=$image_ref"
+  if ! ( cd "$work" && make sbom-image "IMAGE=$image_ref" ); then
+    die "make sbom-image FAILED for $flavor/$forge — see output above"
+  fi
+  [ -f "$sbom_out" ] || die "make sbom-image reported success but $sbom_out was not created ($flavor/$forge)"
+  grep -Eq "$bom_marker" "$sbom_out" || die "make sbom-image output $sbom_out is not a CycloneDX SBOM (no bomFormat:CycloneDX marker) ($flavor/$forge)"
+  echo "confirmed: make sbom-image produced a CycloneDX SBOM ($flavor/$forge)"
+elif [ "$engine" = docker ]; then
+  echo "no native syft; using docker save + docker run anchore/syft:v${SYFT_VERSION}"
+  image_tar="$work/.golden-smoke-image.tar"
+  if ! docker save "$image_ref" -o "$image_tar"; then
+    die "docker save $image_ref FAILED for $flavor/$forge — see output above"
+  fi
+  if ! docker run --rm -v "$work":/w "anchore/syft:v${SYFT_VERSION}" \
+       docker-archive:/w/.golden-smoke-image.tar -o cyclonedx-json=/w/demo_exporter.image.cdx.json; then
+    rm -f "$image_tar"
+    die "syft (via docker, docker-archive) FAILED to generate an image SBOM for $flavor/$forge — see output above"
+  fi
+  rm -f "$image_tar"
+  [ -f "$sbom_out" ] || die "syft (via docker) reported success but $sbom_out was not created ($flavor/$forge)"
+  grep -Eq "$bom_marker" "$sbom_out" || die "syft (via docker) output $sbom_out is not a CycloneDX SBOM (no bomFormat:CycloneDX marker) ($flavor/$forge)"
+  echo "confirmed: docker-archive syft scan produced a CycloneDX SBOM ($flavor/$forge)"
+elif [ "$engine" = podman ]; then
+  echo "SKIPPING image SBOM check ($flavor/$forge): podman found but no native syft, and this check's containerized fallback is only wired for docker (docker save) — install syft, or docker, to generate a local image SBOM"
+else
+  echo "SKIPPING image SBOM check ($flavor/$forge): no docker/podman container engine found and no native syft on PATH (same as the standard Dockerfile build above)"
 fi
 
 # Guarded Dockerfile.minimal build (Task 2, tranche A hardening): the

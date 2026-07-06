@@ -72,7 +72,7 @@ uses — just filled from GoReleaser's own template functions
 Archives bundle `README.md` and `LICENSE`; a `checksum` block produces one
 `_checksums.txt` covering everything.
 
-### Two SBOM mechanisms, not one
+### Three SBOM/attestation artefacts, not one
 
 ```yaml
 sboms:
@@ -82,15 +82,32 @@ sboms:
 
 `sboms:` (the current, plural key — confirmed against GoReleaser's own
 customization docs) runs `syft` against each release **archive**, producing a
-CycloneDX-format SBOM per tarball/zip. The `args` override is not incidental:
-syft's own default output format inside GoReleaser is SPDX, not CycloneDX —
-without this override, a config that *looks* like it standardizes on
-CycloneDX would silently ship SPDX instead. Separately, each `dockers_v2`
-entry (below) sets its own `sbom: "true"` — a distinct, per-image field
-controlling `docker buildx`'s native SBOM attestation, attached to the image
-manifest itself rather than shipped as a sidecar file next to an archive.
-Verifying "the release has an SBOM" means checking both mechanisms, not just
-one.
+CycloneDX-format SBOM per tarball/zip, automatically on every release. The
+`args` override is not incidental: syft's own default output format inside
+GoReleaser is SPDX, not CycloneDX — without this override, a config that
+*looks* like it standardizes on CycloneDX would silently ship SPDX instead.
+
+GoReleaser **cannot** run that same `sboms:` mechanism against a container
+image it builds — `artifacts:` only ever accepts archive-shaped values, a
+documented upstream limitation, not a missing config knob. So the image's
+own CycloneDX SBOM comes from a separate, maintainer-run step instead:
+`make sbom-image` (`Makefile.tmpl`) runs `syft` directly against the
+built/published image and writes `@@EXPORTER_NAME@@.image.cdx.json` — on
+demand, not wired into the release workflow itself. This is the image's
+*canonical* SBOM: same tool, same CycloneDX format as the archives, just a
+separate invocation because GoReleaser can't do it for you.
+
+Separately again, each `dockers_v2` entry (below) sets its own
+`sbom: "true"` — `docker buildx`'s own **native SPDX attestation**,
+produced automatically on every release and embedded directly in the image
+manifest, so registry-native tooling (`docker sbom`, `docker buildx
+imagetools inspect`) can read it with no extra step. This is a real, useful,
+always-there SBOM layer — but it is SPDX, not CycloneDX, and it is
+**supplementary** to `make sbom-image`'s CycloneDX artefact, never a
+substitute for it. Verifying "this release's SBOM story is uniform
+CycloneDX" means checking archive (automatic) and image (`make sbom-image`,
+on demand) — the embedded SPDX attestation is a bonus third layer, not
+either of those two.
 
 ### Signing: cosign, keyless, two independent targets
 
@@ -282,9 +299,11 @@ exist before any forge automation would have touched them.
       forge.
 - [ ] `.goreleaser.yaml`/`.goreleaser.dev.yaml` are always present; only
       `.github/` is `@@FORGE@@`-conditional.
-- [ ] `sboms:` explicitly overrides `args` to CycloneDX; `dockers_v2`'s own
-      `sbom:` field is a second, separate attestation mechanism — both are
-      part of "the release has an SBOM", not just one.
+- [ ] `sboms:` explicitly overrides `args` to CycloneDX for archives; the
+      container image's own CycloneDX SBOM comes from `make sbom-image`
+      (GoReleaser cannot produce one); `dockers_v2`'s own `sbom:` field is a
+      third, separate, supplementary SPDX attestation — all three are part
+      of "the release has an SBOM", not just one.
 - [ ] `signs`/`docker_signs` are keyless (OIDC/Sigstore) — no private key
       ever checked into the repository.
 - [ ] Every floating Docker tag (`latest`, `X`, `X.Y`, and their `-minimal`
