@@ -277,27 +277,34 @@ system.
   `--collector.<name>` that defaults to disabled, not a hope that nobody
   enables it on a busy target.
 
-## Variants noted for v0.2 (not shipped today)
+## Collector variants (beyond the synchronous default)
 
-Two collector variants are part of this pattern's design but not yet
-materialized as templates — don't go looking for `cache.go.tmpl` or
-`background_collector.go.tmpl` in this scaffold's assets today; they land in
-v0.2 per the roadmap.
+The synchronous collector above is the default. One variant beyond it ships
+today, and one is still planned.
 
-- **Cache.** A shared, TTL-guarded cache sitting in front of `<name>Data`
-  (RWMutex-protected, a `time.Time` freshness stamp), so several scrapes
-  inside one TTL window reuse a single fetch instead of hitting the target
-  every time. Same five-piece shape underneath; `<name>Data` consults the
-  cache before doing real I/O.
-- **Background refresh.** A goroutine plus a ticker plus a `context.Context`
-  that refreshes a cached value on its own schedule, decoupled from
-  Prometheus's own scrape timing entirely. On a refresh error, it keeps the
-  last-good value rather than blanking a working cache because one refresh
-  attempt failed, and exposes a freshness/last-updated timestamp so a
-  consumer can tell how stale the served value is. This is also where the
-  signal-aware shutdown `main.go` already wires for the whole process
+- **Background refresh (shipped).** Add it with `/add-collector --variant
+  background`; its template is `background_collector.go.tmpl` (per flavor,
+  under `code/<flavor>/variants/`). A goroutine plus a ticker plus a
+  `context.Context` refresh a cached value on their own schedule, decoupled
+  from Prometheus's own scrape timing entirely, so a scrape never waits on a
+  slow or expensive backend. On a refresh error it keeps the last-good value
+  rather than blanking a working cache because one refresh attempt failed,
+  and it always emits a `<namespace>_<name>_last_refresh_timestamp_seconds`
+  freshness gauge (`0` before the first successful refresh) so a consumer can
+  tell how stale the served value is. This is also where the signal-aware
+  shutdown `main.go` already wires for the whole process
   (`project-scaffold.md`) becomes relevant to a single collector's own
-  goroutine, not just the HTTP server's.
+  goroutine, not just the HTTP server's: the collector's `Done()` plugs into
+  `main.go`'s `backgroundCollectors` wait seam.
+- **Cache (v0.2 fast-follow, not shipped today).** A shared, TTL-guarded
+  cache sitting in front of `<name>Data` (RWMutex-protected, a `time.Time`
+  freshness stamp), so several scrapes inside one TTL window reuse a single
+  fetch instead of hitting the target every time — the simpler pattern that
+  refetches inline when stale, without a goroutine, and so does not give the
+  background variant's "scrape never blocks" guarantee. Same five-piece shape
+  underneath; `<name>Data` consults the cache before doing real I/O. Not
+  materialized as a template yet — don't go looking for `cache.go.tmpl` in
+  this scaffold's assets today; it lands per the roadmap.
 
 ## Checklist
 

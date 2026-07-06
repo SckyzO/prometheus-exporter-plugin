@@ -19,6 +19,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`/new-prometheus-exporter` consumes an architecture brief** when one is
   present (`./exporter-design-brief.md` or a named path), pre-filling step-0
   decisions and step-1 variables; with no brief it stays fully interactive.
+- **`/add-collector --variant background`** — scaffolds a collector that
+  refreshes its cache on a fixed interval (default `5m`) in a background
+  goroutine instead of on the scrape's critical path, for a backend too slow
+  or expensive to hit on every scrape (both HTTP and CLI flavors). Ships an
+  always-emitted `<namespace>_<name>_last_refresh_timestamp_seconds`
+  freshness gauge (`0` before the first successful refresh) and fails open
+  on a refresh error (serves the previous cache, logs, retries next tick).
+  `main.go` gains a generic, dormant `Done()`-wait shutdown seam
+  (`backgroundCollectors`) that every scaffolded exporter ships from `/new`
+  on, populated only once a background collector is actually added. The
+  architecture-design phase (`/design-exporter`, and the `prometheus-exporter`
+  skill's step 0) now proactively asks whether any collector's backend is
+  slow/expensive enough to warrant this.
 
 ### Changed
 

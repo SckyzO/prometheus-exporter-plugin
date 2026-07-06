@@ -1,6 +1,6 @@
 # Discovery inputs: the grounding ladder, per-source extraction, and the architecture brief
 
-The six architecture decisions `exporter-architecture.md` walks through are
+The architecture decisions `exporter-architecture.md` walks through are
 only as sound as whatever grounds them. Today that grounding is a single
 input — context7, queried against the target's own library documentation —
 which fails exactly where it matters most: an internal or proprietary
@@ -149,7 +149,7 @@ present. The exact format:
 
 Every section maps to something the ladder produced or a gap it left open:
 `## Provenance` is the ladder's own audit trail; `## Architecture decisions`
-is `exporter-architecture.md`'s six items in brief form;
+is `exporter-architecture.md`'s output items in brief form;
 `## Scaffold inputs` is exactly what `/new-prometheus-exporter` step 1 asks
 for, minus identity; and `## Open questions / assumptions` is where a rung
 that came back ambiguous — a spec silent on auth, a doc page that didn't say

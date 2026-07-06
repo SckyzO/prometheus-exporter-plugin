@@ -60,6 +60,26 @@ before deriving anything else from it or touching a single file:
   collector-naming convention (`example`, `http_client_requests`/
   `command_exec`) — not a hard rule.
 
+**Variant: synchronous or background.** Two collector shapes exist:
+**synchronous** (default — fetches on every scrape) and **background**
+(fetches on a fixed interval in a goroutine, serving the last cached result
+on every scrape; use when the backend is slow or expensive enough that a
+scrape should never wait on it directly — see
+`${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/references/exporter-architecture.md`'s background-refresh note). Decide
+which applies to this collector before going further:
+
+- If $ARGUMENTS included a trailing `--variant background` token, strip it
+  and use the background variant.
+- Otherwise ask: "Is this backend slow or expensive enough (seconds per
+  call, rate-limited, or otherwise not built for high-frequency polling)
+  that it should refresh on a fixed background interval instead of
+  synchronously on every scrape?" A "yes" selects the background variant; a
+  "no", or no clear signal, selects the synchronous variant (the default).
+- If the design brief's `## Architecture decisions` already flagged this
+  collector as background-refresh candidate (see `/design-exporter`'s own
+  probe), read that back to the user for confirmation rather than asking
+  from scratch.
+
 **Idempotent refusal.** Before writing anything, check:
 
 ```sh
@@ -107,8 +127,32 @@ this repository: it copies a whole tree and expects an empty (or
 repo's `go.mod`/`Makefile`/`README.md`/etc. wholesale. A single new file is a
 plain adaptation, not a re-scaffold.
 
+**Synchronous variant (default):**
+
 - http: `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/assets/code/http/collector.go.tmpl`
 - cli: `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/assets/code/cli/collector.go.tmpl`
+
+**Background variant (step 2 selected it):**
+
+- http: `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/assets/code/http/variants/background_collector.go.tmpl`
+- cli: `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/assets/code/cli/variants/background_collector.go.tmpl`
+
+The background variant keeps the same five-piece shape and the same
+`example`/`Example` placeholder identifiers as the synchronous template, so
+every rename in the table below applies to it unchanged. It additionally
+introduces `interval time.Duration` (a new constructor parameter — see step
+5's new interval flag), `lastRefreshDesc *prometheus.Desc` (the always-emitted
+freshness gauge, metric name literal
+`"@@NAMESPACE@@_example_last_refresh_timestamp_seconds"` — rename this
+EXACTLY like any other `"@@NAMESPACE@@_..."` literal in the table below;
+its `_last_refresh_timestamp_seconds` suffix is a locked, non-negotiable part
+of the name, only `example`→`<name>` and `@@NAMESPACE@@` ever change in it),
+`Start(ctx context.Context)`, and `Done() <-chan struct{}` — none of which
+need a new rename rule beyond the existing `example`→`<name>`/`Example`→`<Name>`
+pair, since none of those identifiers contain "example"/"Example" themselves.
+`New<Name>Collector` for this variant returns the **concrete** `*<Name>Collector`
+(never `prometheus.Collector`) — step 5's registry snippet calls `.Start(ctx)`
+on it, which the bare interface does not expose.
 
 Write the result to `internal/collector/<name>.go`, applying these renames:
 
@@ -163,10 +207,21 @@ template happens to ship:
 
 ## 4. Materialize the full test triad + fixture
 
-Read the flavor's test template(s):
+Read the flavor's test template(s), choosing the SAME variant step 2 selected
+(synchronous or background) — never mix a synchronous collector file with a
+background test file or vice versa:
+
+**Synchronous variant (default):**
 
 - http: `.../code/http/collector_test.go.tmpl` → write `internal/collector/<name>_test.go`
 - cli: `.../code/cli/collector_test.go.tmpl` **and** `.../code/cli/parser_test.go.tmpl` → merge both into one `internal/collector/<name>_test.go`. (The shipped repo keeps these split only because the *first* collector's files are generically named `collector_test.go`/`parser_test.go`; your new collector already has a unique name, so one file is simpler and matches the http flavor's own convention.) Both templates declare `package collector` and have overlapping imports (`"os"`, `"testing"`, etc.); the merge must keep **one** `package collector` line and a **single deduplicated import block** — a literal concatenation would cause a duplicate-package/duplicate-import compile error.
+
+**Background variant (step 2 selected it):**
+
+- http: `.../code/http/variants/background_collector_test.go.tmpl` → write `internal/collector/<name>_test.go`. Already the complete triad in one file (parser test + lifecycle tests) — no separate parser template exists for this variant.
+- cli: `.../code/cli/variants/background_collector_test.go.tmpl` → write `internal/collector/<name>_test.go`. Already merged (parser test + lifecycle tests) — do not also read `.../code/cli/parser_test.go.tmpl`, which is the SYNCHRONOUS flavor's separate parser file and would duplicate `TestParse<Name>`.
+
+Either variant:
 
 Apply the same identifier renames as step 3 (whichever of that table's rows
 actually occur in the test template — the endpoint-path/command rows won't,
@@ -223,7 +278,8 @@ scaffolding for exactly this purpose). Insert **after the last existing line**
 of each block — never replace the marker comment itself, and never re-declare
 `log`, which the closures below capture by reference:
 
-**http** — after the last existing flag line under `// @@CLIENT_INIT@@`:
+**Synchronous variant (default) — http** — after the last existing flag line
+under `// @@CLIENT_INIT@@`:
 
 ```go
 <name>Target := kingpin.Flag("collector.<name>.target", "Base URL the <name> collector scrapes.").Default("<base URL from step 1>").String()
@@ -239,7 +295,8 @@ register("<name>", func() prometheus.Collector {
 }, true)
 ```
 
-**cli** — after the last existing flag line under `// @@CLIENT_INIT@@`:
+**Synchronous variant (default) — cli** — after the last existing flag line
+under `// @@CLIENT_INIT@@`:
 
 ```go
 <name>Timeout := kingpin.Flag("collector.<name>.timeout", "Per-command timeout for the <name> collector.").Default("5s").Duration()
@@ -254,8 +311,73 @@ register("<name>", func() prometheus.Collector {
 }, true)
 ```
 
+**Background variant (step 2 selected it) — http** — after the last existing
+flag line under `// @@CLIENT_INIT@@` (the SAME target/timeout flags as the
+synchronous branch above, plus one new interval flag):
+
+```go
+<name>Target := kingpin.Flag("collector.<name>.target", "Base URL the <name> collector scrapes.").Default("<base URL from step 1>").String()
+<name>Timeout := kingpin.Flag("collector.<name>.timeout", "Per-request timeout for the <name> collector.").Default("5s").Duration()
+<name>Interval := kingpin.Flag("collector.<name>.interval", "Refresh interval for the <name> collector.").Default("5m").Duration()
+```
+
+then after the last existing `register(...)` call under
+`// @@COLLECTOR_REGISTRY@@`:
+
+```go
+register("<name>", func() prometheus.Collector {
+	<name>Coll := collector.New<Name>Collector(log, collector.NewClient(*<name>Target, *<name>Timeout), *<name>Interval)
+	<name>Coll.Start(ctx)
+	backgroundCollectors = append(backgroundCollectors, <name>Coll)
+	return <name>Coll
+}, true)
+```
+
+**Background variant (step 2 selected it) — cli** — after the last existing
+flag line under `// @@CLIENT_INIT@@`:
+
+```go
+<name>Timeout := kingpin.Flag("collector.<name>.timeout", "Per-command timeout for the <name> collector.").Default("5s").Duration()
+<name>Interval := kingpin.Flag("collector.<name>.interval", "Refresh interval for the <name> collector.").Default("5m").Duration()
+```
+
+then after the last existing `register(...)` call under
+`// @@COLLECTOR_REGISTRY@@`:
+
+```go
+register("<name>", func() prometheus.Collector {
+	<name>Coll := collector.New<Name>Collector(log, *<name>Timeout, *<name>Interval)
+	<name>Coll.Start(ctx)
+	backgroundCollectors = append(backgroundCollectors, <name>Coll)
+	return <name>Coll
+}, true)
+```
+
+**Why the eager construction, `Start`, and `append` all live INSIDE the
+`register(...)` closure, never as bare statements before it:** both markers
+sit textually BEFORE `kingpin.Parse()` in `main.go` — `register(...)`'s call
+itself must run there (it just stores the closure), but `log` is still `nil`
+and every flag pointer (`*<name>Target`, `*<name>Interval`, ...) still holds
+its zero value until `kingpin.Parse()` runs, further down. Putting
+`<name>Coll := collector.New<Name>Collector(log, ...)` directly at the
+marker (outside the closure) would construct the collector with a nil
+logger and a zero-value interval — silently broken. Wrapping construction,
+`Start(ctx)`, and the `backgroundCollectors` append inside the closure
+(which Go closures capture by reference) defers all of it to the registry
+loop later in `main()`, which runs AFTER `kingpin.Parse()` and after `log`
+is assigned — exactly how the existing synchronous closures above already
+behave, and how `main.go`'s own `backgroundCollectors` seam (Task 1) expects
+to be populated. `ctx` and `backgroundCollectors` are both declared up-front,
+right after `var log` and BEFORE these two markers (Task 1's seam), precisely
+so this closure can capture them; the closure only *dereferences* `ctx` (in
+`Start(ctx)`) at invocation time, long after `kingpin.Parse()`, exactly as it
+does `log`. (In the pristine `main.go.tmpl`, `ctx` used to be declared far
+below these markers in the shutdown block — Task 1 moved it up for exactly
+this reason: a Go closure cannot close over a name declared textually after
+it.)
+
 `register()` auto-declares the negatable `--[no-]collector.<name>` flag
-(defaulting to enabled) — nothing else to wire for that.
+(defaulting to enabled) — nothing else to wire for that, in either variant.
 
 This insertion point is anchor-based (last line of each marker's existing
 block), so it works the same way regardless of how many collectors already
@@ -274,6 +396,14 @@ Defined in `internal/collector/<name>.go`.
 | Metric | Type | Labels | Description |
 |---|---|---|---|
 | `<metric_name>` | Gauge | `<label>` or `-` | <help text> |
+```
+
+**Background variant only:** add one further row for the always-emitted
+freshness gauge, using its exact, locked name and help text (see step 3's
+note on why this metric name is not user-chosen):
+
+```markdown
+| `<namespace>_<name>_last_refresh_timestamp_seconds` | Gauge | - | Unix time of the last successful <name> refresh. Alert if time() - this > 2 x the collector's configured interval. |
 ```
 
 The names/labels here **must exactly match** what step 3's code emits — this

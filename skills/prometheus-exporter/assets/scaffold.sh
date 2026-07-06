@@ -233,6 +233,21 @@ if [ -d "$dst/code/$flavor" ]; then
 fi
 rm -rf "$dst/code"
 
+# variants/ (the background_collector.go.tmpl + test that /add-collector adds
+# — see code/<flavor>/variants/) is /add-collector's own staging ground: it
+# reads those templates directly from the PLUGIN tree (exactly as it reads
+# code/<flavor>/collector.go.tmpl today), never through scaffold.sh. Landed
+# at internal/collector/variants/ by the flavor-selection move above like any
+# other flavor file, it must never reach a scaffolded repo: left in place, a
+# @@VAR@@-substituted, .tmpl-stripped background_collector.go would sit in its
+# own internal/collector/variants PACKAGE (a subdirectory is a distinct
+# package regardless of its package clause), which can never see
+# internal/collector's own Client/logger declarations — go build ./... fails
+# on it with "undefined: Client". Mirrors the existing wiring/ staging removal
+# below. rm -rf on a path that doesn't exist is a silent no-op, so this is
+# harmless for a flavor that ships no variants/ at all.
+rm -rf "$dst/internal/collector/variants"
+
 # Flavor-specific docs: code/<flavor>/metrics.md.tmpl (if shipped) documents
 # that flavor's own collector metrics truthfully - its metric names differ
 # per flavor (e.g. http's @@NAMESPACE@@_items vs cli's @@NAMESPACE@@_example),
