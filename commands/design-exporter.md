@@ -67,7 +67,14 @@ explicitly, with the user, never assumed on their behalf — all six:
 3. **I/O flavor** (`http` or `cli`), following directly from the data
    source.
 4. **Collector list**, one resource per collector, in the order they will
-   be built.
+   be built. For each collector on this list, also ask: is this data source
+   slow or expensive enough (seconds per call, rate-limited, or otherwise
+   not built for high-frequency polling) that it should refresh on a fixed
+   background interval instead of synchronously on every scrape? Do not
+   wait for the user to raise this — ask proactively if nothing so far has
+   signalled it. A "yes" is recorded here, under this same decision, and
+   becomes the signal for `/add-collector --variant background <name>` once
+   scaffolding begins.
 5. **Cardinality budget** per collector — labels, worst-case series count,
    any reduction flag.
 6. **Business-alert candidates** per collector, one line each.

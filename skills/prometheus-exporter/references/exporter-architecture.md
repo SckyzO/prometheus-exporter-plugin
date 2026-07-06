@@ -145,6 +145,16 @@ scaffold produces:
 - gets its own focused test triad (`collector-pattern.md`) instead of one
   sprawling test file covering unrelated concerns.
 
+For each collector, also decide whether its backend is slow or expensive
+enough (seconds per call, a rate limit, or a device not built for
+high-frequency polling — the kind of backend a scrape should never wait on)
+to warrant refreshing on a fixed background interval instead of
+synchronously on every scrape. This is `/add-collector`'s
+`--variant background` — see `collector-pattern.md` for the shape once the
+collector list reaches this one. Most collectors do not need it; a fast,
+cheap REST endpoint or CLI call should stay synchronous, the simpler
+default.
+
 A resource that genuinely needs several independent fetches (a `/health`
 endpoint and a `/stats` endpoint that change on unrelated schedules, say)
 is usually two collectors, not one collector with two `*Data` methods — each
@@ -219,6 +229,9 @@ Before `/new-prometheus-exporter` runs, this phase should have produced:
       data source.
 - [ ] **Collector list**, one resource per collector, in the order
       `/add-collector` will work through them.
+- [ ] **Background-refresh candidates** flagged, per collector, if any
+      backend is slow/expensive enough that a scrape should never wait on
+      it directly.
 - [ ] **Cardinality budget** per collector: labels, worst-case series count,
       and any reduction flag needed.
 - [ ] **Candidate business alert(s)** per collector, even as a one-line note.

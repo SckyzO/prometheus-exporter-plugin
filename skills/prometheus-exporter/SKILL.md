@@ -47,8 +47,11 @@ is implemented today, so a multi-target design becomes documented
 follow-up work, not something the scaffold produces. Decompose the target
 into one collector per resource, and set a cardinality budget — which
 labels, how many series, what flags will cap them — before writing a line
-of code. Output: the I/O flavor (`http`, the default, or `cli`) and the
-ordered collector list step 3 works through.
+of code. For any collector whose backend is slow or expensive enough that a
+scrape should never wait on it, flag it now for `/add-collector --variant
+background` later — see `references/exporter-architecture.md`. Output: the
+I/O flavor (`http`, the default, or `cli`) and the ordered collector list
+step 3 works through.
 
 → `references/exporter-architecture.md`
 → `references/discovery-inputs.md`
