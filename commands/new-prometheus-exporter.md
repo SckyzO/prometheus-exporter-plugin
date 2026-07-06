@@ -14,6 +14,19 @@ Candidate exporter name from the command argument: $ARGUMENTS
 
 ## 0. Confirm the architecture decision is already made
 
+Look for an architecture brief before asking anything interactively: an
+explicit path if the user named one, otherwise `./exporter-design-brief.md`
+in the current directory (the file `/design-exporter` produces).
+
+- **If a brief is found:** read it, then present its `## Architecture
+  decisions` section back to the user for confirmation — do not silently
+  trust it; the user still owns the final call. Take its `## Scaffold
+  inputs` values as the defaults for step 1. Still ask for the identity
+  fields (`MODULE_PATH`, `OWNER`, `LICENSE`), which the brief never
+  contains.
+- **If no brief is found:** proceed with the existing interactive
+  confirmation below, unchanged.
+
 Do not scaffold a repository whose shape hasn't actually been decided. Before
 collecting a single variable, confirm the architecture-design phase is done.
 If you have not already, read
@@ -45,6 +58,12 @@ architecture reference instead of guessing. Once they're decided, continue.
 The scaffolder needs a value for every variable below, plus two directory/
 layer selections (`--flavor`, `--forge`) that are **not** template variables
 — they choose which files get copied, not text substituted into them.
+
+If a brief was consumed in step 0, `DATA_SOURCE`, `DATA_SOURCE_PATH`,
+`NAMESPACE`, and `DEFAULT_PORT` arrive pre-filled from its `## Scaffold
+inputs` section, and the I/O flavor from its `## Architecture decisions`
+section — confirm them with the user rather than re-asking;
+`MODULE_PATH`, `OWNER`, and `LICENSE` are always asked here regardless.
 
 | Variable | Meaning | HTTP example | CLI example |
 |---|---|---|---|

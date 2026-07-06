@@ -172,6 +172,23 @@ fi
 
 work="$root/test/_work/$flavor-$forge"
 
+# Brief-format contract (discovery-inputs epic): the shipped fixture must
+# carry every section the discovery-inputs reference documents and
+# /new-prometheus-exporter consumes. This is the tripwire for format drift
+# across the reference, the command, and /new — three artifacts that must
+# agree on these headers. Cell-independent (checks a committed fixture, not
+# $work), placed early so it fails before any build.
+echo "== brief-format contract: fixture carries every required section =="
+brief_fixture="$root/test/fixtures/exporter-design-brief.md"
+[ -f "$brief_fixture" ] || die "brief fixture missing: $brief_fixture"
+for header in '## Provenance' '## Architecture decisions' '## Scaffold inputs' '## Open questions'; do
+  if command grep -qF "$header" "$brief_fixture"; then
+    echo "confirmed: fixture has section '$header'"
+  else
+    die "brief fixture missing required section '$header' ($brief_fixture)"
+  fi
+done
+
 # Start from a clean slate rather than trusting scaffold.sh's own --force
 # (which merges into a pre-existing --dst rather than wiping it): a stale
 # internal/collector/testdata/ left behind by a PRIOR run of this same

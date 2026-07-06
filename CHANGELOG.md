@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`/design-exporter <target>`** — runs the step-0 architecture-design phase
+  with broadened discovery (a preference-ordered ladder: local API spec >
+  docs folder/URL > context7 > dialogue, with graceful degradation) and writes
+  a reviewable architecture brief.
+- **`references/discovery-inputs.md`** — the discovery input taxonomy, the
+  degradation ladder, per-source extraction methods, and the architecture-brief
+  format.
+- **`/new-prometheus-exporter` consumes an architecture brief** when one is
+  present (`./exporter-design-brief.md` or a named path), pre-filling step-0
+  decisions and step-1 variables; with no brief it stays fully interactive.
+
 ## [0.1.1] - 2026-07-06
 
 Hardening tranche: prove the shipped-but-unexercised release artifacts in the
