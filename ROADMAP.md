@@ -36,7 +36,15 @@ it points to.
 - `/generate-dashboard`: a design-led command that generates a business
   Grafana dashboard, complementing the generic health dashboard shipped in
   v0.1.
-- Cache and background-refresh collector variants.
+- **Background-refresh collector variant** *(delivered, unreleased)*:
+  `/add-collector --variant background` scaffolds a collector that refreshes
+  its cache on a fixed interval in a background goroutine instead of on the
+  scrape's critical path, so a slow or expensive backend (the driving case:
+  a legacy device with a seconds-per-call interface) never blocks a scrape.
+  The architecture-design phase now proactively asks whether any collector
+  needs this. The lazy TTL-cache variant (refetch inline when stale, no
+  goroutine — a legitimate, simpler pattern that does not give the same
+  "scrape never blocks" guarantee) remains a fast-follow, not built here.
 - Advanced multi-target support.
 
 ## v1.0
