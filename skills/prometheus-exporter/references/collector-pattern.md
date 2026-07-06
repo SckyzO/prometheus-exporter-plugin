@@ -46,11 +46,10 @@ deliberate exception to "prefer an injected value over a package var": there
 is no live binary to run in CI, and swapping the var is what makes the
 collector testable without one.
 
-**DB (future, v0.2).** Not shipped yet. The same shape applies: an
-injectable querier or client (an interface wrapping `database/sql`, or a
-concrete type swappable for a mock/`sqlmock` in tests), constructed once and
-held by the collector, never a bare global `*sql.DB` reached for directly
-from inside `Collect`.
+**Database sources are out of scope for this plugin**, not a future
+flavor — see `exporter-architecture.md`'s data-source non-goal note for the
+reasoning and the pointer to `postgres_exporter`/`mysqld_exporter`/
+`sql_exporter`.
 
 The flavor is chosen once, at the architecture step
 (`exporter-architecture.md`), and materialized by **directory selection** —

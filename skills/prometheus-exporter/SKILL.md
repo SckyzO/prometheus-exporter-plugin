@@ -10,15 +10,17 @@ reasoning behind each step lives in the reference files under
 `references/`; open the one a step points to before acting on it, rather
 than trying to hold all eleven in context at once.
 
-**Scope**: Go exporters only. The I/O flavor is `http` (default) or `cli`
-today; a database flavor and a design-led business-dashboard command are
-later additions, noted below where relevant but not part of this workflow
-yet.
+**Scope**: Go exporters only. The I/O flavor is `http` (default) or `cli` —
+the only two this plugin ships, ever; database targets are out of scope
+(see `references/exporter-architecture.md`). A design-led
+business-dashboard command is a later addition, noted below where relevant
+but not part of this workflow yet.
 
 ## When this applies
 
 - Creating a new Prometheus exporter from scratch, whatever it monitors —
-  an HTTP API, a CLI tool, a database.
+  an HTTP API or a CLI tool. (A database-only target is out of scope; see
+  `references/exporter-architecture.md`.)
 - Adding a collector (a new resource or metric) to an exporter this skill
   previously scaffolded.
 - Hardening an existing exporter's tooling, CI, or release pipeline before
@@ -31,10 +33,12 @@ yet.
 ### 0. Architecture design first (API-first)
 
 Before any code: choose the data source in order of preference — REST/API
-first, then gRPC, then a database, then CLI only as a last resort when no
-API exists — using context7 to confirm the target's actual endpoints and
-payload shapes rather than guessing. Discovery can also be grounded in a
-local API spec (OpenAPI/Swagger/`.proto`) or a docs folder/URL, in
+first, then gRPC, then CLI only as a last resort when no API exists (a
+database-only target is out of scope for this plugin — see
+`references/exporter-architecture.md`) — using context7 to confirm the
+target's actual endpoints and payload shapes rather than guessing.
+Discovery can also be grounded in a local API spec (OpenAPI/Swagger/
+`.proto`) or a docs folder/URL, in
 preference order; `/design-exporter <target>` runs this phase and writes
 an architecture brief `/new-prometheus-exporter` can consume. Decide
 single-target vs. multi-target (Prometheus's `/probe?target=` pattern, for
@@ -120,9 +124,9 @@ from, never a dependency it requires.
 
 ## Checklist
 
-- [ ] **0. Architecture** — source chosen (REST/API, gRPC, DB, or CLI as
-      last resort), single- vs. multi-target decided, collector list
-      drafted, cardinality budget set.
+- [ ] **0. Architecture** — source chosen (REST/API, gRPC, or CLI as last
+      resort; database is out of scope), single- vs. multi-target decided,
+      collector list drafted, cardinality budget set.
 - [ ] **1. Conventions** — naming/types/labels/OpenMetrics confirmed
       against `prometheus.io` via context7.
 - [ ] **2. Scaffold** — `/new-prometheus-exporter <name>` run; repository

@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   present (`./exporter-design-brief.md` or a named path), pre-filling step-0
   decisions and step-1 variables; with no brief it stays fully interactive.
 
+### Changed
+
+- Removed the planned DB I/O flavor from scope; database targets should use
+  `postgres_exporter`/`mysqld_exporter` or the config-driven `sql_exporter`.
+
 ## [0.1.1] - 2026-07-06
 
 Hardening tranche: prove the shipped-but-unexercised release artifacts in the

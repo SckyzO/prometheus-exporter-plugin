@@ -12,9 +12,9 @@ than reviewing or operating existing ones.
 ## What it gives you
 
 - **An architecture-first design phase**, run before any code is written:
-  choice of data source (REST/API, then gRPC, then a database, with a CLI
-  wrapper as the last resort), single- vs multi-target shape, collector
-  decomposition, and a cardinality budget.
+  choice of data source (REST/API, then gRPC, then a CLI wrapper as the
+  last resort — a database-only target is out of scope), single- vs
+  multi-target shape, collector decomposition, and a cardinality budget.
 - **`/new-prometheus-exporter`**: scaffolds a complete, buildable exporter
   repository with your choice of **HTTP** or **CLI** I/O flavor and your
   choice of license. It includes a working example collector with its full

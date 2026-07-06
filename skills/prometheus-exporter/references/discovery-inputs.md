@@ -127,7 +127,7 @@ present. The exact format:
 - Confidence: <high | medium | low>
 
 ## Architecture decisions
-- Data source: <REST API | gRPC | DB | CLI> — <base URL / command>
+- Data source: <REST API | gRPC | CLI> — <base URL / command>
 - I/O flavor: <http | cli>
 - Target model: <single-target | multi-target (documented follow-up)>
 - Collectors (ordered):

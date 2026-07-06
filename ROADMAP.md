@@ -33,7 +33,6 @@ it points to.
   needs-framing for exporters of internal or proprietary programs, whose docs
   context7 will not have. A **live-target probe** rung is deferred to a v0.2.x
   fast-follow.
-- A third I/O flavor: **DB**.
 - `/generate-dashboard`: a design-led command that generates a business
   Grafana dashboard, complementing the generic health dashboard shipped in
   v0.1.
@@ -44,3 +43,13 @@ it points to.
 
 - Marketplace polish.
 - A complete documentation set.
+
+## Non-goals
+
+- **Database monitoring.** This plugin does not scaffold a way to query a
+  target's database directly, now or ever. The database engine itself is
+  already well served by `postgres_exporter` / `mysqld_exporter`; arbitrary
+  SQL-to-metrics is served by the config-driven `sql_exporter` (a YAML
+  mapping from query to metric, no Go to write). This plugin exists for
+  programs that have **no existing exporter**, reached through their HTTP
+  API, gRPC, or CLI.

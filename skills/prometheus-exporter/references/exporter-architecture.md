@@ -33,15 +33,7 @@ genuinely unavailable:
    a gRPC-backed collector adapts the HTTP flavor's injectable-client shape
    (`collector-pattern.md`) using a generated stub in place of `net/http`,
    rather than picking a flavor directory that does not exist yet.
-3. **Database.** Prefer a purpose-built API or gRPC surface over querying a
-   target's database directly when one exists — a schema was rarely designed
-   as a stable public contract, and a client library changes underneath you
-   less often than a table layout does. When there genuinely is no API (an
-   internal system whose only interface *is* its database), a DB flavor is
-   legitimate. It is planned for v0.2 of this scaffold; today, adapt the CLI
-   flavor's injectable-boundary principle (a package-level `var Query`, or an
-   interface wrapping `database/sql`) by hand.
-4. **CLI (last resort).** Wrapping a command-line tool is the least
+3. **CLI (last resort).** Wrapping a command-line tool is the least
    preferred option: output formats are rarely versioned, rarely
    machine-readable by design, and change without notice between tool
    releases. It is the right call only when a target's *only* interface is a
@@ -49,6 +41,17 @@ genuinely unavailable:
    monitoring needs. This scaffold ships a `cli` flavor precisely because
    that situation is common enough to deserve first-class support, not
    because CLI wrapping is the recommended starting point.
+
+**Database targets are out of scope for this plugin — a deliberate
+non-goal, not a deferred feature.** When a target's only interface is its
+own database, reach for a purpose-built tool instead of this scaffold: the
+database engine itself is already well served by `postgres_exporter` or
+`mysqld_exporter`, and arbitrary SQL-to-metrics is served by the
+config-driven `sql_exporter` (a YAML mapping from query to metric, no Go to
+write at all). This scaffold exists for programs that have **no existing
+exporter**, reached through their own HTTP API, gRPC, or CLI — a database
+schema was rarely designed as a stable public contract, and the tools above
+already cover that ground better than a hand-rolled collector would.
 
 context7 is one of several grounding inputs, used in the ladder's
 preference order (local spec first, then docs, then context7). Whichever
@@ -108,15 +111,16 @@ shape of that dependency is what this scaffold calls a *flavor*:
 |---|---|---|
 | `http` (default) | An injectable `*Client` wrapping `net/http`, pointed at a base URL; swapped for an `httptest.Server` in tests | Shipped |
 | `cli` | A package-level `var Execute` function variable wrapping `exec.CommandContext`; reassigned to a stub in tests | Shipped |
-| `db` | An injectable querier/client wrapping a database driver; mocked via an interface or a tool like `sqlmock` | Future (v0.2) |
 
 The full mechanics of each boundary — exact types, the five-piece collector
 shape built on top of it, the test triad — are `collector-pattern.md`'s
 subject, not this one. What belongs at the architecture stage is just the
 choice itself, made once, up front: **the flavor follows from the source**
 (step 1), not the other way around. A REST/API source picks `http`; a
-CLI-only legacy source picks `cli`; a database-only source will pick `db`
-once it ships.
+CLI-only legacy source picks `cli`. A database-only source has no flavor to
+pick here at all — see the non-goal note in step 1: reach for
+`postgres_exporter`/`mysqld_exporter`/`sql_exporter` instead of this
+scaffold.
 
 Mechanically, the flavor is selected by **directory**, not by a conditional
 inside a shared file: `/new-prometheus-exporter` copies the one
@@ -205,14 +209,14 @@ exists.
 
 Before `/new-prometheus-exporter` runs, this phase should have produced:
 
-- [ ] **Data source** chosen, in preference order (REST/API, gRPC, DB, or CLI
-      as a last resort), confirmed against the target's own docs via
-      context7.
+- [ ] **Data source** chosen, in preference order (REST/API, gRPC, or CLI
+      as a last resort — a database-only target is out of scope; see step 1),
+      confirmed against the target's own docs via context7.
 - [ ] **Single- vs. multi-target** decided — and, if multi-target, an
       explicit note that it is follow-up work this scaffold does not
       automate yet.
-- [ ] **I/O flavor** chosen (`http` or `cli` today; `db` once it ships),
-      following directly from the data source.
+- [ ] **I/O flavor** chosen (`http` or `cli`), following directly from the
+      data source.
 - [ ] **Collector list**, one resource per collector, in the order
       `/add-collector` will work through them.
 - [ ] **Cardinality budget** per collector: labels, worst-case series count,
