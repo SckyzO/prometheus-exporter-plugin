@@ -19,6 +19,7 @@ single_fixture="$root/test/fixtures/dashboard/single"
 collide_fixture="$root/test/fixtures/dashboard/collide"
 collidethree_fixture="$root/test/fixtures/dashboard/collidethree"
 badname_fixture="$root/test/fixtures/dashboard/badname"
+degenerate_fixture="$root/test/fixtures/dashboard/degenerate"
 work="$root/test/_work/dashboard-backbone"
 
 die() {
@@ -167,5 +168,12 @@ rc=0
 out=$(sh "$backbone" --repo "$collidethree_fixture" --out-dir "$work" --decompose per-collector 2>&1) || rc=$?
 [ "$rc" -ne 0 ] || die "a late (2nd-vs-3rd) collector slug collision must still fail (non-zero exit), got exit 0 — seen_slugs accumulation is broken"
 printf '%s\n' "$out" | grep -qi 'collide' || die "late-collision refusal should mention the collision, got: $out"
+
+echo "== decompose: a collector whose name slugs to empty (named only 'Collector') fails loud =="
+rm -rf "$work"; mkdir -p "$work"
+rc=0
+out=$(sh "$backbone" --repo "$degenerate_fixture" --out-dir "$work" --decompose per-collector 2>&1) || rc=$?
+[ "$rc" -ne 0 ] || die "a collector that slugs to empty must fail (non-zero exit), got exit 0"
+printf '%s\n' "$out" | grep -qi 'empty slug' || die "empty-slug refusal should mention 'empty slug', got: $out"
 
 echo "$prog: PASS — parser, namespace reader, and zero-metric refusal all green"
