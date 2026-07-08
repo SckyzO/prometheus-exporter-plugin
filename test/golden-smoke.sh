@@ -897,4 +897,138 @@ EOF
   echo "confirmed: add-collector background sub-check PASSED ($flavor/$forge)"
 fi
 
+# Deterministic dashboard-backbone sub-check (generate-dashboard epic,
+# docs/plans/2026-07-07-generate-dashboard.md): the /generate-dashboard command
+# is assistant-driven (a metrics.md-anchored RED/USE dialogue, context7
+# enrichment — real judgment calls), so this does NOT simulate the command. It
+# exercises only the SCRIPTABLE floor every real run also invokes: the shared
+# backbone (skills/prometheus-exporter/scripts/generate-dashboard.sh), then
+# asserts the properties the design fixes — valid exportable JSON, the anti-lie
+# expr-subset-of-metrics.md property, and cleanliness. Runs in both --forge
+# none cells (http and cli): the forge is irrelevant to dashboards, but the two
+# flavors ship DIFFERENT default metric shapes (http: label-less items/healthy;
+# cli: example_entries + a labeled example{key}), so both exercise the backbone
+# for free (the scaffold already exists; no extra build). Guarded container-
+# first on jq exactly like the promtool step above: native -> docker -> podman
+# -> explicit SKIP, never a silent pass.
+if [ "$forge" = none ]; then
+  echo "== dashboard-backbone sub-check ($flavor/$forge): generate + validate business dashboards =="
+  dash_backbone="$root/skills/prometheus-exporter/scripts/generate-dashboard.sh"
+  [ -f "$dash_backbone" ] || die "dashboard backbone missing: $dash_backbone"
+
+  jq_cmd=""
+  if command -v jq >/dev/null 2>&1; then
+    jq_cmd="jq"
+  elif command -v docker >/dev/null 2>&1; then
+    jq_cmd="docker run --rm -i ghcr.io/jqlang/jq:1.7.1"
+  elif command -v podman >/dev/null 2>&1; then
+    jq_cmd="podman run --rm -i ghcr.io/jqlang/jq:1.7.1"
+  fi
+
+  if [ -z "$jq_cmd" ]; then
+    echo "SKIPPING dashboard-backbone sub-check ($flavor/$forge): no native jq and no docker/podman engine found — install jq or a container engine to validate generated dashboards locally"
+  else
+    # Generate into a CLEAN staging dir, never the live monitoring/grafana:
+    # that dir already holds the scaffold-shipped health-dashboard.json (v0.1),
+    # which this command never touches (design §1) — but its title field
+    # ("<name> / Exporter Health") and its own panels reference the
+    # self-instrumentation metrics, both absent from the business model.
+    # Scanning it would raise a FALSE anti-lie violation on a file this backbone
+    # never wrote. Staging first also mirrors what the real command does
+    # (mktemp, reconcile, then place), so checks 3-4 below scope to exactly what
+    # the backbone produced.
+    dash_out="$work/.dash-staging"
+    rm -rf "$dash_out"; mkdir -p "$dash_out"
+    # 1. /new ships one ExampleCollector with real business metrics documented
+    # in docs/metrics.md, so the backbone must succeed and produce an overview.
+    if ! sh "$dash_backbone" --repo "$work" --out-dir "$dash_out"; then
+      die "dashboard-backbone sub-check: generate-dashboard.sh failed on the scaffolded $flavor repo ($flavor/$forge)"
+    fi
+    [ -f "$dash_out/overview.json" ] || die "dashboard-backbone sub-check: overview.json not generated ($flavor/$forge)"
+
+    # 2. Well-formed JSON (the jq-empty gate the design mandates).
+    if ! cat "$dash_out/overview.json" | $jq_cmd empty; then
+      die "dashboard-backbone sub-check: overview.json is not valid JSON ($flavor/$forge)"
+    fi
+    echo "confirmed: overview.json is well-formed exportable JSON ($flavor/$forge)"
+
+    # 3. Anti-lie: every <namespace>_* token in every panel expr must be a
+    # documented metric, or a documented Histogram's synthesized _bucket/_sum/
+    # _count. Build the allowed set from the backbone's OWN --print-model seam,
+    # NEVER by re-parsing metrics.md here: the mechanical /add-collector
+    # sub-check earlier in this script appends ## QueueCollector/## TapeCollector
+    # to $work/docs/metrics.md AFTER ## Self-instrumentation, so any hand-rolled
+    # "stop at Self-instrumentation" re-parse would miss those sections and
+    # raise a FALSE anti-lie violation (demo_queue_*/demo_tape_* are real,
+    # documented, and the backbone does emit panels for them). --print-model
+    # applies the exact same section-tracking + Self-instrumentation exclusion
+    # the emitter used, so the allowed set stays in lockstep with what the
+    # backbone actually put in the panels — single source, no drift. Each
+    # Histogram (field 4 == Type) expands to its synthesized derived series.
+    ns=$(grep -hoE 'const[[:space:]]+namespace[[:space:]]*=[[:space:]]*"[A-Za-z_][A-Za-z0-9_]*"' "$work"/cmd/*/main.go | head -n1 | sed -E 's/.*"([A-Za-z_][A-Za-z0-9_]*)".*/\1/')
+    [ -n "$ns" ] || die "dashboard-backbone sub-check: could not read namespace ($flavor/$forge)"
+    allowed=$(sh "$dash_backbone" --repo "$work" --print-model | awk -F'\t' '
+      $1=="metric" {
+        print $3
+        if ($4 ~ /Histogram/) { print $3 "_bucket"; print $3 "_sum"; print $3 "_count" }
+      }' | sort -u)
+    # Extract tokens from panel EXPRESSIONS only (.panels[].targets[].expr), via
+    # jq — not the whole JSON text. Design §10.2 fixes the anti-lie property to
+    # "chaque panel expr ne référence que des métriques documentées", and the
+    # backbone legitimately references a self-instrumentation metric OUTSIDE any
+    # panel expr — the $job template variable's
+    # label_values(<ns>_exporter_collector_success, job) query, mirroring the
+    # health dashboard (design §6.3). That metric is (correctly) excluded from
+    # --print-model's business model, so a whole-file scan would false-positive
+    # on it; scoping to panel exprs matches the stated property exactly.
+    tokens=$(for f in "$dash_out"/*.json; do cat "$f" | $jq_cmd -r '.panels[]?.targets[]?.expr // empty'; done | grep -oE "${ns}_[A-Za-z0-9_]+" | sort -u)
+    for t in $tokens; do
+      if ! printf '%s\n' "$allowed" | grep -qxF "$t"; then
+        die "dashboard-backbone sub-check: panel expr references '$t', which is not documented in docs/metrics.md — anti-lie violation ($flavor/$forge)"
+      fi
+    done
+    echo "confirmed: every panel expr references only documented metrics ($flavor/$forge)"
+
+    # 4. Cleanliness: no source-project name / maintainer handle and no residual
+    # @@VAR@@ in any generated dashboard. The tree-wide test/_work sweep for
+    # slurm/sckyzo runs right after scaffold.sh — BEFORE this sub-check creates
+    # monitoring/grafana/*.json — so the generated JSON needs its OWN local
+    # slurm/handle sweep here (design §10.3), not only the @@VAR@@ guard. Both
+    # are match=fail; a JSON file is text, so -I only guards against a stray
+    # binary in the glob.
+    if command grep -niI -e slurm -e sckyzo "$dash_out"/*.json; then
+      die "dashboard-backbone sub-check: 'slurm' or the maintainer handle leaked into a generated dashboard ($flavor/$forge)"
+    fi
+    if command grep -nI '@@[A-Z_]*@@' "$dash_out"/*.json; then
+      die "dashboard-backbone sub-check: residual @@VAR@@ sentinel in a generated dashboard ($flavor/$forge)"
+    fi
+    echo "confirmed: generated dashboards are clean — no slurm/handle, no residual @@VAR@@ ($flavor/$forge)"
+
+    # 5. Zero-business-metric refusal: point the backbone at a doc stripped to
+    # only its ## Self-instrumentation section and confirm it exits 3 rather
+    # than emitting an empty dashboard.
+    dash_empty="$work/.dash-empty"
+    rm -rf "$dash_empty"; mkdir -p "$dash_empty/docs" "$dash_empty/cmd/demo_exporter"
+    cp "$work"/cmd/*/main.go "$dash_empty/cmd/demo_exporter/main.go"
+    # Keep ONLY the ## Self-instrumentation section — NOT "everything from it to
+    # EOF". The mechanical /add-collector sub-check above appends ##
+    # QueueCollector/## TapeCollector AFTER ## Self-instrumentation, so a
+    # sed-to-EOF slice ('/## Self-instrumentation/,$p') would drag those business
+    # collectors in; the doc would still document business metrics and the
+    # backbone would emit a dashboard (exit 0) instead of refusing (exit 3). Same
+    # append-after-Self-instrumentation gotcha the anti-lie set avoids by using
+    # --print-model. awk prints lines only while inside the Self-instrumentation
+    # section, resetting at the next ## header.
+    awk '/^## /{p=($0 ~ /Self-instrumentation/)} p' "$work/docs/metrics.md" > "$dash_empty/docs/metrics.md"
+    rc=0
+    sh "$dash_backbone" --repo "$dash_empty" --out-dir "$dash_empty/out" >/dev/null 2>&1 || rc=$?
+    [ "$rc" -eq 3 ] || die "dashboard-backbone sub-check: expected exit 3 on a self-instrumentation-only doc, got $rc ($flavor/$forge)"
+    rm -rf "$dash_empty"
+    echo "confirmed: backbone refuses a zero-business-metric repo with exit 3 ($flavor/$forge)"
+
+    rm -rf "$dash_out"
+    echo "confirmed: dashboard-backbone sub-check PASSED ($flavor/$forge)"
+  fi
+fi
+
 echo "$prog: PASS — $flavor/$forge scaffold + build + check green"
