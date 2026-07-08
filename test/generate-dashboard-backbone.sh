@@ -109,4 +109,34 @@ sh "$backbone" --repo "$single_fixture" --out-dir "$work" >/dev/null 2>&1 || rc=
 [ "$(jq '[.panels[] | select(.type=="row")] | length' "$work/overview.json")" = "1" ] || die "expected exactly 1 row for the single-collector fixture"
 if ls "$work"/.panels.* >/dev/null 2>&1; then die "a stale .panels.* temp file was left in the output dir"; fi
 
+echo "== decompose per-collector: overview + one drill-down per collector, linked by stable uid =="
+rm -rf "$work"; mkdir -p "$work"
+sh "$backbone" --repo "$http_fixture" --out-dir "$work" --decompose per-collector >/dev/null
+for f in overview example requests; do
+  [ -f "$work/$f.json" ] || die "expected $work/$f.json in per-collector mode"
+  jq empty "$work/$f.json" || die "$f.json is not valid JSON"
+done
+[ "$(jq -r '.uid' "$work/requests.json")" = "demo-requests" ] || die "drill-down uid must be demo-requests"
+# overview links to every drill-down by deterministic /d/<uid>.
+jq -e '[.links[].url] | index("/d/demo-requests")' "$work/overview.json" >/dev/null || die "overview must link to /d/demo-requests"
+jq -e '[.links[].url] | index("/d/demo-example")' "$work/overview.json" >/dev/null || die "overview must link to /d/demo-example"
+# each drill-down links back to the overview.
+jq -e '[.links[].url] | index("/d/demo-overview")' "$work/requests.json" >/dev/null || die "requests drill-down must link back to /d/demo-overview"
+# a drill-down only contains its own collector's panels.
+jq -e '[.panels[] | select(.type=="timeseries") | .title] | sort == ["demo_queue_depth","demo_request_duration_seconds","demo_requests_total"]' "$work/requests.json" >/dev/null || die "requests.json must contain exactly the RequestsCollector metrics"
+
+echo "== decompose: uids are stable across regeneration (idempotent-by-uid, design §7) =="
+# Regeneration-uid-stability is called "indispensable" by design §6.3/§7 (it is
+# the precondition for the command's diff-and-confirm regen and for drill-down
+# links surviving a re-run), so it is a PERMANENT harness assertion, not a
+# one-off manual check: generate twice into the same dir and confirm the uid
+# does not drift.
+rm -rf "$work"; mkdir -p "$work"
+sh "$backbone" --repo "$http_fixture" --out-dir "$work" --decompose per-collector >/dev/null
+uid1=$(jq -r '.uid' "$work/requests.json")
+sh "$backbone" --repo "$http_fixture" --out-dir "$work" --decompose per-collector >/dev/null
+uid2=$(jq -r '.uid' "$work/requests.json")
+[ "$uid1" = "$uid2" ] || die "drill-down uid drifted across regeneration: '$uid1' vs '$uid2' (design §7 requires idempotent-by-uid)"
+[ "$uid1" = "demo-requests" ] || die "drill-down uid must be the deterministic 'demo-requests', got '$uid1'"
+
 echo "$prog: PASS — parser, namespace reader, and zero-metric refusal all green"

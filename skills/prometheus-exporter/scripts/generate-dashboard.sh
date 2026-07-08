@@ -299,6 +299,33 @@ case "$decompose" in
     echo "$prog: generated $out_dir/overview.json"
     ;;
   per-collector)
-    die "--decompose per-collector not implemented yet (Task 3)"
+    # collector_slug — lowercase, drop a trailing "collector", underscore-join
+    # camelCase word boundaries: RequestsCollector -> requests,
+    # HttpClientRequestsCollector -> http_client_requests. Deterministic.
+    collector_slug() {
+      printf '%s\n' "$1" \
+        | sed -E 's/Collector$//' \
+        | sed -E 's/([a-z0-9])([A-Z])/\1_\2/g' \
+        | tr '[:upper:]' '[:lower:]'
+    }
+
+    collectors=$(printf '%s\n' "$model" | awk -F'\t' '$1=="metric"{print $2}' | awk '!seen[$0]++')
+
+    # Build the overview's dashboard-level links (one per drill-down) and emit
+    # each drill-down with a single back-link to the overview.
+    overview_links="[]"
+    for c in $collectors; do
+      slug=$(collector_slug "$c")
+      submodel=$(printf '%s\n' "$model" | awk -F'\t' -v c="$c" '$1=="metric" && $2==c')
+      back_link=$(run_jq -n --arg uid "$ns-overview" \
+        '[{asDropdown:false,icon:"external link",includeVars:true,keepTime:true,tags:[],targetBlank:false,title:"Overview",tooltip:"",type:"link",url:("/d/" + $uid)}]')
+      emit_dashboard "$slug" "$ns — $c" "$back_link" "$submodel"
+      overview_links=$(printf '%s\n' "$overview_links" \
+        | run_jq --arg uid "$ns-$slug" --arg title "$c" \
+            '. + [{asDropdown:false,icon:"external link",includeVars:true,keepTime:true,tags:[],targetBlank:false,title:$title,tooltip:"",type:"link",url:("/d/" + $uid)}]')
+    done
+
+    emit_dashboard overview "$ns — Business Overview" "$overview_links" "$model"
+    echo "$prog: generated $out_dir/overview.json and $(printf '%s\n' "$collectors" | wc -l | tr -d ' ') drill-down(s)"
     ;;
 esac
