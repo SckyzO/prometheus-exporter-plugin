@@ -55,4 +55,47 @@ printf '%s\n' "$out" | grep -qi 'no business metrics' \
   || die "expected a 'no business metrics' message on refusal, got:
 $out"
 
+echo "== emit: overview.json is well-formed and exportable =="
+rm -rf "$work"; mkdir -p "$work"
+sh "$backbone" --repo "$http_fixture" --out-dir "$work" >/dev/null
+overview="$work/overview.json"
+[ -f "$overview" ] || die "expected $overview to be generated"
+jq empty "$overview" || die "overview.json is not valid JSON"
+[ "$(jq -r '.uid' "$overview")" = "demo-overview" ] || die "uid must be demo-overview (namespace-slug), got $(jq -r '.uid' "$overview")"
+[ "$(jq -r '.schemaVersion' "$overview")" = "38" ] || die "schemaVersion must default to 38"
+[ "$(jq -r '.__inputs[0].name' "$overview")" = "DS_PROMETHEUS" ] || die "exportable format must declare DS_PROMETHEUS in __inputs"
+jq -e '.__elements == {} and (.__requires | length > 0)' "$overview" >/dev/null || die "exportable format must carry __elements and __requires"
+jq -e '.tags | index("generated")' "$overview" >/dev/null || die "generated dashboards must be tagged 'generated' for regen detection"
+jq -e '[.templating.list[].name] == ["datasource","job"]' "$overview" >/dev/null || die "must ship datasource + job template variables like the health dashboard"
+jq -e '.templating.list[] | select(.name=="job") | .multi == true and .includeAll == true' "$overview" >/dev/null || die "job variable must be multi-select with includeAll, like health"
+
+echo "== emit: one timeseries panel per business metric, one row per collector =="
+[ "$(jq '[.panels[] | select(.type=="timeseries")] | length' "$overview")" = "5" ] || die "expected exactly 5 timeseries panels (one per business metric)"
+[ "$(jq '[.panels[] | select(.type=="row")] | length' "$overview")" = "2" ] || die "expected exactly 2 rows (RequestsCollector, ExampleCollector)"
+
+echo "== emit: an odd-count non-last collector's trailing panel never overlaps the next row header =="
+# RequestsCollector (3 metrics, odd, listed FIRST in the fixture) leaves a
+# dangling half-row; its trailing demo_queue_depth panel must sit strictly
+# above ExampleCollector's row header (>= panel y + panel height 8), proving
+# emit_dashboard flushed the half-row. Without the flush the header lands at
+# demo_queue_depth's own y (overlap).
+qd_y=$(jq -r '.panels[] | select(.title=="demo_queue_depth") | .gridPos.y' "$overview")
+ex_row_y=$(jq -r '.panels[] | select(.type=="row" and .title=="ExampleCollector") | .gridPos.y' "$overview")
+[ "$ex_row_y" -ge "$((qd_y + 8))" ] || die "ExampleCollector row header (y=$ex_row_y) overlaps RequestsCollector's trailing demo_queue_depth panel (y=$qd_y) — half-row not flushed"
+
+echo "== emit: PromQL is type-correct, uses \$__rate_interval and by (job, instance) =="
+gauge_expr=$(jq -r '.panels[] | select(.title=="demo_items") | .targets[0].expr' "$overview")
+[ "$gauge_expr" = 'avg by (job, instance) (demo_items{job=~"$job"})' ] || die "gauge expr wrong: $gauge_expr"
+counter_expr=$(jq -r '.panels[] | select(.title=="demo_requests_total") | .targets[0].expr' "$overview")
+[ "$counter_expr" = 'sum by (job, instance) (rate(demo_requests_total{job=~"$job"}[$__rate_interval]))' ] || die "counter expr wrong: $counter_expr"
+hist_expr=$(jq -r '.panels[] | select(.title=="demo_request_duration_seconds") | .targets[0].expr' "$overview")
+[ "$hist_expr" = 'histogram_quantile(0.95, sum by (job, instance, le) (rate(demo_request_duration_seconds_bucket{job=~"$job"}[$__rate_interval])))' ] || die "histogram expr wrong: $hist_expr"
+
+echo "== emit: units inferred from name suffix =="
+[ "$(jq -r '.panels[] | select(.title=="demo_request_duration_seconds") | .fieldConfig.defaults.unit' "$overview")" = "s" ] || die "_seconds histogram must get unit 's'"
+
+echo "== emit: every panel datasource is the \${datasource} variable, never a hardcoded uid =="
+jq -e '[.panels[] | select(.type=="timeseries") | .datasource.uid] | unique == ["${datasource}"]' "$overview" >/dev/null || die "panels must reference the \${datasource} variable"
+jq -e '[.panels[] | select(.type=="timeseries") | .targets[0].datasource.uid] | unique == ["${datasource}"]' "$overview" >/dev/null || die "targets must reference the \${datasource} variable"
+
 echo "$prog: PASS — parser, namespace reader, and zero-metric refusal all green"

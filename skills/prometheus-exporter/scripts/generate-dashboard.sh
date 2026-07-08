@@ -161,7 +161,144 @@ if [ "$metric_lines" -eq 0 ]; then
   exit 3
 fi
 
-# Emission (Tasks 2-3) is wired below in later tasks; --out-dir is required for
-# it.
 [ -n "$out_dir" ] || usage
-die "dashboard emission not implemented yet (Task 2)"
+mkdir -p "$out_dir"
+
+# unit_for — infer a Grafana unit from the Prometheus name suffix (design §5.7:
+# units are absent from metrics.md, inferred from _seconds/_bytes/_ratio). An
+# empty result means "leave unit unset" (Grafana's dimensionless default).
+unit_for() {
+  case "$1" in
+    *_seconds) echo "s" ;;
+    *_bytes) echo "bytes" ;;
+    *_ratio) echo "percentunit" ;;
+    *) echo "" ;;
+  esac
+}
+
+# expr_for <name> <Type> — PromQL by metric Type (design §6.3, grounded via
+# context7). $__rate_interval windows (never a hardcoded [5m]); by (job,
+# instance) for multi-instance safety; the Histogram _bucket series is
+# synthesized from the parent (metrics.md never lists _bucket) and the le label
+# is added to the by-clause, as a classic client_golang histogram requires.
+expr_for() {
+  _name=$1; _type=$2
+  case "$_type" in
+    Counter)
+      printf 'sum by (job, instance) (rate(%s{job=~"$job"}[$__rate_interval]))' "$_name" ;;
+    Histogram)
+      printf 'histogram_quantile(0.95, sum by (job, instance, le) (rate(%s_bucket{job=~"$job"}[$__rate_interval])))' "$_name" ;;
+    *) # Gauge, Summary
+      printf 'avg by (job, instance) (%s{job=~"$job"})' "$_name" ;;
+  esac
+}
+
+# emit_panel <id> <x> <y> <w> <h> <title> <expr> <unit> — one timeseries panel
+# object, built entirely with jq --arg (no hand-rolled JSON escaping). Mirrors
+# the health dashboard's own timeseries panel (palette-classic line style,
+# table legend, multi tooltip). unit is added only when non-empty.
+emit_panel() {
+  run_jq -n \
+    --argjson id "$1" --argjson x "$2" --argjson y "$3" --argjson w "$4" --argjson h "$5" \
+    --arg title "$6" --arg expr "$7" --arg unit "$8" \
+    '{
+      datasource: {type:"prometheus", uid:"${datasource}"},
+      type:"timeseries", id:$id, title:$title,
+      gridPos:{h:$h,w:$w,x:$x,y:$y},
+      fieldConfig:{
+        defaults: (
+          {color:{mode:"palette-classic"},
+           custom:{drawStyle:"line",fillOpacity:10,lineInterpolation:"smooth",lineWidth:2,showPoints:"never",spanNulls:false,stacking:{group:"A",mode:"none"}}}
+          + (if $unit=="" then {} else {unit:$unit} end)
+        ),
+        overrides:[]
+      },
+      options:{legend:{calcs:["last","max"],displayMode:"table",placement:"bottom",showLegend:true},tooltip:{mode:"multi",sort:"desc"}},
+      targets:[{datasource:{type:"prometheus",uid:"${datasource}"},expr:$expr,legendFormat:"{{job}}/{{instance}}",refId:"A"}]
+    }'
+}
+
+# emit_dashboard <slug> <title> <links_json> <model> — assemble one exportable
+# dashboard from the model lines given on stdin-substitute (passed as $4), and
+# write <out-dir>/<slug>.json. Panels are laid out two-per-row (w=12,h=8), a
+# row header per collector, y advancing deterministically. All panel objects
+# are collected into a temp file and slurped into a JSON array so the whole
+# thing is one jq assembly at the end.
+emit_dashboard() {
+  _slug=$1; _title=$2; _links=$3; _model=$4
+  _panels_tmp="$out_dir/.panels.$_slug.json"
+  : > "$_panels_tmp"
+  _id=1; _y=0; _col=""; _slot=0
+  printf '%s\n' "$_model" | while IFS='	' read -r _tag _collector _name _type _labels; do
+    [ "$_tag" = metric ] || continue
+    if [ "$_collector" != "$_col" ]; then
+      # Flush a dangling half-row left by the previous collector: an odd panel
+      # count leaves _slot odd with _y NOT yet advanced past that trailing
+      # panel's band, so without this a NON-last odd-count collector's next
+      # row header would land at the same y as that panel (a visual overlap in
+      # Grafana). Only fires when a previous collector was seen (_col non-empty
+      # ⇒ _slot reflects real panels); the very first collector has _slot=0.
+      if [ $(( _slot % 2 )) -eq 1 ]; then _y=$((_y+8)); fi
+      # New collector: emit a full-width row header, reset the 2-column slot.
+      run_jq -n --argjson id "$_id" --arg title "$_collector" --argjson y "$_y" \
+        '{type:"row",id:$id,title:$title,collapsed:false,gridPos:{h:1,w:24,x:0,y:$y}}' >> "$_panels_tmp"
+      _id=$((_id+1)); _y=$((_y+1)); _col="$_collector"; _slot=0
+    fi
+    _x=$(( (_slot % 2) * 12 ))
+    _expr=$(expr_for "$_name" "$_type")
+    _unit=$(unit_for "$_name")
+    emit_panel "$_id" "$_x" "$_y" 12 8 "$_name" "$_expr" "$_unit" >> "$_panels_tmp"
+    _id=$((_id+1)); _slot=$((_slot+1))
+    [ $(( _slot % 2 )) -eq 0 ] && _y=$((_y+8))
+  done
+
+  panels_json=$(run_jq -s '.' < "$_panels_tmp")
+  rm -f "$_panels_tmp"
+
+  run_jq -n \
+    --argjson panels "$panels_json" \
+    --argjson links "$_links" \
+    --arg ns "$ns" --arg title "$_title" --arg uid "$ns-$_slug" \
+    --argjson schema "$schema_version" \
+    '{
+      __inputs:[{name:"DS_PROMETHEUS",label:"Prometheus",description:"",type:"datasource",pluginId:"prometheus",pluginName:"Prometheus"}],
+      __elements:{},
+      __requires:[
+        {type:"grafana",id:"grafana",name:"Grafana",version:"10.0.0"},
+        {type:"datasource",id:"prometheus",name:"Prometheus",version:"1.0.0"},
+        {type:"panel",id:"timeseries",name:"Time series",version:""},
+        {type:"panel",id:"row",name:"Row",version:""}
+      ],
+      annotations:{list:[]},
+      description:("Business metrics for " + $ns + ", generated by /generate-dashboard from docs/metrics.md. Safe to regenerate — see monitoring/README.md."),
+      editable:true,
+      graphTooltip:1,
+      links:$links,
+      panels:$panels,
+      refresh:"30s",
+      schemaVersion:$schema,
+      tags:["generated",$ns,"business"],
+      templating:{list:[
+        {current:{},hide:0,includeAll:false,label:"Data Source",multi:false,name:"datasource",options:[],query:"prometheus",refresh:1,regex:"",type:"datasource"},
+        {current:{},datasource:{type:"prometheus",uid:"${datasource}"},hide:0,includeAll:true,label:"Job",multi:true,name:"job",options:[],query:("label_values(" + $ns + "_exporter_collector_success, job)"),refresh:2,regex:"",sort:1,type:"query"}
+      ]},
+      time:{from:"now-6h",to:"now"},
+      timepicker:{},
+      timezone:"browser",
+      title:$title,
+      uid:$uid,
+      version:1
+    }' > "$out_dir/$_slug.json"
+}
+
+# Task 2 ships only the single-overview decomposition; Task 3 adds
+# per-collector. A trivial default so the golden needs no dialogue in CI.
+case "$decompose" in
+  overview)
+    emit_dashboard overview "$ns — Business Overview" '[]' "$model"
+    echo "$prog: generated $out_dir/overview.json"
+    ;;
+  per-collector)
+    die "--decompose per-collector not implemented yet (Task 3)"
+    ;;
+esac
