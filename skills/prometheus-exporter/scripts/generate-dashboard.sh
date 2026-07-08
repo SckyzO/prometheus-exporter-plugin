@@ -330,7 +330,7 @@ case "$decompose" in
       [ -n "$slug" ] || die "collector '$c' produces an empty slug (is it named only 'Collector'?) — rename it so a stable uid can be derived"
       prev=$(printf '%s\n' "$seen_slugs" | awk -F'\t' -v s="$slug" '$1==s{print $2; exit}')
       [ -z "$prev" ] || die "collectors '$prev' and '$c' both map to slug '$slug' — rename one so their drill-down dashboards and uids don't collide"
-      seen_slugs=$(printf '%s%s\t%s\n' "$seen_slugs" "$slug" "$c")
+      seen_slugs=$(printf '%s\n%s\t%s' "$seen_slugs" "$slug" "$c")
       submodel=$(printf '%s\n' "$model" | awk -F'\t' -v c="$c" '$1=="metric" && $2==c')
       back_link=$(run_jq -n --arg uid "$ns-overview" \
         '[{asDropdown:false,icon:"external link",includeVars:true,keepTime:true,tags:[],targetBlank:false,title:"Overview",tooltip:"",type:"link",url:("/d/" + $uid)}]')

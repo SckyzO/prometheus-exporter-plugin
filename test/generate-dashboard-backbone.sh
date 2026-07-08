@@ -17,6 +17,7 @@ http_fixture="$root/test/fixtures/dashboard/http"
 empty_fixture="$root/test/fixtures/dashboard/empty"
 single_fixture="$root/test/fixtures/dashboard/single"
 collide_fixture="$root/test/fixtures/dashboard/collide"
+collidethree_fixture="$root/test/fixtures/dashboard/collidethree"
 badname_fixture="$root/test/fixtures/dashboard/badname"
 work="$root/test/_work/dashboard-backbone"
 
@@ -159,5 +160,12 @@ rc=0
 out=$(sh "$backbone" --repo "$badname_fixture" --out-dir "$work" --decompose per-collector 2>&1) || rc=$?
 [ "$rc" -ne 0 ] || die "an un-sluggable collector name must fail (non-zero exit), got exit 0"
 printf '%s\n' "$out" | grep -qi 'clean identifier' || die "un-sluggable refusal should mention 'clean identifier', got: $out"
+
+echo "== decompose: a collision between the 2nd and 3rd collectors is still caught (accumulation is newline-separated) =="
+rm -rf "$work"; mkdir -p "$work"
+rc=0
+out=$(sh "$backbone" --repo "$collidethree_fixture" --out-dir "$work" --decompose per-collector 2>&1) || rc=$?
+[ "$rc" -ne 0 ] || die "a late (2nd-vs-3rd) collector slug collision must still fail (non-zero exit), got exit 0 — seen_slugs accumulation is broken"
+printf '%s\n' "$out" | grep -qi 'collide' || die "late-collision refusal should mention the collision, got: $out"
 
 echo "$prog: PASS — parser, namespace reader, and zero-metric refusal all green"
