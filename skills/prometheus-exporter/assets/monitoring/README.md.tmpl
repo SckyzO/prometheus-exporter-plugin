@@ -128,11 +128,14 @@ Both should report `SUCCESS`.
 A business-metric dashboard (what your collectors actually measure — queue
 depth, error rates, saturation, whatever your target's domain is) is
 deliberately **not** shipped here: unlike the health dashboard above, there
-is no version of it that's generic across every exporter. Build one by
-hand, or with `/generate-dashboard` (if you have the scaffolding plugin
-available) — a short design pass (audience, the RED/USE method, key
-metrics, template variables, drill-down) before generating the Grafana
-JSON, the same discipline that produced the health dashboard here.
+is no version of it that's generic across every exporter. Generate one from
+this repo's own `docs/metrics.md` with `/generate-dashboard` (if you have the
+scaffolding plugin available) — a short design pass (audience, the RED/USE
+method, key metrics, template variables, drill-down) on top of a deterministic
+backbone that emits exportable Grafana JSON, one panel per documented metric.
+The generated dashboards land here in `grafana/` next to `health-dashboard.json`
+and import the same way; every panel query references only a metric documented
+in `docs/metrics.md`.
 
 ## What's not in this folder
 
