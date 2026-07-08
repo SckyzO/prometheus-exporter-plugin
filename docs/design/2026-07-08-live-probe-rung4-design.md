@@ -122,10 +122,11 @@ floor and does nothing "clever"; interpretation is the ceiling.
   the unit-test seam, mirroring how `Execute` is overridden in slurm_exporter
   tests).
 - Behaviour: fetch (native `curl` for http) or exec (`<cmd>` for cli) under
-  the timeout → capture (stdout, plus stderr for cli) → truncate to
-  `--max-bytes` → **redact** → emit the redacted capture to stdout.
+  the timeout → capture (stdout, plus stderr for cli) → **redact** →
+  truncate to `--max-bytes` → emit the redacted capture to stdout.
 - Exit codes: `0` ok · `1` usage error · `2` probe unreachable/failed ·
-  `3` timeout. (`--print-command` always exits `0`.)
+  `3` timeout · `4` redactor (perl) unavailable. (`--print-command` always
+  exits `0`.)
 - No `jq`, no container: fetch + redact + emit only. Parsing/interpretation
   is the ceiling's job, so the backbone stays a minimal, dependency-light,
   universally-runnable filter (`curl` + POSIX text tools).
