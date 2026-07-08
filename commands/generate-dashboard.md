@@ -168,22 +168,38 @@ health dashboard.
 
 ## 6. Verify — show the real output
 
+Verify the dashboards you generated this run — `monitoring/grafana/overview.json`
+plus any per-collector `<slug>.json` you just placed — not the whole directory,
+which also holds the untouched health dashboard. First, confirm each is
+well-formed JSON:
+
 ```sh
-for f in monitoring/grafana/*.json; do echo "== $f =="; jq empty "$f" && echo "valid JSON"; done
+for f in monitoring/grafana/overview.json <any per-collector slugs you generated>; do
+  echo "== $f =="; jq empty "$f" && echo "valid JSON"
+done
 ```
 
-Show it. Then prove the anti-lie property on the generated files: every
-namespace-prefixed token in every panel `expr` is either a documented metric
-or a documented Histogram's synthesized `_bucket`/`_sum`/`_count`:
+Show it. Then prove the anti-lie property, scoped to panel **expressions** only:
+every namespace-prefixed token in every panel `expr` must be a documented metric
+(a documented Histogram `<h>`'s `<h>_bucket` counting as derived from its parent).
+Scope to `.panels[].targets[].expr` via `jq` — never the whole JSON text —
+because the `$job` template variable legitimately references the
+self-instrumentation metric via
+`label_values(<ns>_exporter_collector_success, job)` (mirroring the health
+dashboard), which is not a panel expr and not a business metric; a whole-text
+scan would wrongly flag it and the health dashboard's title:
 
 ```sh
 ns=$(grep -hoE 'const[[:space:]]+namespace[[:space:]]*=[[:space:]]*"[A-Za-z_][A-Za-z0-9_]*"' cmd/*/main.go | head -n1 | sed -E 's/.*"([A-Za-z_][A-Za-z0-9_]*)".*/\1/')
-grep -rhoE "${ns}_[A-Za-z0-9_]+" monitoring/grafana/*.json | sort -u
+for f in monitoring/grafana/overview.json <any per-collector slugs you generated>; do
+  jq -r '.panels[]?.targets[]?.expr // empty' "$f"
+done | grep -oE "${ns}_[A-Za-z0-9_]+" | sort -u
 ```
 
-Confirm every name printed is documented in `docs/metrics.md` (allowing a
-Histogram `<h>`'s `<h>_bucket`). This is the dashboard analogue of
-`make docs-check`'s PromQL bar.
+Confirm every name printed is documented in `docs/metrics.md` (a Histogram
+`<h>`'s `<h>_bucket` counting as derived from its documented parent). This is the
+dashboard analogue of `make docs-check`'s PromQL bar — and exactly the property
+the golden test asserts on this same backbone.
 
 ## 7. What's next
 
