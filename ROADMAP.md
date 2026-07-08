@@ -31,8 +31,8 @@ it points to.
   is unavailable — fronted by the `/design-exporter` command, which emits an
   architecture brief `/new-prometheus-exporter` can consume. This strengthens
   needs-framing for exporters of internal or proprietary programs, whose docs
-  context7 will not have. A **live-target probe** rung is deferred to a v0.2.x
-  fast-follow.
+  context7 will not have. A **live-target probe** rung (rung 4) ships in
+  v0.2.x — opt-in, consent-gated, with deterministic secret redaction.
 - `/generate-dashboard` *(delivered, unreleased)*: a design-led command that
   generates 1..N business Grafana dashboards from a scaffolded repo's own
   `docs/metrics.md`, on top of a deterministic, golden-tested backbone that

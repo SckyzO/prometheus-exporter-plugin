@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Live-target probe (discovery rung 4)** — `/design-exporter` can now ground
+  a design by probing a *running* instance of the target: an HTTP `GET` against
+  its description surface (`/openapi.json`, `/metrics`, …) or a CLI
+  `--help`/`--version`/sample invocation. Opt-in and consent-gated (the exact
+  command is shown and confirmed before running); every capture passes through
+  a deterministic secret-redaction backbone
+  (`skills/prometheus-exporter/scripts/probe-target.sh`, `bash`, outside
+  `assets/` so no scaffold ships it) before any of it reaches the brief. It
+  **supplements** the discovery walk — confirming and filling gaps in the
+  higher rungs, surfacing contradictions as open questions — and the default
+  walk (local spec > docs > context7 > dialogue) is unchanged when no live
+  instance is offered.
+
 ## [0.2.0] - 2026-07-08
 
 ### Added
