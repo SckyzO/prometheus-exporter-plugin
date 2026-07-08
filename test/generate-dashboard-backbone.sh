@@ -15,6 +15,7 @@ prog=$(basename "$0")
 backbone="$root/skills/prometheus-exporter/scripts/generate-dashboard.sh"
 http_fixture="$root/test/fixtures/dashboard/http"
 empty_fixture="$root/test/fixtures/dashboard/empty"
+single_fixture="$root/test/fixtures/dashboard/single"
 work="$root/test/_work/dashboard-backbone"
 
 die() {
@@ -97,5 +98,15 @@ echo "== emit: units inferred from name suffix =="
 echo "== emit: every panel datasource is the \${datasource} variable, never a hardcoded uid =="
 jq -e '[.panels[] | select(.type=="timeseries") | .datasource.uid] | unique == ["${datasource}"]' "$overview" >/dev/null || die "panels must reference the \${datasource} variable"
 jq -e '[.panels[] | select(.type=="timeseries") | .targets[0].datasource.uid] | unique == ["${datasource}"]' "$overview" >/dev/null || die "targets must reference the \${datasource} variable"
+
+echo "== emit: an odd-count last (single-metric) collector still emits, no set -e abort =="
+rm -rf "$work"; mkdir -p "$work"
+rc=0
+sh "$backbone" --repo "$single_fixture" --out-dir "$work" >/dev/null 2>&1 || rc=$?
+[ "$rc" -eq 0 ] || die "single 1-metric collector must emit (exit 0), got exit $rc — set -e abort on an odd-count last collector"
+[ -f "$work/overview.json" ] || die "single-collector overview.json was not written"
+[ "$(jq '[.panels[] | select(.type=="timeseries")] | length' "$work/overview.json")" = "1" ] || die "expected exactly 1 timeseries panel for the single-metric fixture"
+[ "$(jq '[.panels[] | select(.type=="row")] | length' "$work/overview.json")" = "1" ] || die "expected exactly 1 row for the single-collector fixture"
+if ls "$work"/.panels.* >/dev/null 2>&1; then die "a stale .panels.* temp file was left in the output dir"; fi
 
 echo "$prog: PASS — parser, namespace reader, and zero-metric refusal all green"

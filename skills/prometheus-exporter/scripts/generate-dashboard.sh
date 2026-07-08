@@ -249,7 +249,7 @@ emit_dashboard() {
     _unit=$(unit_for "$_name")
     emit_panel "$_id" "$_x" "$_y" 12 8 "$_name" "$_expr" "$_unit" >> "$_panels_tmp"
     _id=$((_id+1)); _slot=$((_slot+1))
-    [ $(( _slot % 2 )) -eq 0 ] && _y=$((_y+8))
+    if [ $(( _slot % 2 )) -eq 0 ]; then _y=$((_y+8)); fi
   done
 
   panels_json=$(run_jq -s '.' < "$_panels_tmp")
