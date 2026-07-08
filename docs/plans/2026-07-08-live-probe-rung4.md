@@ -107,7 +107,7 @@ assert_absent() {
 }
 
 # T1 — HTTP capture: bearer token + api_key redacted
-out=$(sh "$BACKBONE" --mode http --input "$FIX/http-secrets.json")
+out=$(bash "$BACKBONE" --mode http --input "$FIX/http-secrets.json")
 assert_redacted "http bearer token" "$out" "sk-live-ABCDEF1234567890"
 assert_absent   "http api_key value" "$out" "topsecretkey"
 assert_absent   "http url credentials" "$out" "svcuser:hunter2@"
@@ -118,7 +118,7 @@ else
 fi
 
 # T2 — CLI capture: password + token redacted
-out=$(sh "$BACKBONE" --mode cli --input "$FIX/cli-help.txt")
+out=$(bash "$BACKBONE" --mode cli --input "$FIX/cli-help.txt")
 assert_absent "cli --password value" "$out" "hunter2"
 assert_absent "cli --token value" "$out" "SECRETTOK99"
 if ! printf '%s' "$out" | grep -qF "--interval"; then
@@ -128,11 +128,11 @@ else
 fi
 
 # T3 — PEM private key body redacted
-out=$(sh "$BACKBONE" --mode http --input "$FIX/http-pem.txt")
+out=$(bash "$BACKBONE" --mode http --input "$FIX/http-pem.txt")
 assert_absent "pem key body" "$out" "MIIBOgIBAAJBAKj34GkxFhD90vcNLYLInFEX"
 
 # T4 — --print-command emits the exact command and does not fetch
-out=$(sh "$BACKBONE" --mode http --target http://localhost:9999 --path /metrics --print-command)
+out=$(bash "$BACKBONE" --mode http --target http://localhost:9999 --path /metrics --print-command)
 if [ "$out" = "curl -fsS --max-time 5 http://localhost:9999/metrics" ]; then
 	printf 'PASS: print-command http\n'
 else
@@ -140,7 +140,7 @@ else
 fi
 
 # T5 — unreachable target exits 2 (not a hang, not 0)
-if sh "$BACKBONE" --mode http --target http://127.0.0.1:1 --path / --timeout 2 >/dev/null 2>&1; then
+if bash "$BACKBONE" --mode http --target http://127.0.0.1:1 --path / --timeout 2 >/dev/null 2>&1; then
 	printf 'FAIL: unreachable probe exited 0\n'; fails=$((fails+1))
 else
 	rc=$?
@@ -152,7 +152,7 @@ else
 fi
 
 # T6 — usage error exits 1
-if sh "$BACKBONE" --mode bogus >/dev/null 2>&1; then
+if bash "$BACKBONE" --mode bogus >/dev/null 2>&1; then
 	printf 'FAIL: bad mode exited 0\n'; fails=$((fails+1))
 else
 	printf 'PASS: bad mode nonzero\n'
@@ -168,7 +168,7 @@ fi
 - [ ] **Step 3: Run the test to verify it fails**
 
 Run: `sh test/probe-target-backbone.sh`
-Expected: FAIL — `probe-target.sh` does not exist yet, so the first `sh "$BACKBONE" …` errors / all assertions fail.
+Expected: FAIL — `probe-target.sh` does not exist yet, so the first `bash "$BACKBONE" …` errors / all assertions fail.
 
 - [ ] **Step 4: Write the backbone**
 
