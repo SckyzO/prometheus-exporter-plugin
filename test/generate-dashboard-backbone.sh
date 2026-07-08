@@ -139,4 +139,9 @@ uid2=$(jq -r '.uid' "$work/requests.json")
 [ "$uid1" = "$uid2" ] || die "drill-down uid drifted across regeneration: '$uid1' vs '$uid2' (design §7 requires idempotent-by-uid)"
 [ "$uid1" = "demo-requests" ] || die "drill-down uid must be the deterministic 'demo-requests', got '$uid1'"
 
+echo "== usage: an invalid --decompose value is a usage error (exit 2) =="
+rc=0
+sh "$backbone" --repo "$http_fixture" --out-dir "$work" --decompose bogus >/dev/null 2>&1 || rc=$?
+[ "$rc" -eq 2 ] || die "invalid --decompose must exit 2 (usage error), got exit $rc"
+
 echo "$prog: PASS — parser, namespace reader, and zero-metric refusal all green"

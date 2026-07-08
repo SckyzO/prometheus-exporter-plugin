@@ -55,7 +55,7 @@ done
 
 [ -n "$repo" ] || usage
 [ -d "$repo" ] || die "repo not found: $repo"
-case "$decompose" in overview|per-collector) ;; *) die "--decompose must be overview or per-collector" ;; esac
+case "$decompose" in overview|per-collector) ;; *) echo "$prog: error: --decompose must be overview or per-collector" >&2; usage ;; esac
 
 # run_jq — container-first jq, native → docker → podman → exit 4. Every jq call
 # in this script is stdin/args → stdout only (no bind mounts needed): filters
