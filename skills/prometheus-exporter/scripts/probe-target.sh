@@ -96,14 +96,21 @@ fi
 
 # --- redact, then truncate --------------------------------------------------
 # Redact before truncating so a cap boundary can never split a secret in two.
+# Rule ORDER matters: the structured rules (PEM blocks, Bearer/Basic auth
+# headers, ://user:pass@ URL credentials) all run BEFORE the broad key/flag
+# rules, so a key-named field holding a PEM block, a bearer token, or a URL
+# credential is redacted whole — not stranded by the broad pair rule eating
+# its leading marker (e.g. a "tls_key": "-----BEGIN …" field, a value that is
+# itself "Bearer <tok>", or a "secret_url": "https://user:pass@…" field whose
+# userinfo the pair rule would otherwise split at a comma).
 # \x27 is a literal single quote — avoids embedding one in the bash-quoted -pe.
 redacted=$(printf '%s' "$raw" | perl -0777 -pe '
-	s/\b(Bearer|Basic)\s+[A-Za-z0-9._~+\/=-]+/$1 <redacted>/gi;
-	s/\b(api[-_]?key|token|secret|password|passwd|passphrase|access[-_]?key)("?\s*[:=]\s*"?)[^"\x27\s,}\r\n]+/$1$2<redacted>/gi;
-	s/(--(?:api[-_]?key|token|secret|password|passwd|passphrase|access[-_]?key)[= ])[^"\x27\s,}\r\n]+/$1<redacted>/gi;
-	s/(:\/\/)[^:\/@\s]+:[^@\s]+\@/$1<redacted>\@/g;
 	s/-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----/<redacted PEM private key>/gs;
 	s/-----BEGIN [A-Z ]*PRIVATE KEY-----.*\z/<redacted truncated PEM key>/gs;
+	s/\b(Bearer|Basic)\s+[A-Za-z0-9._~+\/=-]+/$1 <redacted>/gi;
+	s/(:\/\/)[^:\/@\s]+:[^@\s]+\@/$1<redacted>\@/g;
+	s/([\w.-]*(?:secret|token|password|passwd|passphrase|key)[\w.-]*)("?\s*[:=]\s*"?)[^"\x27\s,}\r\n]+/$1$2<redacted>/gi;
+	s/(--[\w-]*(?:secret|token|password|passwd|passphrase|key)[\w-]*[= ])[^"\x27\s,}\r\n]+/$1<redacted>/gi;
 ')
 
 set +o pipefail

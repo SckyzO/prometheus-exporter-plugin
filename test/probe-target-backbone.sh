@@ -44,6 +44,7 @@ fi
 out=$(bash "$BACKBONE" --mode cli --input "$FIX/cli-help.txt")
 assert_absent "cli --password value" "$out" "hunter2"
 assert_absent "cli --token value" "$out" "SECRETTOK99"
+assert_absent "cli --client-secret compound flag" "$out" "CLISECRET111"
 if ! printf '%s' "$out" | grep -qF -- "--interval"; then
 	printf 'FAIL: cli non-secret flags dropped (over-redaction)\n'; fails=$((fails+1))
 else
@@ -79,6 +80,30 @@ if bash "$BACKBONE" --mode bogus >/dev/null 2>&1; then
 	printf 'FAIL: bad mode exited 0\n'; fails=$((fails+1))
 else
 	printf 'PASS: bad mode nonzero\n'
+fi
+
+# T7 — compound / bare / camelCase secret NAMES redacted (not just the exact keyword)
+out=$(bash "$BACKBONE" --mode http --input "$FIX/http-compound-secrets.json")
+assert_absent "http client_secret"       "$out" "oauthsecret111"
+assert_absent "http secret_access_key"   "$out" "awssecret222"
+assert_absent "http bare key"            "$out" "barekey333"
+assert_absent "http private_key"         "$out" "privkey444"
+assert_absent "http authToken camelCase" "$out" "cameltoken555"
+if ! printf '%s' "$out" | grep -qF -- "/metrics"; then
+	printf 'FAIL: compound non-secret content dropped (over-redaction)\n'; fails=$((fails+1))
+else
+	printf 'PASS: compound non-secret content preserved\n'
+fi
+
+# T8 — URL creds inside a key-named field: the pair rule must not partially
+# leak the userinfo past the URL rule (URL rule runs before the pair rule).
+out=$(bash "$BACKBONE" --mode http --input "$FIX/http-url-in-secret-field.json")
+assert_redacted "url creds in secret_url field" "$out" "pa,ss"
+assert_absent   "url creds tail not stranded"   "$out" "ss@host"
+if ! printf '%s' "$out" | grep -qF -- "/health"; then
+	printf 'FAIL: url-field non-secret content dropped (over-redaction)\n'; fails=$((fails+1))
+else
+	printf 'PASS: url-field non-secret content preserved\n'
 fi
 
 if [ "$fails" -eq 0 ]; then
