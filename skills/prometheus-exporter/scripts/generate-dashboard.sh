@@ -311,11 +311,26 @@ case "$decompose" in
 
     collectors=$(printf '%s\n' "$model" | awk -F'\t' '$1=="metric"{print $2}' | awk '!seen[$0]++')
 
+    # Fail loud on any collector name the floor can't turn into a stable
+    # slug/uid, rather than silently clobbering a sibling drill-down or writing
+    # a degenerate file. Validate the whole names here, before `for` word-splits
+    # them. Only per-collector mode needs a slug — overview mode uses the name
+    # only as a row title, so this lives in this branch, not globally.
+    if printf '%s\n' "$collectors" | grep -qvE '^[A-Za-z_][A-Za-z0-9_]*$'; then
+      bad=$(printf '%s\n' "$collectors" | grep -vE '^[A-Za-z_][A-Za-z0-9_]*$' | head -n1)
+      die "collector name '$bad' is not a clean identifier (letters, digits, underscore only) — cannot derive a stable per-collector slug/uid; rename the collector or use --decompose overview"
+    fi
+
     # Build the overview's dashboard-level links (one per drill-down) and emit
     # each drill-down with a single back-link to the overview.
     overview_links="[]"
+    seen_slugs=""
     for c in $collectors; do
       slug=$(collector_slug "$c")
+      [ -n "$slug" ] || die "collector '$c' produces an empty slug (is it named only 'Collector'?) — rename it so a stable uid can be derived"
+      prev=$(printf '%s\n' "$seen_slugs" | awk -F'\t' -v s="$slug" '$1==s{print $2; exit}')
+      [ -z "$prev" ] || die "collectors '$prev' and '$c' both map to slug '$slug' — rename one so their drill-down dashboards and uids don't collide"
+      seen_slugs=$(printf '%s%s\t%s\n' "$seen_slugs" "$slug" "$c")
       submodel=$(printf '%s\n' "$model" | awk -F'\t' -v c="$c" '$1=="metric" && $2==c')
       back_link=$(run_jq -n --arg uid "$ns-overview" \
         '[{asDropdown:false,icon:"external link",includeVars:true,keepTime:true,tags:[],targetBlank:false,title:"Overview",tooltip:"",type:"link",url:("/d/" + $uid)}]')

@@ -16,6 +16,8 @@ backbone="$root/skills/prometheus-exporter/scripts/generate-dashboard.sh"
 http_fixture="$root/test/fixtures/dashboard/http"
 empty_fixture="$root/test/fixtures/dashboard/empty"
 single_fixture="$root/test/fixtures/dashboard/single"
+collide_fixture="$root/test/fixtures/dashboard/collide"
+badname_fixture="$root/test/fixtures/dashboard/badname"
 work="$root/test/_work/dashboard-backbone"
 
 die() {
@@ -143,5 +145,19 @@ echo "== usage: an invalid --decompose value is a usage error (exit 2) =="
 rc=0
 sh "$backbone" --repo "$http_fixture" --out-dir "$work" --decompose bogus >/dev/null 2>&1 || rc=$?
 [ "$rc" -eq 2 ] || die "invalid --decompose must exit 2 (usage error), got exit $rc"
+
+echo "== decompose: colliding collector slugs fail loud, never silently clobber =="
+rm -rf "$work"; mkdir -p "$work"
+rc=0
+out=$(sh "$backbone" --repo "$collide_fixture" --out-dir "$work" --decompose per-collector 2>&1) || rc=$?
+[ "$rc" -ne 0 ] || die "colliding collector slugs must fail (non-zero exit), got exit 0"
+printf '%s\n' "$out" | grep -qi 'collide' || die "collision refusal should mention the collision, got: $out"
+
+echo "== decompose: a collector name that isn't a clean identifier fails loud =="
+rm -rf "$work"; mkdir -p "$work"
+rc=0
+out=$(sh "$backbone" --repo "$badname_fixture" --out-dir "$work" --decompose per-collector 2>&1) || rc=$?
+[ "$rc" -ne 0 ] || die "an un-sluggable collector name must fail (non-zero exit), got exit 0"
+printf '%s\n' "$out" | grep -qi 'clean identifier' || die "un-sluggable refusal should mention 'clean identifier', got: $out"
 
 echo "$prog: PASS — parser, namespace reader, and zero-metric refusal all green"
