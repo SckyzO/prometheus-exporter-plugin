@@ -114,11 +114,13 @@ exact command shown. Two modes, matching the two I/O flavors:
   output for the sub-commands and fields that become collectors.
 
 Both modes go through `scripts/probe-target.sh`, which fetches or executes
-under a timeout, truncates the capture, and **redacts** common secrets (auth
-headers, `key`/`token`/`secret`/`password` pairs, URL credentials, PEM private
-keys) before emitting — the raw response never reaches the model or the brief.
+under a timeout, **redacts** common secrets (auth headers,
+`key`/`token`/`secret`/`password` pairs, URL credentials, PEM private
+keys), then truncates the capture before emitting — redaction runs
+before the size cap, so a truncation boundary can never split a secret,
+and the raw response never reaches the model or the brief.
 Interpreting the redacted capture into candidates is the model's job; the
-backbone does only fetch-truncate-redact. In a non-interactive run no consent
+backbone does only fetch-redact-truncate. In a non-interactive run no consent
 is possible, so the rung is skipped.
 
 The extraction *method* here is `[G]` (fetch-redact-interpret holds for any
