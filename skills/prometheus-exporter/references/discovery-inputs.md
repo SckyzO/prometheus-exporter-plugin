@@ -22,7 +22,7 @@ grounding confidence to the lowest:
 | 1 | Local API spec (OpenAPI/Swagger/`.proto`) | High | no spec file offered |
 | 2 | Docs folder or URL | Medium | none offered / URL unreachable |
 | 3 | context7 (target's lib) | Medium | not installed, or no library match |
-| 4 | *(deferred)* live-target probe | — | *(not shipped yet)* |
+| 4 | Live-target probe *(opt-in)* | High | no live instance offered / consent declined / non-interactive run |
 | 5 | Dialogue with the user | Low | — (always available; terminal rung) |
 
 **Degradation guarantees:**
@@ -43,12 +43,20 @@ grounding confidence to the lowest:
   the resulting confidence (high/medium/low), so whoever reviews it knows
   how much to trust each decision.
 
-Rung 4 is named in the table for one reason: to make its absence a
-decision, not an oversight. A live-target probe — hitting a running
-instance directly (`curl /openapi.json`, `/metrics`, `--help`) — is
-deferred, not shipped; rungs 1–3 already cover the core need, and probing a
-live target adds network and process-exec surface this scaffold doesn't
-take on lightly.
+Rung 4 is **opt-in**: it runs only when the user offers a running instance of
+the target and consents to it being probed. When it is not activated the walk
+is exactly `1→2→3→5` and nothing changes for anyone. Its data confidence is
+high — it is the real instance — but its position stays low because it is
+conditional on that instance existing and on explicit consent, so it
+**supplements** the walk rather than leading it: it confirms what a higher
+rung already stated and fills gaps a higher rung left silent. Where a live
+probe *contradicts* a higher rung, that discrepancy is recorded as an
+`## Open questions / assumptions` entry, never silently resolved — a running
+instance can be mis-configured or an old build, so the design phase flags the
+conflict for the user instead of picking a winner. The probe never runs
+silently: `/design-exporter` shows the exact URL or command and gets explicit
+consent first, and every capture passes through the redaction backbone
+(`scripts/probe-target.sh`) before any of it can reach the brief.
 
 ## Per-source extraction
 
@@ -91,6 +99,34 @@ fields, rather than letting it read as equally certain.
 unchanged from what step 0 has always done, now explicitly named as rung 3:
 one input among several, not the only one.
 
+### Live-target probe
+
+Opt-in, and only after the user names a running instance and consents to the
+exact command shown. Two modes, matching the two I/O flavors:
+
+- **HTTP target** — `GET` one description surface: `/openapi.json`,
+  `/swagger.json`, an existing `/metrics`, or a sample response the exporter
+  will parse. Extract candidate collectors/metrics from it exactly as the
+  OpenAPI or docs rules above would, marked in Provenance as live-probed
+  (highest fidelity: it is what the instance actually serves).
+- **CLI target** — run one discovery invocation (`<cmd> --help`,
+  `<cmd> --version`, or a named sample sub-command) and read the captured
+  output for the sub-commands and fields that become collectors.
+
+Both modes go through `scripts/probe-target.sh`, which fetches or executes
+under a timeout, **redacts** common secrets (auth headers,
+`key`/`token`/`secret`/`password` pairs, URL credentials, PEM private
+keys), then truncates the capture before emitting — redaction runs
+before the size cap, so a truncation boundary can never split a secret,
+and the raw response never reaches the model or the brief.
+Interpreting the redacted capture into candidates is the model's job; the
+backbone does only fetch-redact-truncate. In a non-interactive run no consent
+is possible, so the rung is skipped.
+
+The extraction *method* here is `[G]` (fetch-redact-interpret holds for any
+target); the instance's actual endpoints, flags, and response shapes are `[S]`
+and live only in that target's brief, never folded back into this reference.
+
 ### Dialogue
 
 Fall back to the `exporter-architecture.md` question flow: the same
@@ -122,8 +158,10 @@ present. The exact format:
 # Exporter design brief: <target>
 
 ## Provenance
-- Grounded by: <rung(s) actually used, e.g. "OpenAPI spec ./openapi.yaml">
-- Skipped: <rungs skipped and why, e.g. "context7 — no entry for <target>">
+- Grounded by: <rung(s) actually used, e.g. "OpenAPI spec ./openapi.yaml,
+  corroborated by live probe of http://localhost:9100/metrics">
+- Skipped: <rungs skipped and why, e.g. "context7 — no entry for <target>;
+  live probe — no running instance offered">
 - Confidence: <high | medium | low>
 
 ## Architecture decisions

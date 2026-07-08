@@ -43,15 +43,27 @@ the lower adds detail the higher left silent — never replaced by it:
    `resolve-library-id` against the target, then `query-docs` for its API
    surface. Treat "not installed" and "no match" as a skip, not a failure —
    never guess a nearby library's shape instead.
-4. **Dialogue** (rung 5) — if nothing above grounded the design, fall back
+4. **Live-target probe** (rung 4) — **opt-in.** Only if the user has a running
+   instance of the target and wants it used: ask for its endpoint (http) or
+   the command to run (cli), then show the *exact* command that
+   `bash "${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/scripts/probe-target.sh"
+   --mode <http|cli> --target <…> [--path <…>] --print-command` prints and get
+   explicit consent before running it. Run the same backbone without
+   `--print-command`; it fetches/executes under a timeout and redacts secrets
+   before returning. Interpret the redacted output as candidate collectors/
+   metrics, **supplementing** the higher rungs — confirming what they stated,
+   filling gaps they left, and recording any contradiction as an
+   `## Open questions / assumptions` entry rather than overriding them. Skip
+   silently in a non-interactive run (no consent possible).
+5. **Dialogue** (rung 5) — if nothing above grounded the design, fall back
    to the question flow in `exporter-architecture.md`. Always available,
    so the walk always has somewhere to land.
 
 Record, for the brief's `## Provenance` section: which rung(s) actually
-grounded the design, and — for every rung skipped, including the
-live-target-probe rung the ladder documents as a deferred capability this
-plugin doesn't ship yet — a one-line reason why, not just that it was
-skipped.
+grounded the design — including whether the live-target probe (rung 4) was run
+and what it confirmed or added — and, for every rung skipped, a one-line reason
+why (rung 4's is usually "no running instance offered" or "consent declined"),
+not just that it was skipped.
 
 ## 3. Confirm the six architecture decisions with the user
 

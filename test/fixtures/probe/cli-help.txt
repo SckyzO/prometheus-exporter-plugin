@@ -1,0 +1,7 @@
+demo-tool 2.3.1
+Usage: demo-tool [options]
+  --listen ADDR        address to bind
+  --password=hunter2   backend password (example)
+  --token SECRETTOK99  API token
+  --client-secret CLISECRET111  oauth client secret
+  --interval SECONDS   scrape interval
