@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`/generate-dashboard [name]`** — generates 1..N business Grafana dashboards
+  for an already-scaffolded exporter from its own `docs/metrics.md`, via a
+  RED/USE design dialogue on top of a deterministic backbone
+  (`skills/prometheus-exporter/scripts/generate-dashboard.sh`, `bash`+`jq`,
+  container-first). Emits **exportable** JSON (`__inputs`/`__requires`,
+  `${DS_PROMETHEUS}` datasource, deterministic `<namespace>-<slug>` uids), one
+  panel per documented metric, PromQL chosen by `Type` (`rate()`/`$__rate_interval`
+  on counters, `histogram_quantile()` with a synthesized `_bucket` on
+  histograms, `avg by (job, instance)` on gauges). Every panel `expr` references
+  only a metric present in `docs/metrics.md`; the same backbone is invoked by
+  the golden test, and `context7`/`dataviz` enrich the result when present but
+  are never required. Complements — never modifies — the health dashboard.
 - **`/design-exporter <target>`** — runs the step-0 architecture-design phase
   with broadened discovery (a preference-ordered ladder: local API spec >
   docs folder/URL > context7 > dialogue, with graceful degradation) and writes

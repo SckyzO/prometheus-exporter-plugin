@@ -33,9 +33,13 @@ it points to.
   needs-framing for exporters of internal or proprietary programs, whose docs
   context7 will not have. A **live-target probe** rung is deferred to a v0.2.x
   fast-follow.
-- `/generate-dashboard`: a design-led command that generates a business
-  Grafana dashboard, complementing the generic health dashboard shipped in
-  v0.1.
+- `/generate-dashboard` *(delivered, unreleased)*: a design-led command that
+  generates 1..N business Grafana dashboards from a scaffolded repo's own
+  `docs/metrics.md`, on top of a deterministic, golden-tested backbone that
+  emits exportable Grafana JSON (one panel per documented metric, type-correct
+  PromQL, deterministic `<namespace>-<slug>` uids). Complements the generic
+  health dashboard shipped in v0.1; never modifies it. `context7` and the
+  `dataviz` skill enrich it when present, never required.
 - **Background-refresh collector variant** *(delivered, unreleased)*:
   `/add-collector --variant background` scaffolds a collector that refreshes
   its cache on a fixed interval in a background goroutine instead of on the

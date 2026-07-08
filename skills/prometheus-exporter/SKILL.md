@@ -13,8 +13,8 @@ than trying to hold all eleven in context at once.
 **Scope**: Go exporters only. The I/O flavor is `http` (default) or `cli` —
 the only two this plugin ships, ever; database targets are out of scope
 (see `references/exporter-architecture.md`). A design-led
-business-dashboard command is a later addition, noted below where relevant
-but not part of this workflow yet.
+business-dashboard command (`/generate-dashboard`) complements this workflow
+at step 5, noted below where relevant.
 
 ## When this applies
 
@@ -108,9 +108,9 @@ local-capable releases (SemVer tags, a CHANGELOG, an SBOM, cosign signing),
 with the GitHub Actions layer as an explicit opt-out rather than a
 requirement. Confirm the generated `CONTRIBUTING.md`'s Definition of Done
 is actually met. Ship `monitoring/` with Prometheus health alerts,
-recording rules, and a health Grafana dashboard — a business dashboard via
-a future `/generate-dashboard` command is a later addition, not part of
-this workflow.
+recording rules, and a health Grafana dashboard; generate business
+dashboards from `docs/metrics.md` with `/generate-dashboard` once your
+collectors are in place.
 
 → `references/cicd-and-release.md`, `references/packaging-and-ops.md`,
 `references/dashboards-and-alerts.md`, `references/security-and-hardening.md`
