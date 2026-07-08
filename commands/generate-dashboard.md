@@ -11,7 +11,11 @@ JSON files under `monitoring/grafana/` and appends to `monitoring/README.md`;
 it edits no code and re-scaffolds nothing. Run it only when the user explicitly
 invokes this command, and walk every step below in order.
 
-Optional dashboard name from the command argument: $ARGUMENTS
+Optional dashboard name from the command argument: $ARGUMENTS — if given, it
+becomes the **title** of the overview dashboard (step 3). Its deterministic slug
+and uid are left unchanged, so drill-down links and regeneration-by-uid still
+work. If empty, the overview keeps its default `<namespace> — Business Overview`
+title.
 
 ## 0. Confirm this is a scaffolded exporter, and detect its I/O flavor
 
@@ -128,6 +132,11 @@ files in `$staging` (never the live directory) with the Grafana version known:
   staged JSON (pick a stat/gauge/bar-gauge where it reads better than a
   timeseries, set thresholds, add a per-label breakdown the user asked for).
 - **`dataviz`** — if the skill is present, use it to polish layout and color.
+- **Name** — if the user supplied a name via `$ARGUMENTS`, set the staged
+  overview dashboard's `.title` to it (edit the staged JSON in `$staging`). Leave
+  its `uid` and filename/slug at their deterministic defaults — this renames only
+  the display title, never the identity the drill-down links and regeneration
+  rely on.
 - Never add a metric absent from `docs/metrics.md`. The ceiling only reshapes
   what the floor already grounded.
 
