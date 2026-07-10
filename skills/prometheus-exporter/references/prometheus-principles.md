@@ -81,6 +81,20 @@ as an explicit warning rather than silently skipped — which is itself a
 second, independent reason (beyond the Prometheus convention) to never
 compute one.
 
+### Deliberate exception: `probe_success` / `probe_duration_seconds`
+
+Multi-target scaffolds (`--target-model multi`, `internal/probe/probe.go`)
+emit these two gauges **without** the `namespace_subsystem_name` prefix this
+document otherwise requires. This is intentional, not an oversight: every
+multi-target exporter in the ecosystem (Blackbox, SNMP) emits `probe_success`
+and `probe_duration_seconds` exactly like this — no application prefix — and
+every multi-target dashboard/alert in the wild queries those exact bare
+names ([Prometheus's own multi-target exporter guide](https://prometheus.io/docs/guides/multi-target-exporter/)
+shows the same convention). Matching the ecosystem here outweighs this
+scaffold's own namespace-prefix convention, for these two metrics only —
+nothing else either model emits gets this exception, and it is called out
+again at its declaration site in `internal/probe/probe.go` itself.
+
 ## Types
 
 **Counter**: monotonically increasing, resets to zero only on process

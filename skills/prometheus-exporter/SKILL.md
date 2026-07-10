@@ -42,9 +42,9 @@ Discovery can also be grounded in a local API spec (OpenAPI/Swagger/
 preference order; `/design-exporter <target>` runs this phase and writes
 an architecture brief `/new-prometheus-exporter` can consume. Decide
 single-target vs. multi-target (Prometheus's `/probe?target=` pattern, for
-an exporter that polls many remote instances at once); only single-target
-is implemented today, so a multi-target design becomes documented
-follow-up work, not something the scaffold produces. Decompose the target
+an exporter that polls many remote instances at once); multi-target is now
+scaffolded, opt-in, via `--target-model multi` (http flavor only — there is
+no cli multi-target). Decompose the target
 into one collector per resource, and set a cardinality budget — which
 labels, how many series, what flags will cap them — before writing a line
 of code. For any collector whose backend is slow or expensive enough that a

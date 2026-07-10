@@ -37,12 +37,16 @@ on their behalf):
 - **Data source and I/O flavor.** Preference order is REST/gRPC-style API >
   database > CLI (last resort — justify it if chosen, e.g. no API exists).
   This maps directly to `--flavor http` (the default) or `--flavor cli`.
-- **Single-target vs. multi-target.** Note the current limitation plainly:
-  this scaffolder only implements the single-target model (the exporter runs
-  next to the one thing it monitors). If the design calls for multi-target
-  (Prometheus's `/probe?target=` pattern, for an exporter that polls many
-  remote instances), scaffold single-target now and treat multi-target as
-  documented follow-up work, not something this command produces.
+- **Single-target vs. multi-target.** Maps to `--target-model single`
+  (default) or `--target-model multi`. Multi-target (Prometheus's
+  `/probe?target=` pattern, for an exporter that polls many remote instances
+  on demand) **requires `--flavor http`** — there is no cli multi-target, and
+  the scaffolder rejects that pairing outright. If the design calls for
+  multi-target with a CLI-flavored source, stop and flag the conflict to the
+  user rather than silently falling back to single-target: either the flavor
+  or the target model has to change. `/add-collector` against a multi-target
+  scaffold is a documented follow-up (it refuses cleanly and points at the
+  manual procedure), not something either command automates yet.
 - **The collector list** — which resources/metrics this exporter will track,
   even if only the first one is built today. Later collectors are added one
   at a time with `/add-collector`.
@@ -55,9 +59,10 @@ architecture reference instead of guessing. Once they're decided, continue.
 
 ## 1. Collect the template variables
 
-The scaffolder needs a value for every variable below, plus two directory/
-layer selections (`--flavor`, `--forge`) that are **not** template variables
-— they choose which files get copied, not text substituted into them.
+The scaffolder needs a value for every variable below, plus three directory/
+layer selections (`--flavor`, `--forge`, `--target-model`) that are **not**
+template variables — they choose which files get copied, not text
+substituted into them.
 
 If a brief was consumed in step 0, `DATA_SOURCE`, `DATA_SOURCE_PATH`,
 `NAMESPACE`, and `DEFAULT_PORT` arrive pre-filled from its `## Scaffold
@@ -104,6 +109,13 @@ Derive or ask for each:
   at all.
 - **`--flavor`** (`http` or `cli`, not a `--var`) — carried over directly
   from the step 0 decision; don't ask again.
+- **`--target-model`** (`single` or `multi`, not a `--var`) — carried over
+  directly from the step 0 decision; default `single` when step 0 didn't
+  specify one. `multi` requires `--flavor http`: reject the combination
+  `--target-model multi` + `--flavor cli` yourself with a clear message
+  before running anything, rather than passing it through to `scaffold.sh`
+  (which also rejects it, but don't rely on that alone — fail fast here,
+  same posture as step 2's name validation).
 
 ## 1b. Offer a license
 
@@ -161,6 +173,7 @@ Then run:
   --dst <target-dir> \
   --flavor <http|cli> \
   --forge <github|none> \
+  --target-model <single|multi> \
   --var EXPORTER_NAME=<EXPORTER_NAME> \
   --var NAMESPACE=<NAMESPACE> \
   --var MODULE_PATH=<MODULE_PATH> \
@@ -217,3 +230,10 @@ Point the user to:
   and health Grafana dashboard.
 - **`docs/release-process.md`** — how to cut a first real release with
   GoReleaser once there's something worth releasing.
+
+If this exporter was scaffolded with `--target-model multi`, note that
+`/add-collector` will refuse cleanly against it — it only knows how to insert
+a `register(...)` call into the single-target registry. Adding a collector to
+a multi-target exporter today means adding one factory line by hand at
+`// @@PROBE_FACTORIES@@` in `cmd/*/main.go`; this is documented follow-up
+work for `/add-collector` itself, not a bug.

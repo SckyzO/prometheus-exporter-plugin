@@ -99,6 +99,39 @@ Tagged releases publish signed, checksummed binaries with a CycloneDX SBOM attac
 | `/healthz` | Liveness probe — returns `200 OK` as long as the HTTP server is up, independently of whether `@@DATA_SOURCE@@` itself is reachable |
 | `/` | Landing page with a link to `/metrics` |
 
+Multi-target builds (`--target-model multi`, http flavor only) also expose:
+
+| Endpoint | Description |
+|---|---|
+| `/probe?target=<url>` | Probes one target on demand: a fresh registry and collector set scoped to `target`, plus `probe_success`/`probe_duration_seconds` — see [docs/configuration.md](docs/configuration.md) and [SECURITY.md](SECURITY.md) (SSRF posture) |
+
+```bash
+curl 'http://localhost:@@DEFAULT_PORT@@/probe?target=http://target-a:9100'
+```
+
+Point Prometheus at `/probe` with `metrics_path` and the standard
+[multi-target relabeling](https://prometheus.io/docs/guides/multi-target-exporter/):
+the static targets in `scrape_configs` are the hosts to *probe*, not this
+exporter itself — relabeling turns each one into `instance` while
+`__address__` is rewritten to this exporter's own address.
+
+```yaml
+scrape_configs:
+  - job_name: '@@EXPORTER_NAME@@-probe'
+    metrics_path: /probe
+    static_configs:
+      - targets:
+          - http://target-a:@@DEFAULT_PORT@@   # hosts this exporter should probe
+          - http://target-b:@@DEFAULT_PORT@@
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: exporter-host:@@DEFAULT_PORT@@   # this exporter's own address
+```
+
 ## Configuration & development
 
 | Topic | Where |

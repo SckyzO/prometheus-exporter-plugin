@@ -43,6 +43,38 @@ Only the latest release receives security fixes.
   `govulncheck` run on every pull request, and Dependabot-managed dependency updates across
   Go modules, GitHub Actions, and container base images.
 
+## Multi-target `/probe` (if applicable)
+
+Multi-target builds (`--target-model multi`) also expose a
+`/probe?target=…` endpoint (see [docs/configuration.md](docs/configuration.md))
+that makes this exporter issue outbound HTTP/HTTPS requests to whatever
+`target=` a caller supplies. That is an SSRF primitive by construction — the
+same shape as the Blackbox, SNMP, and IPMI exporters — and the same
+considerations apply here:
+
+- **Default = allow-any.** With `--probe.target-allowlist` unset (the
+  default), `/probe` accepts any `target` that clears the always-on
+  `http`/`https` floor (`file://`, `gopher://`, and scheme-less targets are
+  rejected `400` regardless of the allowlist). This mirrors the ecosystem
+  default and is what lets `/probe` work out of the box with Prometheus
+  service discovery — a static allowlist fights dynamic SD, which is exactly
+  why the ecosystem defaults to allow-any rather than the other way round.
+- **Harden with `--probe.target-allowlist <host>` (repeatable).** When set,
+  a target's host must match an entry or the probe returns `403`. Matching is
+  **exact-string, case- and trailing-dot-sensitive** against `target=`'s
+  parsed host (or `host:port`) — an entry `node1` will **not** match `NODE1`
+  or `node1.`; list every allowed host exactly as it appears in your
+  `target=` values.
+- **Startup warning.** With no allowlist configured, the exporter logs one
+  visible, non-fatal warning at startup: anyone who can reach this exporter
+  can make it issue requests to arbitrary HTTP/HTTPS hosts. It never refuses
+  to start over this — same posture as the exposed-and-unauthenticated
+  warning above.
+- **Isolate the exporter's network regardless of the allowlist.** As with any
+  allow-any-by-default prober, the real hardening boundary is network
+  placement — run `/probe` somewhere that cannot reach anything you don't
+  want probed, the same posture recommended for the Blackbox/SNMP exporters.
+
 Released binaries and images are signed. Binaries carry a CycloneDX software bill of materials;
 container images get their own CycloneDX SBOM via `make sbom-image`, plus a supplementary SPDX
 attestation embedded in the image manifest — see

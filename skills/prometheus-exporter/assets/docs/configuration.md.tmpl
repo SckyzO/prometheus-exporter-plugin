@@ -39,6 +39,7 @@ Prometheus itself uses.
 | `--log.format` | Log format: `json`, `text` | `text` |
 | `--web.disable-exporter-metrics` | Exclude Go runtime and process metrics from `/metrics` | `false` |
 | `--[no-]collector.<name>` | Enable or disable a collector (kingpin boolean flag) | see below |
+| `--probe.target-allowlist` | *(multi-target builds only, `--target-model multi`)* Restrict `/probe` to these target hosts (repeatable; host or host:port, exact match) | (empty = allow-any) |
 
 Individual collectors may also expose their own flags. The bundled `example` collector does:
 
@@ -81,6 +82,38 @@ Use `--[no-]collector.<name>` (kingpin boolean syntax) to enable or disable a co
   --log.level=debug \
   --log.format=json
 ```
+
+### The `/probe?target=` endpoint (multi-target builds only)
+
+Multi-target builds (scaffolded with `--target-model multi`, http flavor
+only) also expose `/probe?target=<url>`: Prometheus's own
+[multi-target exporter pattern](https://prometheus.io/docs/guides/multi-target-exporter/) —
+each request builds a fresh registry and collector set scoped to `target`,
+instead of the fixed, process-lifetime registry `/metrics` reports on. A
+single-target build (`--target-model single`, the default) has no `/probe`
+endpoint at all; everything below only applies once `--target-model multi`
+was chosen at scaffold time.
+
+```bash
+curl 'http://localhost:@@DEFAULT_PORT@@/probe?target=http://some-host:9100'
+```
+
+- **Always-on floor:** `target` must parse as an `http`/`https` URL — a
+  missing scheme, `file://`, or any other scheme gets a `400`, regardless of
+  the allowlist below.
+- **`--probe.target-allowlist`** (repeatable, empty by default): when set, a
+  target's host must match one of these entries exactly (case- and
+  trailing-dot-sensitive; matches the parsed host or `host:port` verbatim —
+  `node1` will not match `NODE1` or `node1.`) or the probe returns `403`.
+  Empty (the default) accepts any target that clears the floor above.
+- **`X-Prometheus-Scrape-Timeout-Seconds`**: Prometheus sends this header on
+  every scrape; the handler uses `min(header, --collector.example.timeout)`
+  as the request's own timeout, so a probe never outruns Prometheus's
+  deadline or the operator's configured ceiling.
+- **SSRF posture**: `/probe` making this exporter fetch an operator-supplied
+  URL is a deliberate, ecosystem-standard trade-off (Blackbox/SNMP/IPMI all
+  work this way) — see [SECURITY.md](../SECURITY.md) before exposing this
+  endpoint beyond a trusted network.
 
 ---
 
