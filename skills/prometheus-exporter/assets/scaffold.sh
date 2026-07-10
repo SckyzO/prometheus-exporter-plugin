@@ -293,13 +293,32 @@ fi
 # `go mod tidy` immediately demotes it back to indirect on a single-target
 # tree, since nothing there imports it directly), a real regression against
 # this plan's own single-target-tree-is-unchanged constraint. Anchored on the
-# module path only (no version pin), so a future client_golang version bump
-# in go.mod.tmpl can't silently break this insertion point.
+# module path only (no version pin) for BOTH the client_golang insertion
+# point and the client_model line being deleted — the version spliced into
+# the direct block is READ OFF that deleted indirect line at scaffold time,
+# never hardcoded here, so a future Dependabot bump of client_model's version
+# in go.mod.tmpl can't silently desync the inserted line from the deleted
+# one. (A prior version of this block hardcoded the version on both sides:
+# a go.mod.tmpl bump would then leave the version-pinned delete regex no
+# longer matching the now-bumped indirect line — so it survived — while the
+# insert still fired with the stale hardcoded version, landing client_model
+# TWICE with two conflicting versions and breaking `go build`/`go mod tidy`
+# for multi-target scaffolds only.)
 if [ "$target_model" = multi ] && [ -f "$dst/go.mod.tmpl" ]; then
+  # [[:blank:]]* here, not a literal tab: unlike the sed addresses below (GNU
+  # sed treats \t as tab, verified empirically), GNU grep's default (non -P)
+  # mode does NOT expand \t to a tab in the pattern, so a \t-anchored grep
+  # silently matches nothing here — caught empirically while implementing
+  # this fix. Mirrors this same script's own marker-matching grep further
+  # down ("^[[:blank:]]*// $marker[[:blank:]]*\$").
+  clientmodelline=$(grep '^[[:blank:]]*github\.com/prometheus/client_model[[:blank:]]' "$dst/go.mod.tmpl" | head -n 1)
+  [ -n "$clientmodelline" ] || die "go.mod.tmpl has no github.com/prometheus/client_model require line to reclassify for --target-model multi"
+  clientmodelversion=$(printf '%s\n' "$clientmodelline" | awk '{print $2}')
+  [ -n "$clientmodelversion" ] || die "could not read a version out of go.mod.tmpl's client_model line: $clientmodelline"
   clientmodelfrag=$(mktemp)
-  printf '\tgithub.com/prometheus/client_model v0.6.2\n' > "$clientmodelfrag"
+  printf '\tgithub.com/prometheus/client_model %s\n' "$clientmodelversion" > "$clientmodelfrag"
   sed \
-    -e '/^\tgithub\.com\/prometheus\/client_model v0\.6\.2 \/\/ indirect$/d' \
+    -e '/^\tgithub\.com\/prometheus\/client_model[[:blank:]]/d' \
     -e "\\|^\\tgithub\\.com/prometheus/client_golang[[:blank:]]|r $clientmodelfrag" \
     "$dst/go.mod.tmpl" > "$dst/go.mod.tmpl.scaffoldtmp"
   mv "$dst/go.mod.tmpl.scaffoldtmp" "$dst/go.mod.tmpl"
