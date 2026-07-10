@@ -17,14 +17,17 @@
 #     spell out the literal reference-project name it's checking for,
 #     tripping the very gate it runs (the same self-reference problem
 #     test/golden-smoke.sh's own detector already needed an exemption for).
-#   - scaffold-unit-tests: the two fast, Go-free, network-free unit suites
-#     for scaffold.sh itself.
-#   - golden-smoke: the full {http,cli} x {none,github} matrix - scaffolds
-#     a real exporter 4 ways and runs each through make build/check,
-#     promtool, a guarded docker build, and the docs-check lie-injection
-#     round-trip. Gated behind scaffold-unit-tests: no reason to burn
-#     several minutes of Docker builds on 4 full scaffolds if scaffold.sh
-#     itself is already known broken by its own cheap unit tests.
+#   - scaffold-unit-tests: the fast, Go-free, network-free unit suites for
+#     scaffold.sh itself, including its --target-model single|multi axis
+#     (test/scaffold_multitarget_test.sh).
+#   - golden-smoke: the full {http,cli} x {none,github} matrix, plus a 5th
+#     http-multi cell (--target-model multi) - scaffolds a real exporter and
+#     runs each through make build/check, promtool, a guarded docker build,
+#     the docs-check lie-injection round-trip, and (http-multi only) a live
+#     /probe request against the running binary. Gated behind
+#     scaffold-unit-tests: no reason to burn several minutes of Docker builds
+#     on 5 full scaffolds if scaffold.sh itself is already known broken by
+#     its own cheap unit tests.
 #
 # Every job needs nothing beyond what ubuntu-latest ships out of the box
 # (git, make, docker, jq) plus, for claude-plugin-validate, a
@@ -104,6 +107,7 @@ jobs:
         run: |
           sh test/scaffold_test.sh
           sh test/scaffold_edge_test.sh
+          sh test/scaffold_multitarget_test.sh
 
   probe-backbone-test:
     runs-on: ubuntu-latest
@@ -121,5 +125,5 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
-      - name: golden smoke matrix (--all) - scaffold x4, build, check, promtool, docker
+      - name: golden smoke matrix (--all) - scaffold x4 + http-multi, build, check, promtool, docker
         run: sh test/golden-smoke.sh --all

@@ -2,9 +2,10 @@
 # scaffold.sh — dependency-free @@VAR@@ templating engine.
 #
 # Materializes a template tree (as used under skills/prometheus-exporter/assets/)
-# into a target directory: selects one code/<flavor>/ subtree, optionally drops
-# the GitHub-only layer, substitutes every @@KEY@@ sentinel in file contents and
-# path components, strips the .tmpl suffix, and places the chosen LICENSE.
+# into a target directory: selects one code/<flavor>/ subtree, selects one
+# mains/<target-model>/ entry point, optionally drops the GitHub-only layer,
+# substitutes every @@KEY@@ sentinel in file contents and path components,
+# strips the .tmpl suffix, and places the chosen LICENSE.
 #
 # POSIX sh + sed + grep, plus the common core Unix utilities cp, mv, rm,
 # rmdir, mkdir, find, tr, wc, basename, and mktemp. All ship on any Unix-like
@@ -17,7 +18,13 @@
 # Usage:
 #   scaffold.sh --src <assets-dir> --dst <target-dir> \
 #               --flavor <http|cli> --forge <github|none> \
+#               [--target-model <single|multi>] \
 #               [--force] [--var KEY=VALUE ...]
+#
+# --target-model defaults to "single" (today's runtime, unchanged). "multi"
+# requires --flavor http (there is no cli multi-target) and ships a
+# /probe?target=… handler (internal/probe/) instead of a fixed-target
+# collector registry — see mains/single/ and mains/multi/.
 #
 # Behavior:
 #   - Copies --src to --dst, then strips the copy's own scaffold.sh (plugin
@@ -39,19 +46,25 @@
 #     always-shipped repo-relative path and is untouched by --forge.
 #   - Substitutes every @@KEY@@ (content and path components) for each --var.
 #   - Strips the .tmpl suffix from file names.
-#   - Fills main.go's // @@CLIENT_INIT@@ and // @@COLLECTOR_REGISTRY@@
-#     markers from the selected flavor's internal/collector/wiring/
-#     {client_init.frag,registry.frag}, if it shipped any, then removes that
+#   - Selects mains/<target-model>/main.go.tmpl as the one cmd/<name>/main.go,
+#     then removes the whole mains/ staging tree; drops internal/probe/ for
+#     --target-model single (it is multi-only).
+#   - Fills main.go's structural markers — // @@CLIENT_INIT@@ and
+#     // @@COLLECTOR_REGISTRY@@ (single-target), // @@PROBE_FACTORIES@@
+#     (multi-target) — from the selected flavor's internal/collector/wiring/
+#     {client_init.frag,registry.frag,probe_factory.frag}, whichever the
+#     chosen main model actually carries a marker for, then removes that
 #     staging directory. The marker comments themselves survive the fill
 #     (sed inserts after them, never replacing them) so /add-collector can
 #     reuse the same markers later to insert more collectors.
 #   - Places the licenses/LICENSE-<license, lowercased>.txt as LICENSE, then
 #     discards the unused alternatives.
-#   - Fails loudly (exit 3) if any @@...@@ sentinel survives, EXCEPT the two
+#   - Fails loudly (exit 3) if any @@...@@ sentinel survives, EXCEPT the
 #     named structural markers in main.go (@@CLIENT_INIT@@,
-#     @@COLLECTOR_REGISTRY@@) — those are not --var data placeholders, and
-#     the wiring-marker fill above deliberately preserves them, so their
-#     survival to this point is expected, not a forgotten substitution.
+#     @@COLLECTOR_REGISTRY@@, @@PROBE_FACTORIES@@) — those are not --var data
+#     placeholders, and the wiring-marker fill above deliberately preserves
+#     them, so their survival to this point is expected, not a forgotten
+#     substitution.
 #   - Refuses a non-empty --dst unless --force.
 set -eu
 
@@ -59,7 +72,7 @@ prog=$(basename "$0")
 
 usage() {
   cat <<EOF >&2
-Usage: $prog --src <assets-dir> --dst <target-dir> --flavor <http|cli> --forge <github|none> [--force] [--var KEY=VALUE ...]
+Usage: $prog --src <assets-dir> --dst <target-dir> --flavor <http|cli> --forge <github|none> [--target-model <single|multi>] [--force] [--var KEY=VALUE ...]
 EOF
 }
 
@@ -72,6 +85,7 @@ src=""
 dst=""
 flavor=""
 forge=""
+target_model="single"
 force=no
 license_choice=""
 
@@ -111,6 +125,11 @@ while [ $# -gt 0 ]; do
     --forge)
       [ $# -ge 2 ] || die "--forge requires a value"
       forge=$2
+      shift 2
+      ;;
+    --target-model)
+      [ $# -ge 2 ] || die "--target-model requires a value"
+      target_model=$2
       shift 2
       ;;
     --force)
@@ -163,6 +182,14 @@ case "$forge" in
   github|none) ;;
   *) die "invalid --forge '$forge', expected 'github' or 'none'" ;;
 esac
+
+case "$target_model" in
+  single|multi) ;;
+  *) die "invalid --target-model '$target_model'; must be single or multi" ;;
+esac
+if [ "$target_model" = multi ] && [ "$flavor" != http ]; then
+  die "--target-model multi requires --flavor http (no cli multi-target)"
+fi
 
 # Reject any --flavor that is not a single path component. Below, $flavor is
 # spliced verbatim into real filesystem paths against both $src and $dst
@@ -232,6 +259,52 @@ if [ -d "$dst/code/$flavor" ]; then
   done
 fi
 rm -rf "$dst/code"
+
+# Main entry-point model selection (single|multi), mirroring flavor selection
+# above: place the chosen main.go into the one cmd/<name>/ dir (which already
+# ships security.go), then drop the whole mains/ staging tree.
+if [ -d "$dst/mains" ]; then
+  [ -f "$dst/mains/$target_model/main.go.tmpl" ] || die "no main.go template for --target-model '$target_model'"
+  cmddir=""
+  for d in "$dst"/cmd/*/; do
+    [ -d "$d" ] || continue
+    [ -z "$cmddir" ] || die "expected exactly one cmd/*/ dir, found more than one"
+    cmddir=$d
+  done
+  [ -n "$cmddir" ] || die "no cmd/*/ directory to place the selected main.go into"
+  mv "$dst/mains/$target_model/main.go.tmpl" "${cmddir}main.go.tmpl"
+fi
+rm -rf "$dst/mains"
+
+# internal/probe/ is multi-only: a single-target scaffold never ships it.
+if [ "$target_model" != multi ]; then
+  rm -rf "$dst/internal/probe"
+fi
+
+# client_model is a direct dependency ONLY for a multi-target scaffold:
+# internal/probe imports "github.com/prometheus/client_model/go" directly,
+# but nothing under a single-target tree does (client_golang itself needs it
+# only transitively). go.mod.tmpl therefore ships client_model in the
+# INDIRECT require() block unconditionally, and this reclassifies it to the
+# direct block here, at scaffold time, ONLY for --target-model multi —
+# deliberately NOT a static go.mod.tmpl edit, which would leave a
+# single-target scaffold's go.mod direct/indirect split permanently out of
+# sync with what `go mod tidy` would produce (verified empirically:
+# `go mod tidy` immediately demotes it back to indirect on a single-target
+# tree, since nothing there imports it directly), a real regression against
+# this plan's own single-target-tree-is-unchanged constraint. Anchored on the
+# module path only (no version pin), so a future client_golang version bump
+# in go.mod.tmpl can't silently break this insertion point.
+if [ "$target_model" = multi ] && [ -f "$dst/go.mod.tmpl" ]; then
+  clientmodelfrag=$(mktemp)
+  printf '\tgithub.com/prometheus/client_model v0.6.2\n' > "$clientmodelfrag"
+  sed \
+    -e '/^\tgithub\.com\/prometheus\/client_model v0\.6\.2 \/\/ indirect$/d' \
+    -e "\\|^\\tgithub\\.com/prometheus/client_golang[[:blank:]]|r $clientmodelfrag" \
+    "$dst/go.mod.tmpl" > "$dst/go.mod.tmpl.scaffoldtmp"
+  mv "$dst/go.mod.tmpl.scaffoldtmp" "$dst/go.mod.tmpl"
+  rm -f "$clientmodelfrag"
+fi
 
 # variants/ (the background_collector.go.tmpl + test that /add-collector adds
 # — see code/<flavor>/variants/) is /add-collector's own staging ground: it
@@ -321,26 +394,28 @@ while IFS= read -r file; do
   mv "$file" "${file%.tmpl}"
 done < "$pathlist"
 
-# Flavor wiring-marker injection: fill main.go's two structural markers
-# (// @@CLIENT_INIT@@, // @@COLLECTOR_REGISTRY@@ — defined by Task 4's
-# main.go.tmpl) with the selected flavor's wiring snippets, if it shipped
-# any. Flavor snippets stage under code/<flavor>/wiring/{client_init.frag,
-# registry.frag} (mirror-layout, exactly like every other flavor file) and so
-# land at internal/collector/wiring/ after the flavor-selection move earlier
-# in this script. By this point they are also fully @@KEY@@-substituted,
-# since the content-substitution pass above runs over every file under $dst
-# regardless of extension, and path-renamed/.tmpl-stripped, since it runs
-# after both of those steps, so cmd/*/main.go already sits at its final path.
+# Flavor wiring-marker injection: fill main.go's structural markers
+# (// @@CLIENT_INIT@@, // @@COLLECTOR_REGISTRY@@ — single-target markers;
+# // @@PROBE_FACTORIES@@ — multi-target's own marker, see mains/multi/
+# main.go.tmpl) with the selected flavor's wiring snippets, if it shipped any.
+# Flavor snippets stage under code/<flavor>/wiring/{client_init.frag,
+# registry.frag,probe_factory.frag} (mirror-layout, exactly like every other
+# flavor file) and so land at internal/collector/wiring/ after the
+# flavor-selection move earlier in this script. By this point they are also
+# fully @@KEY@@-substituted, since the content-substitution pass above runs
+# over every file under $dst regardless of extension, and path-renamed/
+# .tmpl-stripped, since it runs after both of those steps, so cmd/*/main.go
+# already sits at its final path.
 #
-# This is a hardcoded, fixed pair (frag basename -> marker name), not a
-# discovered or growing registry, mirroring this same script's own
-# --forge github|none precedent. sed's `r` command inserts the frag file's
-# content immediately AFTER the matched marker line without consuming it, so
-# the marker comment itself survives verbatim in the output — deliberate, so
+# This is a hardcoded, fixed set of (frag basename -> marker name) pairs, not
+# a discovered or growing registry, mirroring this same script's own --forge
+# github|none precedent. sed's `r` command inserts the frag file's content
+# immediately AFTER the matched marker line without consuming it, so the
+# marker comment itself survives verbatim in the output — deliberate, so
 # /add-collector can find and reuse the same marker later to insert
 # additional collectors. That is also why the residual-sentinel guard below
-# still needs (and already has) its CLIENT_INIT/COLLECTOR_REGISTRY exemption
-# after this step runs, not just before it.
+# still needs (and already has) its CLIENT_INIT/COLLECTOR_REGISTRY/
+# PROBE_FACTORIES exemption after this step runs, not just before it.
 if [ -d "$dst/internal/collector/wiring" ]; then
   mainfile=""
   for f in "$dst"/cmd/*/main.go; do
@@ -360,16 +435,24 @@ if [ -d "$dst/internal/collector/wiring" ]; then
   # splices executable Go statements into the middle of a comment block,
   # which breaks the build with "non-declaration statement outside function
   # body" — caught empirically while implementing this, not a hypothetical.
-  if [ -f "$dst/internal/collector/wiring/client_init.frag" ]; then
-    grep -q '^[[:blank:]]*// @@CLIENT_INIT@@[[:blank:]]*$' "$mainfile" || die "$mainfile has no standalone // @@CLIENT_INIT@@ marker line to inject into"
-    sed -e '\|^[[:blank:]]*// @@CLIENT_INIT@@[[:blank:]]*$|r '"$dst"'/internal/collector/wiring/client_init.frag' "$mainfile" > "$mainfile.scaffoldtmp"
+  # A frag whose marker is absent from the SELECTED main model is skipped, not
+  # fatal: each main model (mains/single/, mains/multi/) carries only its own
+  # markers now (single has no // @@PROBE_FACTORIES@@; multi has no
+  # // @@CLIENT_INIT@@ / // @@COLLECTOR_REGISTRY@@), so a flavor shipping a
+  # frag the chosen main doesn't use is the expected, common case, not a
+  # broken scaffold. This is still a hardcoded, fixed set of pairs, not a
+  # discovered/growing registry — same precedent as --forge github|none.
+  for pair in \
+    "client_init.frag:@@CLIENT_INIT@@" \
+    "registry.frag:@@COLLECTOR_REGISTRY@@" \
+    "probe_factory.frag:@@PROBE_FACTORIES@@"; do
+    fragfile="$dst/internal/collector/wiring/${pair%%:*}"
+    marker="${pair##*:}"
+    [ -f "$fragfile" ] || continue
+    grep -q "^[[:blank:]]*// $marker[[:blank:]]*\$" "$mainfile" || continue
+    sed -e "\\|^[[:blank:]]*// $marker[[:blank:]]*\$|r $fragfile" "$mainfile" > "$mainfile.scaffoldtmp"
     mv "$mainfile.scaffoldtmp" "$mainfile"
-  fi
-  if [ -f "$dst/internal/collector/wiring/registry.frag" ]; then
-    grep -q '^[[:blank:]]*// @@COLLECTOR_REGISTRY@@[[:blank:]]*$' "$mainfile" || die "$mainfile has no standalone // @@COLLECTOR_REGISTRY@@ marker line to inject into"
-    sed -e '\|^[[:blank:]]*// @@COLLECTOR_REGISTRY@@[[:blank:]]*$|r '"$dst"'/internal/collector/wiring/registry.frag' "$mainfile" > "$mainfile.scaffoldtmp"
-    mv "$mainfile.scaffoldtmp" "$mainfile"
-  fi
+  done
 
   # wiring/ is scaffold-only staging, like licenses/ below — it must never
   # ship in the generated repo now that its content has been spliced into
@@ -415,23 +498,23 @@ case "$grep_rc" in
   *) die "residual-sentinel scan of $dst failed (grep exit $grep_rc)" ;;
 esac
 
-# main.go's two structural markers (@@CLIENT_INIT@@, @@COLLECTOR_REGISTRY@@)
-# are deliberately left as literal comments for a later flavor-specific
-# scaffold.sh step to replace — they are not --var data placeholders, so
-# their survival is expected, not a forgotten substitution. Filter exactly
-# these two named sentinels out before judging the scan; anything else that
-# matches the broad @@[A-Z_]*@@ shape still fails loudly below, same as
-# before. (A hardcoded pair, not a discovered list, mirrors --forge's own
-# hardcoded github|none: a small, deliberately fixed set, not a growing
-# registry that would justify discovery.) Same explicit-exit-code discipline
-# as the scan above, even though $sentinels is a script-written temp file
-# (not a traversal of arbitrary --dst content) and so is a far less likely
-# source of a genuine grep-internal failure.
+# main.go's structural markers (@@CLIENT_INIT@@, @@COLLECTOR_REGISTRY@@ —
+# single-target; @@PROBE_FACTORIES@@ — multi-target) are deliberately left as
+# literal comments for a later flavor-specific scaffold.sh step to replace —
+# they are not --var data placeholders, so their survival is expected, not a
+# forgotten substitution. Filter exactly these named sentinels out before
+# judging the scan; anything else that matches the broad @@[A-Z_]*@@ shape
+# still fails loudly below, same as before. (A hardcoded set, not a discovered
+# list, mirrors --forge's own hardcoded github|none: a small, deliberately
+# fixed set, not a growing registry that would justify discovery.) Same
+# explicit-exit-code discipline as the scan above, even though $sentinels is a
+# script-written temp file (not a traversal of arbitrary --dst content) and so
+# is a far less likely source of a genuine grep-internal failure.
 # Line-grained exception: grep -v drops whole physical lines, so a forgotten
-# @@FOO@@ sharing a line with one of the two markers would be swallowed too.
+# @@FOO@@ sharing a line with one of these markers would be swallowed too.
 # Fine today because each marker sits alone on its own line in main.go.
 filtered_rc=0
-grep -v -E '@@(CLIENT_INIT|COLLECTOR_REGISTRY)@@' "$sentinels" > "$pathlist" || filtered_rc=$?
+grep -v -E '@@(CLIENT_INIT|COLLECTOR_REGISTRY|PROBE_FACTORIES)@@' "$sentinels" > "$pathlist" || filtered_rc=$?
 case "$filtered_rc" in
   0)
     echo "$prog: error: residual @@VAR@@ sentinel(s) left in $dst" >&2
