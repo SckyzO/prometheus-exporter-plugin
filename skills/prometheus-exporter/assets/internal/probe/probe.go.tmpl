@@ -27,10 +27,13 @@ import (
 // second scrape of the target.
 const collectorSuccessMetric = "@@NAMESPACE@@_exporter_collector_success"
 
-// Factory builds the collector set scoped to one probe target. The multi
-// main.go fills a factory at its // @@PROBE_FACTORIES@@ marker; adding a
-// collector to a multi-target exporter means adding a line there (see the
-// scaffold's docs).
+// Factory builds the collector scoped to one probe target. The multi main.go
+// fills a factory at its // @@PROBE_FACTORIES@@ marker. Handler holds exactly
+// one Factory today (this scaffold's multi-target starting point is a single
+// probed collector); adding a second collector means widening Handler to hold
+// and gather more than one Factory, which is why multi-target /add-collector
+// is documented follow-up rather than a one-line change (see the scaffold's
+// docs and ROADMAP).
 type Factory func(target string, timeout time.Duration) prometheus.Collector
 
 // Handler serves /probe?target=… .

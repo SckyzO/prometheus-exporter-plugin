@@ -56,7 +56,11 @@ constructs live in `internal/probe`'s handler). Tell the user:
   (`collector.New<Name>Collector(log, collector.NewClient(target, timeout))`),
   after materializing the collector file itself the same way step 3 below
   would (the five-piece shape, test triad, and `docs/metrics.md` update all
-  still apply — only the registration mechanics differ).
+  still apply). Note the current `probe.Handler`/`probe.NewHandler` seam takes
+  exactly one `Factory`, so adding a *second* collector to a multi-target
+  exporter also needs `internal/probe` widened to hold and gather more than one
+  factory — this is precisely why multi-target `/add-collector` is deferred,
+  not just a wiring change.
 
 Do not attempt to insert a `register(...)` call into a multi-target
 `main.go` — it has no registry to insert into, and doing so would not
