@@ -73,6 +73,7 @@ cd skills/prometheus-exporter/assets
 TMP=$(mktemp -d)
 sh scaffold.sh --src . --dst "$TMP" --flavor http --forge none \
   --var EXPORTER_NAME=demo --var NAMESPACE=demo --var MODULE_PATH=example.com/demo \
+  --var DATA_SOURCE=http://localhost:9999 --var DATA_SOURCE_PATH=/api/example \
   --var DEFAULT_PORT=9999 --var LICENSE=apache-2.0 --var OWNER=demo
 cd "$TMP" && go test ./cmd/... 2>&1 | head
 ```
@@ -783,6 +784,7 @@ cd skills/prometheus-exporter/assets
 TMP=$(mktemp -d)
 sh scaffold.sh --src . --dst "$TMP" --flavor http --forge none --target-model multi \
   --var EXPORTER_NAME=demo --var NAMESPACE=demo --var MODULE_PATH=example.com/demo \
+  --var DATA_SOURCE=http://localhost:9999 --var DATA_SOURCE_PATH=/api/example \
   --var DEFAULT_PORT=9999 --var LICENSE=apache-2.0 --var OWNER=demo
 cd "$TMP" && go build ./... && go test ./internal/probe/... -v && go vet ./...
 ```
@@ -795,6 +797,7 @@ cd skills/prometheus-exporter/assets
 TMP2=$(mktemp -d)
 sh scaffold.sh --src . --dst "$TMP2" --flavor http --forge none \
   --var EXPORTER_NAME=demo --var NAMESPACE=demo --var MODULE_PATH=example.com/demo \
+  --var DATA_SOURCE=http://localhost:9999 --var DATA_SOURCE_PATH=/api/example \
   --var DEFAULT_PORT=9999 --var LICENSE=apache-2.0 --var OWNER=demo
 test ! -d "$TMP2/internal/probe" || { echo "FAIL: single shipped internal/probe"; exit 1; }
 grep -q '/probe' "$TMP2"/cmd/*/main.go && { echo "FAIL: single main has /probe"; exit 1; }
@@ -868,6 +871,7 @@ cd skills/prometheus-exporter/assets
 TMP=$(mktemp -d)
 sh scaffold.sh --src . --dst "$TMP" --flavor http --forge none --target-model multi \
   --var EXPORTER_NAME=demo --var NAMESPACE=demo --var MODULE_PATH=example.com/demo \
+  --var DATA_SOURCE=http://localhost:9999 --var DATA_SOURCE_PATH=/api/example \
   --var DEFAULT_PORT=9999 --var LICENSE=apache-2.0 --var OWNER=demo
 cd "$TMP" && make docs-check   # probe_success/probe_duration_seconds documented ⇔ emitted
 cd <repo root>
