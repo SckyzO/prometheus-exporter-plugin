@@ -49,7 +49,15 @@ it points to.
   needs this. The lazy TTL-cache variant (refetch inline when stale, no
   goroutine — a legitimate, simpler pattern that does not give the same
   "scrape never blocks" guarantee) remains a fast-follow, not built here.
-- Advanced multi-target support.
+- **Multi-target scaffolding** *(delivered, unreleased)*: `/new-prometheus-exporter
+  --target-model multi` (http flavor only) scaffolds a `/probe?target=…`
+  exporter — a fresh registry and collector set built per request, scoped to
+  the target, alongside `internal/probe/`'s always-on http/https floor and an
+  opt-in `--probe.target-allowlist` hardening flag. `--target-model single`
+  (still the default) is unchanged. Remaining follow-up: `/add-collector`
+  multi-target awareness (today it refuses cleanly on a multi-target scaffold
+  and points at the manual procedure) and a `module` query parameter,
+  mirroring Blackbox/SNMP's probe-profile selection.
 
 ## v1.0
 

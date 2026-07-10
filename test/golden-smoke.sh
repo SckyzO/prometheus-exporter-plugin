@@ -16,7 +16,7 @@
 # proves it accepts the clean doc again (see below).
 #
 # Usage:
-#   test/golden-smoke.sh --flavor <http|cli> --forge <github|none>
+#   test/golden-smoke.sh --flavor <http|cli> --forge <github|none> [--target-model <single|multi>]
 #   test/golden-smoke.sh --all
 #
 # Each of the 4 cells in the {http,cli} x {none,github} matrix has its own
@@ -36,9 +36,19 @@
 # simply surfaces here because this script never redirects make's own
 # stdout/stderr away from the caller's terminal.
 #
-# --all (Task 22) runs all 4 matrix cells in one invocation - see the
-# dispatch block right after argument parsing below for how each cell stays
-# isolated from the others' own pass/fail.
+# --target-model <single|multi> (Task 2, multi-target epic) defaults to
+# "single" (today's runtime, every cell above is single-target and
+# unaffected). "multi" requires --flavor http (mirrors scaffold.sh's own
+# restriction) and, beyond the standard build/check/promtool-rules gates
+# every cell runs, additionally starts the scaffolded binary and proves
+# /probe live: it probes the exporter's own /metrics endpoint as a target and
+# checks the response through `promtool check metrics` — see the http-multi
+# guarded block below.
+#
+# --all (Task 22, extended by Task 2) runs all 4 matrix cells PLUS a 5th,
+# additional http-multi cell (flavor=http, forge=none, target-model=multi) in
+# one invocation - see the dispatch block right after argument parsing below
+# for how each cell stays isolated from the others' own pass/fail.
 #
 # POSIX sh + sed + grep + make, same dependency discipline as scaffold.sh
 # itself. `make build`/`make check` additionally need a Go toolchain and,
@@ -72,7 +82,7 @@ prog=$(basename "$0")
 
 usage() {
   cat <<EOF >&2
-Usage: $prog --flavor <http|cli> --forge <github|none>
+Usage: $prog --flavor <http|cli> --forge <github|none> [--target-model <single|multi>]
        $prog --all
 EOF
 }
@@ -84,6 +94,7 @@ die() {
 
 flavor=""
 forge=""
+target_model=single
 all=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -95,6 +106,11 @@ while [ $# -gt 0 ]; do
     --forge)
       [ $# -ge 2 ] || die "--forge requires a value"
       forge=$2
+      shift 2
+      ;;
+    --target-model)
+      [ $# -ge 2 ] || die "--target-model requires a value"
+      target_model=$2
       shift 2
       ;;
     --all)
@@ -110,6 +126,17 @@ while [ $# -gt 0 ]; do
       ;;
   esac
 done
+
+# --target-model (Task 2, multi-target epic): defaults to "single" (today's
+# runtime, unchanged) — mirrors scaffold.sh's own default and validation
+# exactly, including the http-only restriction (there is no cli multi-target).
+case "$target_model" in
+  single|multi) ;;
+  *) die "invalid --target-model '$target_model'; must be single or multi" ;;
+esac
+if [ "$target_model" = multi ] && [ -n "$flavor" ] && [ "$flavor" != http ]; then
+  die "--target-model multi requires --flavor http (no cli multi-target)"
+fi
 
 # --all runs the full matrix and is mutually exclusive with a single
 # --flavor/--forge cell: mixing them would leave it ambiguous whether the
@@ -140,22 +167,38 @@ fi
 # next sidesteps that entirely, and also means the 2nd-4th cells reuse the
 # 1st cell's already-built tools image instead of rebuilding it.
 if [ "$all" -eq 1 ]; then
-  echo "== golden-smoke.sh --all: running the full matrix {http,cli} x {none,github} =="
+  echo "== golden-smoke.sh --all: running the full matrix {http,cli} x {none,github}, plus the http-multi cell =="
   overall_rc=0
   summary=""
-  for cell in http-none http-github cli-none cli-github; do
-    cell_flavor=${cell%-*}
-    cell_forge=${cell#*-}
+  # http-multi (Task 2, multi-target epic) is a FIFTH, additional cell, not a
+  # full {single,multi} x {http,cli} x {none,github} cross product: multi
+  # requires --flavor http (no cli multi-target — same restriction validated
+  # above), so it is special-cased here rather than folded into the generic
+  # cell%-*/cell#*- parsing below, which assumes exactly one hyphen.
+  for cell in http-none http-github cli-none cli-github http-multi; do
+    case "$cell" in
+      http-multi)
+        cell_flavor=http
+        cell_forge=none
+        cell_extra="--target-model multi"
+        ;;
+      *)
+        cell_flavor=${cell%-*}
+        cell_forge=${cell#*-}
+        cell_extra=""
+        ;;
+    esac
     echo ""
     echo "=================================================================="
-    echo "== matrix cell: $cell_flavor/$cell_forge =="
+    echo "== matrix cell: $cell =="
     echo "=================================================================="
-    if sh "$here/$prog" --flavor "$cell_flavor" --forge "$cell_forge"; then
+    # shellcheck disable=SC2086 # $cell_extra is a deliberately unquoted, either-empty-or-fixed-two-token flag
+    if sh "$here/$prog" --flavor "$cell_flavor" --forge "$cell_forge" $cell_extra; then
       summary="$summary
-  $cell_flavor/$cell_forge: PASS"
+  $cell: PASS"
     else
       summary="$summary
-  $cell_flavor/$cell_forge: FAIL"
+  $cell: FAIL"
       overall_rc=1
     fi
   done
@@ -165,12 +208,18 @@ if [ "$all" -eq 1 ]; then
   if [ "$overall_rc" -ne 0 ]; then
     echo "$prog --all: FAIL - at least one matrix cell failed, see summary above" >&2
   else
-    echo "$prog --all: PASS - all 4 matrix cells green"
+    echo "$prog --all: PASS - all 5 cells green"
   fi
   exit "$overall_rc"
 fi
 
-work="$root/test/_work/$flavor-$forge"
+# work dir key: only suffixed with -multi when target_model=multi, so the
+# existing 4 cells' work dirs (test/_work/http-none, etc.) are byte-identical
+# to before this axis existed — target_model=single is this script's own
+# default too, exactly mirroring scaffold.sh's own default.
+workkey="$flavor-$forge"
+[ "$target_model" = multi ] && workkey="$workkey-multi"
+work="$root/test/_work/$workkey"
 
 # Brief-format contract (discovery-inputs epic): the shipped fixture must
 # carry every section the discovery-inputs reference documents and
@@ -199,12 +248,12 @@ done
 # anyway: no leftover state from a previous run.
 rm -rf "$work"
 
-echo "== scaffolding $flavor/$forge into ${work#"$root"/} =="
+echo "== scaffolding $flavor/$forge (target-model=$target_model) into ${work#"$root"/} =="
 case "$flavor-$forge" in
   http-none)
     sh "$assets/scaffold.sh" \
       --src "$assets" --dst "$work" \
-      --flavor "$flavor" --forge "$forge" --force \
+      --flavor "$flavor" --forge "$forge" --target-model "$target_model" --force \
       --var EXPORTER_NAME=demo_exporter \
       --var NAMESPACE=demo \
       --var MODULE_PATH=example.com/demo_exporter \
@@ -217,7 +266,7 @@ case "$flavor-$forge" in
   cli-none)
     sh "$assets/scaffold.sh" \
       --src "$assets" --dst "$work" \
-      --flavor "$flavor" --forge "$forge" --force \
+      --flavor "$flavor" --forge "$forge" --target-model "$target_model" --force \
       --var EXPORTER_NAME=demo_exporter \
       --var NAMESPACE=demo \
       --var MODULE_PATH=example.com/demo_exporter \
@@ -230,7 +279,7 @@ case "$flavor-$forge" in
   http-github)
     sh "$assets/scaffold.sh" \
       --src "$assets" --dst "$work" \
-      --flavor http --forge github --force \
+      --flavor http --forge github --target-model "$target_model" --force \
       --var EXPORTER_NAME=demo_exporter \
       --var NAMESPACE=demo \
       --var MODULE_PATH=example.com/demo_exporter \
@@ -243,7 +292,7 @@ case "$flavor-$forge" in
   cli-github)
     sh "$assets/scaffold.sh" \
       --src "$assets" --dst "$work" \
-      --flavor cli --forge github --force \
+      --flavor cli --forge github --target-model "$target_model" --force \
       --var EXPORTER_NAME=demo_exporter \
       --var NAMESPACE=demo \
       --var MODULE_PATH=example.com/demo_exporter \
@@ -332,18 +381,19 @@ esac
 
 # No @@VAR@@ sentinel may survive scaffolding, with the same narrow, named
 # exception scaffold.sh's own internal residual-sentinel guard carries:
-# main.go's two structural markers, `// @@CLIENT_INIT@@` and
-# `// @@COLLECTOR_REGISTRY@@`, are deliberately left in place forever (for
-# /add-collector to find and reuse later), not data placeholders that a
-# --var should have filled — asserting a bare `@@[A-Z_]*@@` with no
-# exception here would make this check fail on every single green run.
+# main.go's structural markers — `// @@CLIENT_INIT@@` and
+# `// @@COLLECTOR_REGISTRY@@` (single-target), `// @@PROBE_FACTORIES@@`
+# (multi-target) — are deliberately left in place forever (for /add-collector
+# to find and reuse later), not data placeholders that a --var should have
+# filled — asserting a bare `@@[A-Z_]*@@` with no exception here would make
+# this check fail on every single green run.
 echo "== no residual @@VAR@@ sentinels in ${work#"$root"/} =="
 grep_rc=0
 hits=$(command grep -rnI '@@[A-Z_]*@@' "$work" 2>&1) || grep_rc=$?
 case "$grep_rc" in
   1) ;; # no match: clean
   0)
-    filtered=$(printf '%s\n' "$hits" | grep -v -E '@@(CLIENT_INIT|COLLECTOR_REGISTRY)@@') || true
+    filtered=$(printf '%s\n' "$hits" | grep -v -E '@@(CLIENT_INIT|COLLECTOR_REGISTRY|PROBE_FACTORIES)@@') || true
     if [ -n "$filtered" ]; then
       echo "$prog: error: residual @@VAR@@ sentinel(s) left in $work:" >&2
       echo "$filtered" >&2
@@ -435,6 +485,87 @@ elif command -v podman >/dev/null 2>&1; then
   echo "confirmed: promtool check rules PASSED via podman ($flavor/$forge)"
 else
   echo "SKIPPING promtool check rules ($flavor/$forge): no native promtool and no docker/podman container engine found — install one to validate monitoring/prometheus/*.yml locally"
+fi
+
+# http-multi live-probe check (Task 2, multi-target epic): a scaffolded
+# multi-target exporter must actually SERVE /probe, not just build and pass
+# its own unit tests. Starts the just-built binary, probes its OWN /metrics
+# endpoint as a live http:// target (self-contained — no external dependency
+# or network access needed), and confirms the response is a valid
+# OpenMetrics/Prometheus exposition carrying probe_success/probe_duration_seconds.
+# Only runs for target_model=multi; single-target scaffolds have no /probe
+# route at all (asserted separately, right after scaffolding, above).
+#
+# trap ... EXIT here is this script's only background process, so installing
+# it is safe: no earlier step in this file left one behind to clobber, and it
+# guarantees the server is killed even if a later `die`/set -eu exit fires
+# mid-check, rather than leaking an orphaned listener on $probe_port.
+if [ "$target_model" = multi ]; then
+  echo "== http-multi: starting the scaffolded binary to exercise /probe live ($flavor/$forge) =="
+  bin="$work/bin/demo_exporter"
+  [ -x "$bin" ] || die "http-multi: $bin missing or not executable after make build ($flavor/$forge)"
+
+  probe_port=9999
+  probe_log="$work/.golden-smoke-server.log"
+  "$bin" --web.listen-address="127.0.0.1:$probe_port" --log.level=info >"$probe_log" 2>&1 &
+  server_pid=$!
+  trap 'kill "$server_pid" >/dev/null 2>&1 || true' EXIT
+
+  # Poll /healthz until the server actually accepts connections. Bounded
+  # (15 x 1s = 15s ceiling) so a broken startup fails fast instead of hanging
+  # this script forever; integer `sleep` only (no fractional seconds), same
+  # POSIX-utilities discipline as scaffold.sh's own header comment.
+  ready=0
+  i=0
+  while [ "$i" -lt 15 ]; do
+    if curl -fsS -o /dev/null "http://127.0.0.1:$probe_port/healthz" 2>/dev/null; then
+      ready=1
+      break
+    fi
+    kill -0 "$server_pid" 2>/dev/null || die "http-multi: server process exited before becoming ready — see $probe_log ($flavor/$forge)"
+    i=$((i + 1))
+    sleep 1
+  done
+  [ "$ready" -eq 1 ] || die "http-multi: server did not become ready on 127.0.0.1:$probe_port within 15s — see $probe_log ($flavor/$forge)"
+  echo "confirmed: server ready on 127.0.0.1:$probe_port ($flavor/$forge)"
+
+  probe_out="$work/.golden-smoke-probe-output.txt"
+  if ! curl -fsS "http://127.0.0.1:$probe_port/probe?target=http://127.0.0.1:$probe_port/metrics" -o "$probe_out"; then
+    die "http-multi: curl /probe?target=... FAILED ($flavor/$forge) — see $probe_log"
+  fi
+  echo "confirmed: /probe?target=http://127.0.0.1:$probe_port/metrics returned a response ($flavor/$forge)"
+
+  grep -q '^probe_success ' "$probe_out" || die "http-multi: /probe response is missing probe_success ($flavor/$forge)"
+  grep -q '^probe_duration_seconds ' "$probe_out" || die "http-multi: /probe response is missing probe_duration_seconds ($flavor/$forge)"
+  echo "confirmed: /probe response carries probe_success and probe_duration_seconds ($flavor/$forge)"
+
+  echo "== http-multi: promtool check metrics on the /probe response ($flavor/$forge) =="
+  if command -v promtool >/dev/null 2>&1; then
+    echo "using native promtool"
+    if ! promtool check metrics < "$probe_out"; then
+      die "http-multi: promtool check metrics FAILED for the /probe response ($flavor/$forge)"
+    fi
+    echo "confirmed: promtool check metrics PASSED ($flavor/$forge)"
+  elif command -v docker >/dev/null 2>&1; then
+    echo "no native promtool; using docker run prom/prometheus:latest"
+    if ! docker run --rm -i --entrypoint promtool prom/prometheus:latest check metrics < "$probe_out"; then
+      die "http-multi: promtool check metrics FAILED (via docker) for the /probe response ($flavor/$forge)"
+    fi
+    echo "confirmed: promtool check metrics PASSED via docker ($flavor/$forge)"
+  elif command -v podman >/dev/null 2>&1; then
+    echo "no native promtool and no docker; using podman run prom/prometheus:latest"
+    if ! podman run --rm -i --entrypoint promtool prom/prometheus:latest check metrics < "$probe_out"; then
+      die "http-multi: promtool check metrics FAILED (via podman) for the /probe response ($flavor/$forge)"
+    fi
+    echo "confirmed: promtool check metrics PASSED via podman ($flavor/$forge)"
+  else
+    echo "SKIPPING promtool check metrics ($flavor/$forge): no native promtool and no docker/podman container engine found — install one to validate the /probe response locally"
+  fi
+
+  kill "$server_pid" >/dev/null 2>&1 || true
+  wait "$server_pid" 2>/dev/null || true
+  trap - EXIT
+  echo "confirmed: http-multi live-probe check PASSED ($flavor/$forge)"
 fi
 
 # docs-check lie-injection (Task 11): the whole point of `make docs-check` is
@@ -717,7 +848,14 @@ fi
 # go build fails ("no required module provides package queue.com/...").
 # Renaming first is safe in both directions: no @@VAR@@ sentinel NAME
 # contains "example".
-if [ "$flavor" = http ] && [ "$forge" = none ]; then
+#
+# Skipped for target_model=multi (Task 2, multi-target epic): this sub-check
+# splices at the // @@CLIENT_INIT@@ / // @@COLLECTOR_REGISTRY@@ markers,
+# which a multi-target main.go doesn't carry at all (it only has its own
+# // @@PROBE_FACTORIES@@ marker) — /add-collector itself stays single-only
+# for this epic (documented follow-up for multi, see Task 3), so there is
+# nothing for this mechanical sub-check to exercise here.
+if [ "$flavor" = http ] && [ "$forge" = none ] && [ "$target_model" != multi ]; then
   echo "== mechanical /add-collector sub-check ($flavor/$forge): scaffolded templates still support adding a 2nd collector =="
   addc_tmpl="$assets/code/http/collector.go.tmpl"
   addc_client_frag="$assets/code/http/wiring/client_init.frag"

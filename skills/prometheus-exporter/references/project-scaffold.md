@@ -349,13 +349,24 @@ handling independently.
 
 ## What this scaffold does not do
 
-Single-target only: every collector's constructor, and the registry built
-around it, assumes one exporter process reporting on one fixed target for its
-whole lifetime. There is no `/probe?target=` handler here, and none of this
-file's registry machinery is built to construct a fresh set of collectors per
-incoming request — see `exporter-architecture.md` for why that is a
-structural fork decided *before* scaffolding, not something to retrofit onto
-this `main.go` afterward.
+Everything above describes the **single-target** model — `single`, still the
+default and unchanged: one exporter process, one fixed target, a registry
+built once at startup, every collector's constructor assuming that same one
+target for the process's whole lifetime.
+
+`--target-model multi` (http flavor only — there is no `cli` multi-target) is
+the other model `/new-prometheus-exporter` can scaffold. Instead of this
+file's registration-driven registry, it ships `internal/probe/` and a
+`/probe?target=…` handler that builds a fresh registry and collector set,
+scoped to whatever `target=` the caller supplies, once per request —
+Prometheus's own multi-target exporter pattern (see `exporter-architecture.md`
+§2 for why this is a structural fork decided *before* scaffolding, not
+retrofitted onto this `main.go` afterward). The two models are mutually
+exclusive per scaffold: a generated repository has exactly one `main.go`, and
+either this registry or that `/probe` handler, never both. `/add-collector`
+against a multi-target scaffold is a documented follow-up, not implemented
+today — it refuses cleanly and points at the manual procedure (add one
+factory line at `// @@PROBE_FACTORIES@@`).
 
 ## Checklist
 

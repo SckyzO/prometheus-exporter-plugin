@@ -31,6 +31,41 @@ ask the user something you can check yourself:
 Everything below has two columns, **http** and **cli**, for exactly these two
 v0.1 flavors.
 
+### Refuse cleanly on a multi-target scaffold
+
+Before going any further, check whether this repository was scaffolded with
+`--target-model multi`:
+
+```sh
+[ -d internal/probe ] || grep -q '/probe' cmd/*/main.go
+```
+
+If either is true, **stop and refuse**. This command only knows how to insert
+a `register(...)` call at the single-target model's two seam markers
+(`// @@CLIENT_INIT@@` / `// @@COLLECTOR_REGISTRY@@`, see `project-scaffold.md`)
+— a multi-target `main.go` has neither; it builds its per-target collector
+set from a `factory` function at a different marker,
+`// @@PROBE_FACTORIES@@` in `cmd/*/main.go` (the per-target collectors it
+constructs live in `internal/probe`'s handler). Tell the user:
+
+- `/add-collector` does not support multi-target scaffolds yet — this is
+  documented follow-up work (see the plugin's `ROADMAP.md`), not a bug.
+- The manual procedure: add a factory line for the new collector at
+  `// @@PROBE_FACTORIES@@` in `cmd/*/main.go`, following the same shape the
+  bundled `example` factory there already demonstrates
+  (`collector.New<Name>Collector(log, collector.NewClient(target, timeout))`),
+  after materializing the collector file itself the same way step 3 below
+  would (the five-piece shape, test triad, and `docs/metrics.md` update all
+  still apply). Note the current `probe.Handler`/`probe.NewHandler` seam takes
+  exactly one `Factory`, so adding a *second* collector to a multi-target
+  exporter also needs `internal/probe` widened to hold and gather more than one
+  factory — this is precisely why multi-target `/add-collector` is deferred,
+  not just a wiring change.
+
+Do not attempt to insert a `register(...)` call into a multi-target
+`main.go` — it has no registry to insert into, and doing so would not
+compile.
+
 ## 1. Read this repo's real values
 
 A scaffolded repo has no `@@VAR@@` sentinels left — every value below is read

@@ -55,3 +55,26 @@ Emitted regardless of which `--collector.*` flags are set — see
 | `@@NAMESPACE@@_exporter_request_duration_seconds` | Histogram | `outcome` | Duration in seconds of HTTP requests issued by this exporter's collectors, by outcome (`success` or `error`). Defined in `internal/collector/client.go`. |
 | `@@NAMESPACE@@_exporter_collector_success` | Gauge | `collector` | Whether the last scrape of the collector succeeded (1=success, 0=failure). Defined in `internal/collector/status_tracker.go`. |
 | `@@NAMESPACE@@_exporter_collector_duration_seconds` | Gauge | `collector` | Duration of the last scrape for the collector, in seconds. Defined in `internal/collector/status_tracker.go`. |
+
+## Multi-target `/probe` metrics (opt-in builds only)
+
+Multi-target builds (scaffolded with `--target-model multi`) additionally
+expose two gauges on `/probe?target=…`, defined in `internal/probe/probe.go`
+— a sibling package to `internal/collector/`, which does not exist at all in
+a single-target build. They are listed here as prose rather than a
+`docs-check`-parsed table row above on purpose: `make docs-check` (see this
+file's own header comment) only scans `internal/collector/*.go`, so it can
+never see `internal/probe`'s metrics either way — documenting them as a
+regular table row would make `docs-check` report them as a lie for every
+build, single and multi alike.
+
+- `probe_success` (Gauge, no labels) — `1` if every collector scoped to this
+  probe reported a successful scrape, `0` otherwise.
+- `probe_duration_seconds` (Gauge, no labels) — wall-clock duration of the
+  whole probe.
+
+Both are deliberately **un-namespaced** (no `@@NAMESPACE@@_` prefix): every
+multi-target exporter in the Prometheus ecosystem (Blackbox, SNMP) emits
+these two exact names, and every multi-target dashboard/alert in the wild
+queries them as-is — this scaffold matches that convention here instead of
+the `namespace_subsystem_name` rule the rest of this file's metrics follow.

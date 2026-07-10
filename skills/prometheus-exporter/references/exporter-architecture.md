@@ -90,15 +90,27 @@ request, scoped to the `target` parameter, instead of a fixed registry built
 once at startup) and changes what "a collector" even means (per-request
 constructed, not process-lifetime).
 
-**This scaffold produces single-target exporters only.** If your target is
-one of many identical instances Prometheus should poll on demand — a fleet of
-identical network devices, a protocol prober, anything shaped like the
-Blackbox exporter — multi-target is the right model, but wiring `/probe`,
-per-request collector construction, and the `target`/`module` parameters is
-documented follow-up work for a maintainer to build, not something
-`/new-prometheus-exporter` scaffolds today. Decide this now, because
-retrofitting it onto a single-target `main.go` later touches the entry point,
-the registry, and every collector's constructor signature at once.
+**Multi-target is scaffolded, opt-in, via `--target-model multi` (http flavor
+only).** If your target is one of many identical instances Prometheus should
+poll on demand — a fleet of identical network devices, a protocol prober,
+anything shaped like the Blackbox exporter — `/new-prometheus-exporter
+--target-model multi` produces a `/probe?target=…` handler
+(`internal/probe/`) that builds a fresh, per-request collector set scoped to
+the target, instead of the fixed registry the default `single` model builds
+once at startup. `multi` requires `--flavor http`: there is no `cli`
+multi-target, since the `cli` flavor has no network target to vary. Two
+things remain genuine follow-up work, not shipped today: `/add-collector`
+against a multi-target scaffold (it refuses cleanly and points at the manual
+procedure — see `project-scaffold.md`) and a Blackbox/SNMP-style `module`
+query parameter (see the plugin's `ROADMAP.md`). Decide the model now,
+because retrofitting it onto an already-scaffolded single-target `main.go`
+later touches the entry point, the registry, and every collector's
+constructor signature at once.
+
+Multi-target's own two self-metrics, `probe_success` and
+`probe_duration_seconds`, are a deliberate, documented exception to this
+scaffold's usual `namespace_subsystem_name` metric-naming rule — see
+`prometheus-principles.md`'s naming-exception note.
 
 ## 3. The mockable I/O boundary: choosing a flavor
 
@@ -222,9 +234,9 @@ Before `/new-prometheus-exporter` runs, this phase should have produced:
 - [ ] **Data source** chosen, in preference order (REST/API, gRPC, or CLI
       as a last resort — a database-only target is out of scope; see step 1),
       confirmed against the target's own docs via context7.
-- [ ] **Single- vs. multi-target** decided — and, if multi-target, an
-      explicit note that it is follow-up work this scaffold does not
-      automate yet.
+- [ ] **Single- vs. multi-target** decided — and, if multi-target, confirmed
+      that the flavor is (or will be) `http`, since `--target-model multi`
+      requires it.
 - [ ] **I/O flavor** chosen (`http` or `cli`), following directly from the
       data source.
 - [ ] **Collector list**, one resource per collector, in the order

@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   higher rungs, surfacing contradictions as open questions — and the default
   walk (local spec > docs > context7 > dialogue) is unchanged when no live
   instance is offered.
+- **Multi-target scaffolding** (`--target-model multi`, http flavor only):
+  `/new-prometheus-exporter` can now scaffold a Prometheus multi-target
+  (`/probe?target=…`) exporter — a fresh registry and collector set per
+  request scoped to the target, `probe_success`/`probe_duration_seconds`,
+  a `--probe.target-allowlist` hardening flag with a startup warning when
+  empty, and an always-on http/https target floor. Single-target remains
+  the default and is unchanged.
 
 ## [0.2.0] - 2026-07-08
 
