@@ -45,7 +45,8 @@ a `register(...)` call at the single-target model's two seam markers
 (`// @@CLIENT_INIT@@` / `// @@COLLECTOR_REGISTRY@@`, see `project-scaffold.md`)
 — a multi-target `main.go` has neither; it builds its per-target collector
 set from a `factory` function at a different marker,
-`// @@PROBE_FACTORIES@@`, in `internal/probe`. Tell the user:
+`// @@PROBE_FACTORIES@@` in `cmd/*/main.go` (the per-target collectors it
+constructs live in `internal/probe`'s handler). Tell the user:
 
 - `/add-collector` does not support multi-target scaffolds yet — this is
   documented follow-up work (see the plugin's `ROADMAP.md`), not a bug.
