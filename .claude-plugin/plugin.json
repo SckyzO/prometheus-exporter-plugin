@@ -1,0 +1,8 @@
+{
+  "name": "prometheus-exporter",
+  "version": "0.3.0",
+  "description": "Scaffold and harden production-grade Go Prometheus exporters: architecture-first design, collector pattern with mockable I/O, container-first tooling, host-agnostic releases, health+business alerting, and a non-lying metrics-docs check.",
+  "author": { "name": "SckyzO" },
+  "license": "Apache-2.0",
+  "keywords": ["prometheus", "exporter", "observability", "metrics", "grafana", "golang", "scaffold"]
+}

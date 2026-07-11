@@ -1,0 +1,8 @@
+{
+  "name": "prometheus-exporter-marketplace",
+  "description": "Self-hosted marketplace for the prometheus-exporter Claude Code plugin.",
+  "owner": { "name": "SckyzO" },
+  "plugins": [
+    { "name": "prometheus-exporter", "source": "./", "description": "Scaffold and harden production-grade Go Prometheus exporters." }
+  ]
+}

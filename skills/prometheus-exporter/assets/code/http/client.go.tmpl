@@ -1,0 +1,96 @@
+package collector
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+)
+
+// RequestDuration times every Client.Fetch call, labeled by outcome
+// ("success" or "error"). It is declared once at package scope, not per
+// Client, because Prometheus metrics are meant to live for the process
+// lifetime, not the lifetime of whichever struct happens to touch them.
+// Exported (capitalized) so main.go's // @@COLLECTOR_REGISTRY@@ wiring (see
+// registry.frag) can register it directly on this exporter's own custom
+// registry.
+//
+// Deliberately built with plain prometheus.NewHistogramVec, not
+// promauto.NewHistogramVec: promauto's factories auto-register into
+// prometheus.DefaultRegisterer, the process-wide global registry — but
+// main.go builds its own prometheus.NewRegistry() instead of using that
+// global one (see main.go's own comment on that line), and only collectors
+// reachable via register()/tracker.Add(...) ever reach /metrics. A
+// *prometheus.HistogramVec already implements prometheus.Collector, so
+// registry.frag registers this var the exact same way it registers every
+// other collector — no promauto, no second registry to thread through
+// NewClient.
+//
+// Single process-wide histogram, labeled only by outcome: if
+// /add-collector later wires a second HTTP-flavor collector against a
+// different target, both collectors' request timings share these same
+// "success"/"error" buckets and are not distinguishable from each other by
+// target. Fine for this scaffold's one-collector v0.1 starting point; a
+// per-target breakdown would need an additional label threaded through
+// Client.
+var RequestDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+	Name: "@@NAMESPACE@@_exporter_request_duration_seconds",
+	Help: "Duration in seconds of HTTP requests issued by this exporter's collectors, by outcome.",
+}, []string{"outcome"})
+
+// Client is the HTTP boundary every collector in this flavor talks to.
+// Building it around a base URL, instead of reaching for http.DefaultClient
+// directly from a collector, is what makes collectors testable: point
+// NewClient at an httptest.Server instead of a real target.
+type Client struct {
+	httpClient *http.Client
+	baseURL    string
+}
+
+// NewClient builds a Client bound to target (a base URL, for example
+// "http://localhost:9100"), applying timeout to every request.
+func NewClient(target string, timeout time.Duration) *Client {
+	return &Client{
+		httpClient: &http.Client{Timeout: timeout},
+		baseURL:    target,
+	}
+}
+
+// Fetch issues a GET request for baseURL+path and returns the response
+// body. A non-2xx status is reported as an error so callers never have to
+// separately inspect the status code. Every call, success or failure, is
+// timed and recorded on RequestDuration.
+func (c *Client) Fetch(ctx context.Context, path string) (data []byte, err error) {
+	start := time.Now()
+	defer func() {
+		outcome := "success"
+		if err != nil {
+			outcome = "error"
+		}
+		RequestDuration.WithLabelValues(outcome).Observe(time.Since(start).Seconds())
+	}()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request for %s: %w", path, err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch %s: %w", path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("fetch %s: unexpected status %s", path, resp.Status)
+	}
+
+	data, err = io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response body for %s: %w", path, err)
+	}
+	return data, nil
+}

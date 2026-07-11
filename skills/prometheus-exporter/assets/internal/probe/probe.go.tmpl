@@ -1,0 +1,185 @@
+// Package probe implements the multi-target /probe?target=… endpoint: per
+// request it validates the target, builds a fresh registry + collector set
+// scoped to that one target, and emits probe_success / probe_duration_seconds
+// alongside the scoped collectors' own series. This is Prometheus's
+// multi-target exporter pattern (Blackbox/SNMP style): the exporter is a
+// fan-out proxy, not a sidecar reporting on one fixed target.
+package probe
+
+import (
+	"fmt"
+	"net/http"
+	"net/url"
+	"strconv"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	dto "github.com/prometheus/client_model/go"
+
+	"@@MODULE_PATH@@/internal/collector"
+	"@@MODULE_PATH@@/internal/logger"
+)
+
+// collectorSuccessMetric is the per-collector health gauge StatusTracker emits
+// (see internal/collector/status_tracker.go). probe_success is derived from it
+// so the probe reports "did every scoped collector scrape cleanly?" without a
+// second scrape of the target.
+const collectorSuccessMetric = "@@NAMESPACE@@_exporter_collector_success"
+
+// Factory builds the collector scoped to one probe target. The multi main.go
+// fills a factory at its // @@PROBE_FACTORIES@@ marker. Handler holds exactly
+// one Factory today (this scaffold's multi-target starting point is a single
+// probed collector); adding a second collector means widening Handler to hold
+// and gather more than one Factory, which is why multi-target /add-collector
+// is documented follow-up rather than a one-line change (see the scaffold's
+// docs and ROADMAP).
+type Factory func(target string, timeout time.Duration) prometheus.Collector
+
+// Handler serves /probe?target=… .
+type Handler struct {
+	log        *logger.Logger
+	factory    Factory
+	allowlist  []string      // empty => allow-any (ecosystem default; see SECURITY.md)
+	maxTimeout time.Duration // upper bound on each probe's per-request timeout
+}
+
+// NewHandler builds a /probe handler. An empty allowlist accepts any target
+// that clears the http/https floor (the Blackbox/SNMP default).
+func NewHandler(log *logger.Logger, factory Factory, allowlist []string, maxTimeout time.Duration) *Handler {
+	return &Handler{log: log, factory: factory, allowlist: allowlist, maxTimeout: maxTimeout}
+}
+
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	target := r.URL.Query().Get("target")
+
+	// Non-negotiable floor: must parse as an http/https URL. Always on, even
+	// in allow-any mode — bounds the SSRF surface to HTTP.
+	if err := validateTargetFloor(target); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if !h.targetAllowed(target) {
+		http.Error(w, "target not allowed", http.StatusForbidden)
+		return
+	}
+
+	timeout := h.clampTimeout(r)
+
+	// Fresh registry + collectors, scoped to THIS target, for THIS request.
+	reg := prometheus.NewRegistry()
+	tracker := collector.NewStatusTracker(h.log)
+	tracker.Add("example", h.factory(target, timeout))
+	reg.MustRegister(tracker)
+
+	// probe_success / probe_duration_seconds live in a separate registry so we
+	// can set them from the single collector gather below and still serve
+	// everything in one response without re-scraping the target.
+	meta := prometheus.NewRegistry()
+	probeSuccess := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "probe_success",
+		Help: "Displays whether the probe of the target succeeded (1) or failed (0).",
+	})
+	probeDuration := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "probe_duration_seconds",
+		Help: "Returns how long the probe took to complete in seconds.",
+	})
+	meta.MustRegister(probeSuccess, probeDuration)
+
+	start := time.Now()
+	mfs, err := reg.Gather() // the ONE scrape of the target's collectors
+	probeDuration.Set(time.Since(start).Seconds())
+	switch {
+	case err != nil:
+		h.log.Warn("probe gather reported an error", "target", target, "err", err)
+	case collectorsHealthy(mfs):
+		probeSuccess.Set(1)
+	}
+
+	// Serve the already-gathered collector families plus the meta gauges,
+	// without re-gathering reg (gatheredFamilies just replays mfs).
+	promhttp.HandlerFor(
+		prometheus.Gatherers{gatheredFamilies(mfs), meta},
+		promhttp.HandlerOpts{EnableOpenMetrics: true, ErrorHandling: promhttp.ContinueOnError},
+	).ServeHTTP(w, r)
+}
+
+// gatheredFamilies replays an already-collected metric-family slice as a
+// prometheus.Gatherer, so the target's collectors are scraped exactly once per
+// probe (during reg.Gather above), never again by promhttp.
+type gatheredFamilies []*dto.MetricFamily
+
+func (g gatheredFamilies) Gather() ([]*dto.MetricFamily, error) { return g, nil }
+
+// validateTargetFloor enforces the always-on http/https floor. A bare
+// "host:9100" parses with Scheme=="host", and "file:///…" with Scheme=="file";
+// both are rejected here.
+func validateTargetFloor(target string) error {
+	if target == "" {
+		return fmt.Errorf("missing 'target' query parameter")
+	}
+	u, err := url.Parse(target)
+	if err != nil {
+		return fmt.Errorf("target is not a valid URL: %v", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("target scheme %q not allowed (only http/https)", u.Scheme)
+	}
+	if u.Hostname() == "" {
+		return fmt.Errorf("target has no host")
+	}
+	return nil
+}
+
+// targetAllowed applies the allowlist. Empty allowlist => allow-any (the
+// ecosystem default). A non-empty allowlist matches a target's host either
+// port-insensitively (entry == host) or exactly (entry == host:port).
+func (h *Handler) targetAllowed(target string) bool {
+	if len(h.allowlist) == 0 {
+		return true
+	}
+	u, err := url.Parse(target)
+	if err != nil {
+		return false
+	}
+	for _, a := range h.allowlist {
+		if a == u.Hostname() || a == u.Host {
+			return true
+		}
+	}
+	return false
+}
+
+// clampTimeout uses min(--collector.example.timeout, Prometheus's own scrape
+// timeout header), so a probe never outruns Prometheus's deadline or the
+// operator's configured ceiling.
+func (h *Handler) clampTimeout(r *http.Request) time.Duration {
+	t := h.maxTimeout
+	if v := r.Header.Get("X-Prometheus-Scrape-Timeout-Seconds"); v != "" {
+		if secs, err := strconv.ParseFloat(v, 64); err == nil && secs > 0 {
+			if d := time.Duration(secs * float64(time.Second)); d < t {
+				t = d
+			}
+		}
+	}
+	return t
+}
+
+// collectorsHealthy reports whether every collector scoped to this probe
+// reported success (collector_success == 1). Returns false if no success
+// metric was emitted at all (a probe that produced nothing is not a success).
+func collectorsHealthy(mfs []*dto.MetricFamily) bool {
+	found := false
+	for _, mf := range mfs {
+		if mf.GetName() != collectorSuccessMetric {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			found = true
+			if g := m.GetGauge(); g == nil || g.GetValue() != 1 {
+				return false
+			}
+		}
+	}
+	return found
+}

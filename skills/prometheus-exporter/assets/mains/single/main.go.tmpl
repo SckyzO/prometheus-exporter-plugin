@@ -1,0 +1,241 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"os"
+	"os/signal"
+	"strconv"
+	"syscall"
+	"time"
+
+	"github.com/alecthomas/kingpin/v2"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/prometheus/common/version"
+	"github.com/prometheus/exporter-toolkit/web"
+	webflag "github.com/prometheus/exporter-toolkit/web/kingpinflag"
+
+	"@@MODULE_PATH@@/internal/collector"
+	"@@MODULE_PATH@@/internal/logger"
+)
+
+// namespace is this exporter's Prometheus metric prefix. It only covers what
+// main itself needs (the landing page and startup log): a package-main
+// declaration can't be imported by internal/collector, so every collector
+// file under internal/collector/ has @@NAMESPACE@@ substituted directly into
+// its own metric name literals by the same scaffold run, independently of
+// this constant.
+const namespace = "@@NAMESPACE@@"
+
+var (
+	// Command-line flags for application configuration.
+	logLevel     = kingpin.Flag("log.level", "Only log messages with the given severity or above. One of: [debug, info, warn, error]").Default("info").Enum("debug", "info", "warn", "error")
+	logFormat    = kingpin.Flag("log.format", "Log format. One of: [json, text]").Default("text").Enum("json", "text")
+	toolkitFlags = webflag.AddFlags(kingpin.CommandLine, ":@@DEFAULT_PORT@@")
+
+	// disableExporterMetrics removes Go runtime and process metrics from /metrics.
+	// Useful when scraping with a dedicated Go runtime exporter.
+	disableExporterMetrics = kingpin.Flag(
+		"web.disable-exporter-metrics",
+		"Exclude Go runtime and process metrics from /metrics endpoint.",
+	).Default("false").Bool()
+)
+
+// registryEntry pairs a lazily-invoked collector constructor with the parsed
+// value of its --[no-]collector.<name> flag.
+type registryEntry struct {
+	name    string
+	enabled *bool
+	newFn   func() prometheus.Collector
+}
+
+// registry accumulates every collector added via register(), in insertion
+// order, for the deferred construction pass in main() below.
+var registry []registryEntry
+
+// register declares a --[no-]collector.<name> kingpin flag (negatable,
+// defaulting to enabledByDefault) and remembers newFn for later invocation.
+// Both the initial scaffold and /add-collector insert one register(...) call
+// per collector at the // @@COLLECTOR_REGISTRY@@ marker in main() below.
+//
+// register — like every other kingpin.Flag call — must run before
+// kingpin.Parse(), so newFn must NOT eagerly dereference any flag-derived
+// value (the shared logger, a flavor client's target address, ...): those
+// still hold their zero value at this point, not their real default or any
+// user-supplied override (verified empirically against kingpin/v2 — flag
+// pointers are zero until Parse() runs). newFn is only actually invoked
+// once, later in main(), after kingpin.Parse() and logger/client
+// construction have completed. It's safe for the closure passed as newFn to
+// reference those variables — Go closures capture them by reference — as
+// long as it isn't called before they're assigned, which main() guarantees.
+func register(name string, newFn func() prometheus.Collector, enabledByDefault bool) {
+	enabled := kingpin.Flag("collector."+name, "Enable the "+name+" collector.").
+		Default(strconv.FormatBool(enabledByDefault)).Bool()
+	registry = append(registry, registryEntry{name: name, enabled: enabled, newFn: newFn})
+}
+
+// indexHTML is the landing page served at /.
+var indexHTML = fmt.Sprintf(`<html>
+	<head><title>%s Exporter</title></head>
+	<body>
+		<h1>%s Exporter</h1>
+		<p>Welcome to the %s Exporter. Click <a href='/metrics'>here</a> to see the metrics.</p>
+	</body>
+</html>`, namespace, namespace, namespace)
+
+func main() {
+	// log is declared here (nil) and assigned for real only after
+	// kingpin.Parse(), below — see register()'s doc comment for why. Any
+	// closure created at the markers below may reference it.
+	var log *logger.Logger
+
+	// ctx is created up-front, before the // @@CLIENT_INIT@@ /
+	// // @@COLLECTOR_REGISTRY@@ markers below, so a background-refresh
+	// collector variant registered at that marker can capture it in its
+	// register() closure (for c.Start(ctx)) — the same early-declaration
+	// rationale as log just above: the closure only dereferences ctx later,
+	// after kingpin.Parse(), when the registry loop actually invokes it.
+	// signal.NotifyContext needs no flags, so calling it before
+	// kingpin.Parse() is fine, and an early SIGTERM/SIGINT simply cancels ctx
+	// and drains cleanly. It traps SIGTERM/SIGINT to drive graceful shutdown
+	// (server.Shutdown below) and to cancel any background collector's
+	// goroutine.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stop()
+
+	// backgroundCollector is the minimal shutdown-wait seam every
+	// background-refresh collector variant satisfies (Start/Done, see
+	// internal/collector's background_collector.go once /add-collector has
+	// added one). backgroundCollectors stays empty in a purely synchronous
+	// exporter — the wait loop after web.ListenAndServe below still runs
+	// (over an empty slice, so it is an immediate no-op), which is what
+	// lets this seam ship unconditionally without special-casing "no
+	// background collectors are registered". /add-collector's background
+	// branch appends to this slice inside its register(...) closure at the
+	// // @@COLLECTOR_REGISTRY@@ marker below; nothing else in main.go changes
+	// when one is added.
+	type backgroundCollector interface{ Done() <-chan struct{} }
+	var backgroundCollectors []backgroundCollector
+
+	// @@CLIENT_INIT@@
+
+	// @@COLLECTOR_REGISTRY@@
+
+	kingpin.Version(version.Print("@@EXPORTER_NAME@@"))
+	kingpin.HelpFlag.Short('h')
+	kingpin.Parse()
+
+	if *logFormat == "json" {
+		log = logger.NewJSONLogger(*logLevel)
+	} else {
+		log = logger.NewTextLogger(*logLevel)
+	}
+
+	// Security posture check (security-and-hardening.md Rule 3): never
+	// refuses to start and never changes the default (Rule 2) — just makes
+	// sure the operator knows /metrics is unauthenticated on a reachable
+	// address, since ":@@DEFAULT_PORT@@" already binds every interface.
+	warnIfExposedAndUnauthenticated(log, *toolkitFlags.WebListenAddresses, *toolkitFlags.WebConfigFile)
+
+	// Create a custom registry to avoid global state and third-party metric pollution.
+	reg := prometheus.NewRegistry()
+
+	// Always register build info; Go runtime and process collectors are optional.
+	reg.MustRegister(collectors.NewBuildInfoCollector())
+	if !*disableExporterMetrics {
+		reg.MustRegister(
+			collectors.NewGoCollector(),
+			collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+		)
+	}
+
+	// Construct every registered collector now that flags are parsed and the
+	// logger is ready, wrapping all of them in a single StatusTracker so a
+	// panic in one collector can't take a whole scrape down and so every
+	// collector's health is exposed uniformly (see internal/collector's
+	// StatusTracker for the anti-descriptor-duplication rationale).
+	tracker := collector.NewStatusTracker(log)
+	for _, e := range registry {
+		if *e.enabled {
+			tracker.Add(e.name, e.newFn())
+			log.Info("Collector enabled", "collector", e.name)
+		} else {
+			log.Info("Collector disabled", "collector", e.name)
+		}
+	}
+	reg.MustRegister(tracker)
+
+	log.Info("Starting exporter server...", "namespace", namespace)
+
+	// Configure HTTP routes.
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(indexHTML))
+	})
+	// ErrorHandling: ContinueOnError is a deliberate deviation from
+	// client_golang's default (HTTPErrorOnError). Every collector here is
+	// wrapped by the single StatusTracker above precisely so one collector
+	// can't take the whole scrape down; without this option, a Gather-level
+	// error attributable to just one of them (for example two ConstMetrics
+	// colliding on the same label set) would still discard every OTHER
+	// collector's metrics too and fail the entire /metrics response with an
+	// HTTP error, defeating that promise at the handler level. ContinueOnError
+	// serves every metric family that gathered cleanly and only falls back
+	// to an HTTP error if literally nothing could be gathered — the same
+	// idiom multi-collector exporters like node_exporter use.
+	http.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{
+		EnableOpenMetrics: true,
+		ErrorHandling:     promhttp.ContinueOnError,
+	}))
+	// /healthz returns 200 OK as long as the HTTP server is up. This allows
+	// orchestrators (Kubernetes, systemd watchdog) to distinguish "exporter
+	// process alive" from "the underlying data source is reachable".
+	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+
+	// Signal-aware shutdown: on SIGTERM/SIGINT, drain in-flight requests for
+	// up to 5s via server.Shutdown instead of leaving the process to a bare
+	// kill. ctx (and its stop) are declared up-front near var log above, so a
+	// background collector registered at the // @@COLLECTOR_REGISTRY@@ marker
+	// can capture ctx in its register() closure; the server built here and the
+	// shutdown goroutine below still reference that same ctx unchanged.
+	server := &http.Server{
+		ReadHeaderTimeout: 5 * time.Second, // Mitigate Slowloris attacks (G112).
+	}
+
+	go func() {
+		<-ctx.Done()
+		log.Info("Shutdown signal received, draining in-flight requests...")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			log.Error("Graceful shutdown failed", "err", err)
+		}
+	}()
+
+	// Start HTTP server with exporter toolkit (supports TLS, Basic Auth, etc.).
+	if err := web.ListenAndServe(server, toolkitFlags, log.Logger); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Error("Failed to start HTTP server", "err", err)
+		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+		os.Exit(1) //nolint:gocritic // stop() called explicitly above
+	}
+
+	log.Info("Server stopped")
+
+	// Wait for every background-refresh collector's goroutine to finish (if
+	// any were registered — see backgroundCollectors above), bounded so a
+	// collector whose refresh is genuinely stuck never hangs process exit.
+	for _, bc := range backgroundCollectors { //nolint:gosec // G602: a for-range over a slice never indexes out of bounds (there is no explicit index expression), so G602 is a false positive here
+		select {
+		case <-bc.Done():
+		case <-time.After(5 * time.Second):
+			log.Warn("a background collector did not stop within 5s; exiting anyway")
+		}
+	}
+}

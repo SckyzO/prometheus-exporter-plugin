@@ -1,0 +1,166 @@
+---
+# Prometheus alerting rules for @@EXPORTER_NAME@@.
+#
+# Load this file in Prometheus with:
+#
+#   rule_files:
+#     - /etc/prometheus/rules/@@EXPORTER_NAME@@_alerts.yml
+#     - /etc/prometheus/rules/@@EXPORTER_NAME@@_rules.yml   # recording rules used by dashboards; see rules.yml
+#
+# Conventions used in this file:
+# - severity: warning | critical    (Alertmanager routing)
+# - component: exporter             (filtering)
+# Add your own site-specific labels (team, runbook_url, dashboard_url, cluster,
+# env, etc.) either in this file or via Prometheus `external_labels` /
+# Alertmanager routing rules — kept out of here to keep the file portable.
+#
+# Thresholds below are reasonable defaults; adjust to your deployment size
+# and operational tolerance (see docs/configuration.md's scrape_interval /
+# scrape_timeout guidance) before wiring Alertmanager notifications.
+#
+# Two tiers of content ship here:
+#
+#   1. HEALTH alerts (active, generic): built entirely from this exporter's
+#      OWN self-instrumentation (internal/collector/status_tracker.go) plus
+#      Prometheus's standard `up` metric. Identical shape for every I/O
+#      flavor this plugin scaffolds, because the self-instrumentation is
+#      identical — see docs/metrics.md's "Self-instrumentation" section.
+#
+#   2. BUSINESS alert (commented-out EXAMPLE, bottom of this file): what your
+#      own collectors measure is specific to your target, so there is no
+#      single business alert that's honest for every exporter. The commented
+#      block teaches the same tiered pattern against the bundled
+#      ExampleCollector's placeholder metric instead of asserting a lie.
+#      `/add-collector` (if you have the scaffolding plugin available)
+#      proposes a real, uncommented alert here for every collector you add.
+
+groups:
+  - name: @@NAMESPACE@@.alerts
+    rules:
+      # ──────────────────────────────────────────────────────────────────
+      # Exporter health (generic — safe to load as-is)
+      # ──────────────────────────────────────────────────────────────────
+
+      # The exporter process itself is unreachable. Unlike every other rule
+      # in this file, this does not depend on anything @@EXPORTER_NAME@@
+      # emits: `up` is set by Prometheus itself from the scrape outcome, so
+      # it still fires even if the exporter binary is completely wedged.
+      # Adjust the `job` label if your scrape_configs entry uses a
+      # different job_name than docs/configuration.md's example.
+      - alert: ExporterDown
+        expr: up{job="@@EXPORTER_NAME@@"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          component: exporter
+        annotations:
+          summary: '@@EXPORTER_NAME@@ target down'
+          description: 'Prometheus has not been able to scrape {{ $labels.instance }} for at least 5 minutes.'
+
+      # `up == 1` only proves Prometheus reached /metrics — it does not
+      # prove @@NAMESPACE@@_exporter_collector_success is actually present.
+      # An empty collector registry (every --no-collector.* flag set) or a
+      # broken StatusTracker registration would leave that metric entirely
+      # absent, and the two collector-level alerts below would then never
+      # fire — healthy-looking purely by omission. This closes that blind
+      # spot. It can legitimately co-fire with ExporterDown during a full
+      # outage (both statements are true at once); that overlap is fine and
+      # is what Alertmanager inhibition rules are for, not this file (see
+      # ../../monitoring/README.md's "What's not in this folder").
+      #
+      # (If you deliberately run with every collector disabled, this alert
+      # will fire on you too — re-enable at least one collector, or drop
+      # this rule locally.)
+      - alert: ExporterMetricsMissing
+        expr: absent(@@NAMESPACE@@_exporter_collector_success)
+        for: 15m
+        labels:
+          severity: critical
+          component: exporter
+        annotations:
+          summary: '@@EXPORTER_NAME@@ is not reporting collector health'
+          description: '@@NAMESPACE@@_exporter_collector_success has been absent for at least 15 minutes — check whether the target is reachable (see ExporterDown) or whether every collector is disabled.'
+
+      # A single collector failing: it logged an error, panicked, or emitted
+      # zero metrics on its last scrape (see status_tracker.go's Collect
+      # doc comment for what counts as a failure). Deliberately a single
+      # warning tier, not warning/critical: how serious "one collector down"
+      # is depends entirely on which collector you added, which this
+      # generic template cannot know. Split this into per-collector tiers
+      # once you know which of your own collectors are critical-path.
+      - alert: ExporterCollectorFailing
+        expr: @@NAMESPACE@@_exporter_collector_success == 0
+        for: 10m
+        labels:
+          severity: warning
+          component: exporter
+        annotations:
+          summary: '@@EXPORTER_NAME@@ collector {{ $labels.collector }} failing'
+          description: 'Collector {{ $labels.collector }} on {{ $labels.instance }} has failed its last scrape for at least 10 minutes. Check the exporter logs for the underlying error.'
+
+      # Scrape duration creeping up toward scrape_timeout is an early
+      # warning of an overloaded or slow-to-respond target, ahead of
+      # Prometheus actually marking the scrape itself as failed (which
+      # would instead surface as ExporterDown above). Tune both thresholds
+      # to comfortably clear your own scrape_timeout.
+      - alert: ExporterCollectorDurationHigh
+        expr: @@NAMESPACE@@_exporter_collector_duration_seconds > 5
+        for: 10m
+        labels:
+          severity: warning
+          component: exporter
+        annotations:
+          summary: '@@EXPORTER_NAME@@ collector {{ $labels.collector }} slow'
+          description: 'Collector {{ $labels.collector }} on {{ $labels.instance }} took {{ printf "%.1f" $value }}s on its last scrape (threshold: 5s).'
+
+      - alert: ExporterCollectorDurationHigh
+        expr: @@NAMESPACE@@_exporter_collector_duration_seconds > 20
+        for: 10m
+        labels:
+          severity: critical
+          component: exporter
+        annotations:
+          summary: '@@EXPORTER_NAME@@ collector {{ $labels.collector }} critically slow'
+          description: 'Collector {{ $labels.collector }} on {{ $labels.instance }} took {{ printf "%.1f" $value }}s on its last scrape (threshold: 20s). Approaching a typical scrape_timeout — the next scrape may fail outright.'
+
+      # ──────────────────────────────────────────────────────────────────
+      # EXAMPLE — business alert (commented out: not loaded by Prometheus)
+      # ──────────────────────────────────────────────────────────────────
+      # A business alert fires on what your collectors actually measure, so
+      # it is necessarily specific to your own target — unlike the health
+      # alerts above, there is no version of this that is true for every
+      # exporter this plugin can scaffold. This block is a `#` YAML
+      # comment, not a rule Prometheus loads, so it can neither break
+      # `promtool check rules` nor assert a metric that doesn't exist for
+      # your flavor. It shows the same tiered warning/critical + `for:` +
+      # portable-labels pattern as the health alerts above, applied to the
+      # bundled ExampleCollector as a worked example — replace the metric
+      # name and thresholds with your own once you adapt (or add, via
+      # /add-collector) a real collector:
+      #
+      #   - alert: ExampleTargetDegraded
+      #     expr: @@NAMESPACE@@_your_metric_name > 100          # replace with your metric + threshold
+      #     for: 10m
+      #     labels:
+      #       severity: warning
+      #       component: exporter
+      #     annotations:
+      #       summary: '@@EXPORTER_NAME@@ target degraded'
+      #       description: '{{ $labels.instance }} has reported {{ $value }} for 10 minutes (threshold: 100).'
+      #
+      #   - alert: ExampleTargetDegraded
+      #     expr: @@NAMESPACE@@_your_metric_name > 500          # replace with your metric + threshold
+      #     for: 10m
+      #     labels:
+      #       severity: critical
+      #       component: exporter
+      #     annotations:
+      #       summary: '@@EXPORTER_NAME@@ target critically degraded'
+      #       description: '{{ $labels.instance }} has reported {{ $value }} for 10 minutes (threshold: 500).'
+      #
+      # The bundled ExampleCollector itself emits @@NAMESPACE@@_items /
+      # @@NAMESPACE@@_healthy (HTTP flavor) or @@NAMESPACE@@_example /
+      # @@NAMESPACE@@_example_entries (CLI flavor) — see docs/metrics.md for
+      # the pair your flavor actually ships. `/add-collector` (if you have
+      # the scaffolding plugin available) proposes a real, uncommented
+      # alert here for every collector's own metrics as you add them.

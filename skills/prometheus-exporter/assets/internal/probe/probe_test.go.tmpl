@@ -1,0 +1,157 @@
+package probe
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+
+	"@@MODULE_PATH@@/internal/logger"
+)
+
+// recordingFactory records how it was called and returns a stub collector.
+type recordingFactory struct {
+	calls   int
+	target  string
+	timeout time.Duration
+	panics  bool // when true, the returned collector panics on Collect
+}
+
+func (f *recordingFactory) make(target string, timeout time.Duration) prometheus.Collector {
+	f.calls++
+	f.target = target
+	f.timeout = timeout
+	if f.panics {
+		return panicCollector{}
+	}
+	return &stubCollector{desc: prometheus.NewDesc("stub_up", "stub", nil, nil)}
+}
+
+type stubCollector struct{ desc *prometheus.Desc }
+
+func (s *stubCollector) Describe(ch chan<- *prometheus.Desc) { ch <- s.desc }
+func (s *stubCollector) Collect(ch chan<- prometheus.Metric) {
+	ch <- prometheus.MustNewConstMetric(s.desc, prometheus.GaugeValue, 1)
+}
+
+type panicCollector struct{}
+
+func (panicCollector) Describe(chan<- *prometheus.Desc) {}
+func (panicCollector) Collect(chan<- prometheus.Metric) { panic("collector boom") }
+
+func serve(h *Handler, rawurl string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, rawurl, nil)
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func newTestHandler(f *recordingFactory, allowlist []string) *Handler {
+	return NewHandler(logger.NewTextLogger("error"), f.make, allowlist, 5*time.Second)
+}
+
+func TestFloorRejectsNonHTTPScheme(t *testing.T) {
+	f := &recordingFactory{}
+	rec := serve(newTestHandler(f, nil), "/probe?target=file:///etc/passwd")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("file:// target: got %d, want 400", rec.Code)
+	}
+	if f.calls != 0 {
+		t.Fatalf("factory invoked %d times for a rejected target, want 0", f.calls)
+	}
+}
+
+func TestFloorRejectsBareHost(t *testing.T) {
+	f := &recordingFactory{}
+	rec := serve(newTestHandler(f, nil), "/probe?target=localhost:9100")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("bare host target: got %d, want 400", rec.Code)
+	}
+	if f.calls != 0 {
+		t.Fatalf("factory invoked for a scheme-less target, want 0")
+	}
+}
+
+func TestMissingTargetRejected(t *testing.T) {
+	f := &recordingFactory{}
+	rec := serve(newTestHandler(f, nil), "/probe")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("missing target: got %d, want 400", rec.Code)
+	}
+	if f.calls != 0 {
+		t.Fatalf("factory invoked with no target, want 0")
+	}
+}
+
+func TestAllowlistDeniesUnlistedTarget(t *testing.T) {
+	f := &recordingFactory{}
+	rec := serve(newTestHandler(f, []string{"node1"}), "/probe?target=http://node2:9100")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("unlisted target: got %d, want 403", rec.Code)
+	}
+	if f.calls != 0 {
+		t.Fatalf("factory invoked for a denied target, want 0")
+	}
+}
+
+func TestAllowlistAllowsListedTarget(t *testing.T) {
+	f := &recordingFactory{}
+	rec := serve(newTestHandler(f, []string{"node1"}), "/probe?target=http://node1:9100")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("listed target: got %d, want 200", rec.Code)
+	}
+	if f.calls != 1 || f.target != "http://node1:9100" {
+		t.Fatalf("factory calls=%d target=%q, want 1 / http://node1:9100", f.calls, f.target)
+	}
+}
+
+func TestEmptyAllowlistAllowsAnyHTTPTarget(t *testing.T) {
+	f := &recordingFactory{}
+	rec := serve(newTestHandler(f, nil), "/probe?target=http://anything.internal:9100")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("allow-any: got %d, want 200", rec.Code)
+	}
+	if f.calls != 1 {
+		t.Fatalf("factory calls=%d, want 1", f.calls)
+	}
+}
+
+func TestProbeSuccessTrueWhenCollectorHealthy(t *testing.T) {
+	f := &recordingFactory{}
+	rec := serve(newTestHandler(f, nil), "/probe?target=http://ok:9100")
+	if !strings.Contains(rec.Body.String(), "probe_success 1") {
+		t.Fatalf("expected probe_success 1, body:\n%s", rec.Body.String())
+	}
+}
+
+func TestProbeSuccessFalseWhenCollectorPanics(t *testing.T) {
+	f := &recordingFactory{panics: true}
+	rec := serve(newTestHandler(f, nil), "/probe?target=http://bad:9100")
+	if !strings.Contains(rec.Body.String(), "probe_success 0") {
+		t.Fatalf("expected probe_success 0, body:\n%s", rec.Body.String())
+	}
+}
+
+func TestClampTimeoutHonoursHeaderAndCeiling(t *testing.T) {
+	h := NewHandler(logger.NewTextLogger("error"), (&recordingFactory{}).make, nil, 5*time.Second)
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/probe?target=http://x:9100", nil)
+	req.Header.Set("X-Prometheus-Scrape-Timeout-Seconds", "30")
+	if got := h.clampTimeout(req); got != 5*time.Second {
+		t.Errorf("header above ceiling: got %v, want 5s", got)
+	}
+
+	req.Header.Set("X-Prometheus-Scrape-Timeout-Seconds", "2")
+	if got := h.clampTimeout(req); got != 2*time.Second {
+		t.Errorf("header below ceiling: got %v, want 2s", got)
+	}
+
+	req.Header.Del("X-Prometheus-Scrape-Timeout-Seconds")
+	if got := h.clampTimeout(req); got != 5*time.Second {
+		t.Errorf("no header: got %v, want 5s", got)
+	}
+}

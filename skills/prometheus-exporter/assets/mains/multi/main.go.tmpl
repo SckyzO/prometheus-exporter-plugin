@@ -1,0 +1,155 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/alecthomas/kingpin/v2"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/prometheus/common/version"
+	"github.com/prometheus/exporter-toolkit/web"
+	webflag "github.com/prometheus/exporter-toolkit/web/kingpinflag"
+
+	"@@MODULE_PATH@@/internal/collector"
+	"@@MODULE_PATH@@/internal/logger"
+	"@@MODULE_PATH@@/internal/probe"
+)
+
+// namespace is this exporter's Prometheus metric prefix (used by the landing
+// page and startup log). See internal/collector for how @@NAMESPACE@@ is
+// substituted into each collector's own metric names.
+const namespace = "@@NAMESPACE@@"
+
+var (
+	logLevel     = kingpin.Flag("log.level", "Only log messages with the given severity or above. One of: [debug, info, warn, error]").Default("info").Enum("debug", "info", "warn", "error")
+	logFormat    = kingpin.Flag("log.format", "Log format. One of: [json, text]").Default("text").Enum("json", "text")
+	toolkitFlags = webflag.AddFlags(kingpin.CommandLine, ":@@DEFAULT_PORT@@")
+
+	// disableExporterMetrics removes Go runtime and process metrics from /metrics.
+	disableExporterMetrics = kingpin.Flag(
+		"web.disable-exporter-metrics",
+		"Exclude Go runtime and process metrics from the /metrics endpoint.",
+	).Default("false").Bool()
+
+	// probeTargetAllowlist restricts which targets /probe will scrape. Empty
+	// (the default) accepts any http/https target — the Blackbox/SNMP
+	// ecosystem default. See SECURITY.md and the startup warning.
+	probeTargetAllowlist = kingpin.Flag(
+		"probe.target-allowlist",
+		"Restrict /probe to these target hosts (repeatable; host or host:port). Empty (default) accepts any http/https target.",
+	).Strings()
+)
+
+// indexHTML is the landing page served at /.
+var indexHTML = fmt.Sprintf(`<html>
+	<head><title>%s Exporter</title></head>
+	<body>
+		<h1>%s Exporter (multi-target)</h1>
+		<p>Probe a target: <a href='/probe?target=http://localhost:9100'>/probe?target=http://localhost:9100</a></p>
+		<p>Exporter self-metrics: <a href='/metrics'>/metrics</a></p>
+	</body>
+</html>`, namespace, namespace)
+
+func main() {
+	var log *logger.Logger
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stop()
+
+	// Upper bound for each /probe request's timeout. Named to match the
+	// single-target flavor's collector.example.timeout so the knob is
+	// consistent across models; the probe handler clamps it further by
+	// Prometheus's own X-Prometheus-Scrape-Timeout-Seconds header.
+	exampleTimeout := kingpin.Flag(
+		"collector.example.timeout",
+		"Upper bound for each /probe request's timeout.",
+	).Default("5s").Duration()
+
+	kingpin.Version(version.Print("@@EXPORTER_NAME@@"))
+	kingpin.HelpFlag.Short('h')
+	kingpin.Parse()
+
+	if *logFormat == "json" {
+		log = logger.NewJSONLogger(*logLevel)
+	} else {
+		log = logger.NewTextLogger(*logLevel)
+	}
+
+	warnIfExposedAndUnauthenticated(log, *toolkitFlags.WebListenAddresses, *toolkitFlags.WebConfigFile)
+	warnIfProbeUnrestricted(log, *probeTargetAllowlist)
+
+	// @@PROBE_FACTORIES@@
+
+	probeHandler := probe.NewHandler(log, factory, *probeTargetAllowlist, *exampleTimeout)
+
+	// /metrics reports on the EXPORTER ITSELF (build info, Go runtime/process,
+	// aggregate request timing), scraped independently of any probed target —
+	// exactly like the Blackbox exporter. The per-target series come from
+	// /probe, on a fresh registry per request.
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(collectors.NewBuildInfoCollector())
+	if !*disableExporterMetrics {
+		reg.MustRegister(
+			collectors.NewGoCollector(),
+			collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+		)
+	}
+	reg.MustRegister(collector.RequestDuration)
+
+	log.Info("Starting multi-target exporter server...", "namespace", namespace)
+
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(indexHTML))
+	})
+	http.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{
+		EnableOpenMetrics: true,
+		ErrorHandling:     promhttp.ContinueOnError,
+	}))
+	http.Handle("/probe", probeHandler)
+	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+
+	server := &http.Server{
+		ReadHeaderTimeout: 5 * time.Second, // Mitigate Slowloris attacks (G112).
+	}
+
+	go func() {
+		<-ctx.Done()
+		log.Info("Shutdown signal received, draining in-flight requests...")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			log.Error("Graceful shutdown failed", "err", err)
+		}
+	}()
+
+	if err := web.ListenAndServe(server, toolkitFlags, log.Logger); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Error("Failed to start HTTP server", "err", err)
+		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+		os.Exit(1) //nolint:gocritic // stop() called explicitly above
+	}
+
+	log.Info("Server stopped")
+}
+
+// warnIfProbeUnrestricted logs one visible, non-fatal warning when /probe has
+// no allowlist: it then accepts any http/https target, so anyone who can reach
+// this exporter can make it issue requests to arbitrary hosts. Never blocks
+// startup (same posture as warnIfExposedAndUnauthenticated).
+func warnIfProbeUnrestricted(log *logger.Logger, allowlist []string) {
+	if len(allowlist) == 0 {
+		log.Warn("/probe accepts any target: anyone who can reach this exporter can make it " +
+			"issue HTTP requests to arbitrary hosts; set --probe.target-allowlist to restrict, and see SECURITY.md")
+	}
+}

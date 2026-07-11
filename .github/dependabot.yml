@@ -1,0 +1,19 @@
+# Dependabot for THIS repo (the plugin itself), not for the exporters it
+# scaffolds — those ship their own dependabot.yml via
+# skills/prometheus-exporter/assets/.github/dependabot.yml.tmpl (gomod +
+# github-actions + docker, weekly).
+#
+# Only `github-actions` is configured here, deliberately: this repo has no
+# real go.mod / Dockerfile / package manifest — its Go code, Dockerfiles and
+# dependencies are all TEMPLATES (go.mod.tmpl, Dockerfile.tmpl, ...) that
+# Dependabot cannot parse. The only real, Dependabot-visible dependencies are
+# the third-party Actions pinned in .github/workflows/. Freshness of the
+# TEMPLATED versions (Go toolchain, base-image digests, module versions) is
+# handled instead by the weekly `schedule:` on plugin-ci.yml, whose
+# golden-smoke job runs govulncheck against a freshly-scaffolded exporter.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

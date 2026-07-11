@@ -1,0 +1,192 @@
+package collector
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+
+	"@@MODULE_PATH@@/internal/logger"
+)
+
+// exampleMetric is one parsed key/value line from the example data source —
+// for example the line "foo 1" parses to {Key: "foo", Value: 1}. This is a
+// placeholder shape documenting the pattern, not any real target's real
+// output. Replace it, and parseExample below, with your actual data
+// source's real parsing logic when adapting this collector.
+type exampleMetric struct {
+	Key   string
+	Value float64
+}
+
+// exampleData is this collector's only I/O: it runs the configured command
+// and returns its raw output. Kept separate from parsing (parseExample,
+// below) so parsing stays pure and unit-testable without running a real
+// command. The per-command timeout is applied here, around the single
+// Execute call, rather than inside Execute itself — see execute.go's own
+// doc comment for why that split is deliberate.
+func (c *ExampleCollector) exampleData(ctx context.Context) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+	return Execute(ctx, "@@DATA_SOURCE@@")
+}
+
+// parseExample decodes exampleData's raw output into one exampleMetric per
+// non-blank line. Pure: no I/O, no logging, no side effects, so every input
+// maps deterministically to an output — this is what makes it
+// unit-testable with plain byte fixtures (see parser_test.go's
+// TestParseExample).
+//
+// The expected shape is one "key value" pair per line, arbitrary
+// whitespace-separated, for example:
+//
+//	foo 1
+//	bar 2
+//
+// Blank lines are skipped. Anything else — a line that isn't exactly two
+// whitespace-separated fields, whose second field isn't a number, or whose
+// key repeats a key already seen earlier in the same input — is a parse
+// error. The repeated-key rule is deliberate, not incidental: Collect below
+// emits one MustNewConstMetric per entry, all sharing the same descriptor
+// and labeled only by key, so two entries with the same key would produce
+// two metrics with an identical label set on that descriptor — something
+// Prometheus's Registry.Gather rejects at scrape time (see main.go's
+// ErrorHandling comment for what an unguarded Gather error there does to
+// the REST of the scrape). Rejecting the duplicate here, at parse time,
+// keeps that failure inside this collector's own fail-closed contract
+// (parse error → Collect logs and emits nothing, see Collect's doc comment)
+// instead of surfacing downstream as a Gather error. Adapting this parser
+// for a real data source that can legitimately repeat keys must
+// dedupe/aggregate before returning, or add a further label to
+// disambiguate — never let two ConstMetrics reach the same label set. This
+// generic shape only exists to document the I/O → pure-parse → glue pattern
+// every collector in this exporter follows, not to model any specific
+// target; replace it with your real data source's real parsing logic when
+// adapting this collector.
+func parseExample(b []byte) ([]exampleMetric, error) {
+	var metrics []exampleMetric
+	seen := make(map[string]struct{})
+
+	scanner := bufio.NewScanner(bytes.NewReader(b))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			return nil, fmt.Errorf("parse example line %q: want exactly 2 whitespace-separated fields, got %d", line, len(fields))
+		}
+
+		value, err := strconv.ParseFloat(fields[1], 64)
+		if err != nil {
+			return nil, fmt.Errorf("parse example line %q: value %q is not a number: %w", line, fields[1], err)
+		}
+
+		key := fields[0]
+		if _, dup := seen[key]; dup {
+			return nil, fmt.Errorf("parse example line %q: duplicate key %q (each key must appear at most once per scrape)", line, key)
+		}
+		seen[key] = struct{}{}
+
+		metrics = append(metrics, exampleMetric{Key: key, Value: value})
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan example output: %w", err)
+	}
+
+	return metrics, nil
+}
+
+// exampleGetMetrics is the glue between the I/O step (exampleData) and the
+// pure parsing step (parseExample): the shape every collector in this
+// exporter follows, regardless of flavor.
+func (c *ExampleCollector) exampleGetMetrics(ctx context.Context) ([]exampleMetric, error) {
+	data, err := c.exampleData(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return parseExample(data)
+}
+
+// ExampleCollector is the starter collector materialized by
+// /new-prometheus-exporter. It is meant to be renamed and pointed at a real
+// command (see exampleMetric's doc comment), but its shape — I/O then pure
+// parse then glue then Describe then Collect — is the one every collector
+// you add should follow.
+type ExampleCollector struct {
+	timeout time.Duration
+	log     *logger.Logger
+	entries *prometheus.Desc
+	value   *prometheus.Desc
+}
+
+// NewExampleCollector wires a per-command timeout into a ready-to-register
+// prometheus.Collector.
+func NewExampleCollector(log *logger.Logger, timeout time.Duration) prometheus.Collector {
+	return &ExampleCollector{
+		timeout: timeout,
+		log:     log,
+		entries: prometheus.NewDesc(
+			"@@NAMESPACE@@_example_entries",
+			"Number of key/value entries parsed from the example data source in the last scrape.",
+			nil, nil,
+		),
+		value: prometheus.NewDesc(
+			"@@NAMESPACE@@_example",
+			"Value reported by the example data source, by key.",
+			[]string{"key"}, nil,
+		),
+	}
+}
+
+// Describe sends exactly this collector's two metric descriptors. They are
+// constant regardless of scrape outcome, which is what makes
+// prometheus.DescribeByCollect unnecessary here.
+func (c *ExampleCollector) Describe(ch chan<- *prometheus.Desc) {
+	ch <- c.entries
+	ch <- c.value
+}
+
+// Collect fetches and emits this collector's metrics. On any error it logs
+// and returns without sending anything: the StatusTracker wrapping every
+// collector counts how many metrics each Collect call actually emits, and
+// zero from one scrape is what makes it set
+// @@NAMESPACE@@_exporter_collector_success{collector="example"} to 0 for
+// this collector, instead of silently publishing stale or zero-value data as
+// if it were current (see status_tracker.go's Collect for the counting
+// logic this relies on).
+//
+// Collector-authoring rule: on a successful scrape always emit your
+// metrics — with zero VALUES when there is no data — never zero metrics.
+// Emitting nothing is what StatusTracker treats as a failed scrape, so a
+// collector that wants to report "no data" as a normal outcome must still
+// send a metric, not bare-return like the error path below. entries exists
+// precisely to satisfy that rule here: it is a fixed-shape gauge (no
+// labels), always emitted below, valued 0 when metrics is empty, so a
+// successful-but-empty parse still reports success. value's per-key gauges,
+// by contrast, legitimately emit nothing when there is nothing to report —
+// that's fine, because entries has already satisfied the rule for this
+// scrape regardless.
+func (c *ExampleCollector) Collect(ch chan<- prometheus.Metric) {
+	metrics, err := c.exampleGetMetrics(context.Background())
+	if err != nil {
+		// Error path: log and return with zero metrics sent — see the
+		// collector-authoring rule above for why that bare return is only
+		// correct here, on a genuine failure, and not as a stand-in for "no
+		// data this scrape".
+		c.log.Error("Failed to get example metrics", "err", err)
+		return
+	}
+
+	ch <- prometheus.MustNewConstMetric(c.entries, prometheus.GaugeValue, float64(len(metrics)))
+	for _, m := range metrics {
+		ch <- prometheus.MustNewConstMetric(c.value, prometheus.GaugeValue, m.Value, m.Key)
+	}
+}
