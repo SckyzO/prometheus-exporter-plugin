@@ -349,7 +349,7 @@ reports/fix passes. Numbered for cross-reference from §2's tables.
 
 | Pin | Value at v0.1 | Source in the reference | Note for the next re-sync |
 |---|---|---|---|
-| Go toolchain | `1.26.4` (`golang:1.26.4-alpine@sha256:3ad57304ad93bbec8548a0437ad9e06a455660655d9af011d58b993f6f615648`) | `scripts/docker/tools/Dockerfile`, `go.mod`'s `toolchain` directive | Re-verify the digest resolves live (`docker pull`) before reusing; don't copy a digest without pulling it |
+| Go toolchain | `1.26.5` (`golang:1.26.5-alpine@sha256:3ad57304ad93bbec8548a0437ad9e06a455660655d9af011d58b993f6f615648`) | `scripts/docker/tools/Dockerfile`, `go.mod`'s `toolchain` directive | Re-verify the digest resolves live (`docker pull`) before reusing; don't copy a digest without pulling it |
 | `prometheus/client_golang` | v1.23.2 | `go.mod` | — |
 | `prometheus/exporter-toolkit` | v0.16.0 | `go.mod` | Not context7-indexed — re-verify `webflag.AddFlags`/`web.ListenAndServe`/`web.FlagConfig` field names against the tagged source directly if this version changes, not from memory |
 | `prometheus/common` | v0.68.1 | `go.mod` | — |

@@ -1,6 +1,6 @@
 # Live-target probe — discovery ladder rung 4
 
-**Status:** design approved 2026-07-08 · sub-project 3a of the v0.2.x
+**Status:** design approved 2026-07-08 · sub-project 3a of the v0.3.0
 "multi-target + live-probe" epic. The multi-target scaffold work (3b) is a
 separate, later sub-project and is out of scope here.
 

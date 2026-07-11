@@ -1,8 +1,8 @@
 # Multi-target scaffold — `/probe?target=` runtime
 
-**Status:** design approved 2026-07-10 · sub-project 3b of the v0.2.x
+**Status:** design approved 2026-07-10 · sub-project 3b of the v0.3.0
 "multi-target + live-probe" epic. Sub-project 3a (live-probe, discovery rung 4)
-landed first and is out of scope here. Together 3a + 3b will be tagged v0.2.x.
+landed first and is out of scope here. Together 3a + 3b were tagged v0.3.0.
 
 ## 1. Goal
 
@@ -28,7 +28,7 @@ passes `make check` identically.
   and every ecosystem multi-target exporter is a network prober.
 - **A `module` query parameter.** Blackbox/SNMP use `module` to pick a probe
   profile; this scaffold's collectors are already toggled by
-  `--collector.<name>` flags, so a second selection axis is redundant for v0.2.x.
+  `--collector.<name>` flags, so a second selection axis is redundant for v0.3.0.
 - **`/add-collector` multi-awareness.** Adding a collector to a multi-target
   exporter is a documented follow-up (see §3.6), the same "documented
   follow-up" treatment multi-target itself carried until now.
@@ -351,4 +351,4 @@ SSRF floor/allowlist bites**.
 
 `/add-collector` multi-awareness, a `module` parameter, cli multi-target, and a
 per-target `RequestDuration` label — all deferred (§1 Non-goals), filed on the
-ROADMAP as the remaining multi-target work after v0.2.x.
+ROADMAP as the remaining multi-target work after v0.3.0.
