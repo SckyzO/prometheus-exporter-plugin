@@ -40,6 +40,14 @@ on:
   push:
     branches: [main, master]
   pull_request:
+  # Weekly watchdog: golden-smoke scaffolds a real exporter and runs its
+  # `make check`, which includes govulncheck@latest against a fresh vuln DB.
+  # The exporter's Go toolchain, base-image digests and dependencies are
+  # TEMPLATED (go.mod.tmpl, Dockerfile.tmpl, ...) so Dependabot can't see them;
+  # this schedule surfaces a newly-published vulnerability in those pinned
+  # template versions without waiting for a commit (e.g. GO-2026-5856).
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
 
 permissions:
   contents: read
