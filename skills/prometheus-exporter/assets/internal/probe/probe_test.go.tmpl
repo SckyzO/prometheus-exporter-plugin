@@ -1,6 +1,7 @@
 package probe
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -44,7 +45,7 @@ func (panicCollector) Collect(chan<- prometheus.Metric) { panic("collector boom"
 
 func serve(h *Handler, rawurl string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, rawurl, nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, rawurl, nil)
 	h.ServeHTTP(rec, req)
 	return rec
 }
@@ -138,7 +139,7 @@ func TestProbeSuccessFalseWhenCollectorPanics(t *testing.T) {
 func TestClampTimeoutHonoursHeaderAndCeiling(t *testing.T) {
 	h := NewHandler(logger.NewTextLogger("error"), (&recordingFactory{}).make, nil, 5*time.Second)
 
-	req := httptest.NewRequest(http.MethodGet, "/probe?target=http://x:9100", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/probe?target=http://x:9100", nil)
 	req.Header.Set("X-Prometheus-Scrape-Timeout-Seconds", "30")
 	if got := h.clampTimeout(req); got != 5*time.Second {
 		t.Errorf("header above ceiling: got %v, want 5s", got)
