@@ -3,3 +3,6 @@
 /test/_work/
 *.log
 .DS_Store
+
+# Subagent-driven-development scratch ledger (progress.md, task briefs/reports)
+.superpowers/
