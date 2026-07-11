@@ -1,15 +1,12 @@
 # TODO
 
-This file is a coarse-grained pointer, not the backlog itself. The source of
-truth for implementation work is the plan:
-
-**[`docs/plans/2026-07-03-prometheus-exporter-plugin-v0.1.md`](docs/plans/2026-07-03-prometheus-exporter-plugin-v0.1.md)**
-
-That plan breaks the v0.1 milestone (see [`ROADMAP.md`](ROADMAP.md)) into 10
-implementation milestones and 23 tasks, each with step-by-step instructions,
-file lists, and a provable exit condition. Update checkboxes *there* as
-tasks complete; this file only tracks milestone-level progress so a
-contributor can see where the build stands without reading all 23 tasks.
+This file is a coarse-grained pointer, not the backlog itself. The v0.1
+milestone's task-by-task breakdown lived in a since-pruned implementation
+plan; see
+[`docs/design/2026-07-02-prometheus-exporter-plugin-design.md`](docs/design/2026-07-02-prometheus-exporter-plugin-design.md)
+for the architecture it implemented. That plan broke the v0.1 milestone (see
+[`ROADMAP.md`](ROADMAP.md)) into 10 implementation milestones and 23 tasks;
+all of them are complete, tracked below at milestone granularity.
 
 ## Milestones toward v0.1
 
@@ -35,13 +32,13 @@ contributor can see where the build stands without reading all 23 tasks.
       `/new-prometheus-exporter`, `/add-collector`, and `exporter-reviewer`.
 - [x] **Milestone 8: The skill** (Tasks 18-21). `SKILL.md` router and the
       10 reference documents.
-- [ ] **Milestone 9: Plugin CI, golden gate, dogfooding** (Tasks 22-23).
+- [x] **Milestone 9: Plugin CI, golden gate, dogfooding** (Tasks 22-23).
       The full golden matrix, this plugin's own CI, and
-      `docs/design/re-sync.md` are done, and the `[0.1.0]` entry is in
-      `CHANGELOG.md`; the `v0.1.0` tag and release are a maintainer action
-      taken separately from this checklist.
+      `docs/design/re-sync.md` are done; the `[0.1.0]` entry landed in
+      `CHANGELOG.md` and the `v0.1.0` tag and release have shipped.
 
 ## After v0.1
 
-v0.2 and v1.0 scope lives in [`ROADMAP.md`](ROADMAP.md); no task breakdown
-exists for them yet.
+v0.2.0 and v0.3.0 have since shipped — see [`CHANGELOG.md`](CHANGELOG.md) for
+what landed in each and [`ROADMAP.md`](ROADMAP.md) for what's still ahead
+toward v1.0.
