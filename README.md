@@ -6,23 +6,43 @@ mockable I/O, container-first tooling, host-agnostic releases, health and
 business alerting, and a metrics-docs check that cannot lie about what the
 code actually emits.
 
-It is the first Claude Code plugin dedicated to *creating* exporters, rather
-than reviewing or operating existing ones.
+It focuses on *creating* exporters, not reviewing or operating existing
+ones.
+
+```mermaid
+flowchart LR
+    D["/design-exporter"] -->|architecture brief| N["/new-prometheus-exporter"]
+    N --> repo[["scaffolded exporter repo"]]
+    repo --> A["/add-collector"]
+    A -->|new collector| repo
+    repo --> G["/generate-dashboard"]
+    repo --> R["exporter-reviewer"]
+```
 
 ## What it gives you
 
-- **An architecture-first design phase**, run before any code is written:
-  choice of data source (REST/API, then gRPC, then a CLI wrapper as the
-  last resort — a database-only target is out of scope), single- vs
-  multi-target shape, collector decomposition, and a cardinality budget.
+- **`/design-exporter`**: the architecture-design phase, run before any code
+  is written. It grounds the design in a local API spec, a docs folder or
+  URL, context7, or a live instance of the target (opt-in, with secret
+  redaction), then writes a reviewable architecture brief. The phase settles
+  the data source (a REST/API, then gRPC, then a CLI wrapper as a last
+  resort; a database-only target is out of scope), the single- or
+  multi-target shape, the collector decomposition, and a cardinality budget.
 - **`/new-prometheus-exporter`**: scaffolds a complete, buildable exporter
-  repository with your choice of **HTTP** or **CLI** I/O flavor and your
-  choice of license. It includes a working example collector with its full
-  test triad, a container-first Makefile, and host-agnostic release tooling
-  (GoReleaser, with an optional GitHub Actions layer).
+  repository with your choice of HTTP or CLI I/O flavor and your choice of
+  license. It includes a working example collector with its full test triad,
+  a container-first Makefile, and host-agnostic release tooling (GoReleaser,
+  with an optional GitHub Actions layer). Add `--target-model multi` (HTTP
+  only) to scaffold a `/probe?target=` exporter instead of a single-target
+  one.
 - **`/add-collector`**: adds a new collector plus its test triad to an
   existing scaffolded exporter, the action repeated most often over an
-  exporter's life.
+  exporter's life. `--variant background` refreshes the collector's cache in
+  a background goroutine so a slow backend never blocks a scrape.
+- **`/generate-dashboard`**: generates one or more business Grafana
+  dashboards from a scaffolded exporter's own `docs/metrics.md`, on top of a
+  deterministic backbone that emits exportable Grafana JSON. It complements
+  the health dashboard every scaffold already ships and never touches it.
 - **`exporter-reviewer`**: a subagent that audits an exporter against
   Prometheus naming/type/label conventions, the generic/specific template
   discipline, cardinality limits, per-collector test coverage, and
@@ -34,8 +54,8 @@ than reviewing or operating existing ones.
   exporter that fails the build if its metrics documentation names a metric
   or label the code doesn't actually emit.
 
-See [`ROADMAP.md`](ROADMAP.md) for what ships in v0.1 versus what's planned
-for later versions.
+See [`ROADMAP.md`](ROADMAP.md) for what each release has shipped and what is
+planned for later versions.
 
 ## Distribution & install
 
