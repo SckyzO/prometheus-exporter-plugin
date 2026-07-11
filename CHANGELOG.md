@@ -31,6 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   empty, and an always-on http/https target floor. Single-target remains
   the default and is unchanged.
 
+### Security
+
+- Pinned the scaffold's Go toolchain to **1.26.5**, which carries the fix for
+  GO-2026-5856 (Encrypted Client Hello privacy leak in `crypto/tls`). Every
+  scaffolded exporter reaches `crypto/tls` through `web.ListenAndServe`, so this
+  keeps their `make check` (govulncheck) clean.
+
 ## [0.2.0] - 2026-07-08
 
 ### Added
