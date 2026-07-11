@@ -933,8 +933,8 @@ EOF
   fi
   echo "confirmed: add-collector sub-check PASSED ($flavor/$forge)"
 
-  # Background-refresh collector epic (docs/plans/2026-07-06-background-
-  # refresh-collector.md, Task 7): extend this SAME http/none /add-collector
+  # Background-refresh collector epic (docs/design/2026-07-06-background-
+  # refresh-collector-design.md): extend this SAME http/none /add-collector
   # sub-check to ALSO mechanically exercise the NEW --variant background
   # branch, right after the synchronous "queue" sub-check above. Named
   # "tape" after this epic's own driving case
@@ -1036,7 +1036,7 @@ EOF
 fi
 
 # Deterministic dashboard-backbone sub-check (generate-dashboard epic,
-# docs/plans/2026-07-07-generate-dashboard.md): the /generate-dashboard command
+# docs/design/2026-07-07-generate-dashboard-design.md): the /generate-dashboard command
 # is assistant-driven (a metrics.md-anchored RED/USE dialogue, context7
 # enrichment — real judgment calls), so this does NOT simulate the command. It
 # exercises only the SCRIPTABLE floor every real run also invokes: the shared

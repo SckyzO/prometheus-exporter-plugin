@@ -80,7 +80,7 @@ echo "PASS: explicit --target-model single matches the default"
 
 # ---------------------------------------------------------------------------
 # 3. --target-model multi --flavor cli must be rejected: there is no cli
-#    multi-target (Global Constraint, docs/plans/2026-07-10-multi-target.md).
+#    multi-target (Global Constraint, docs/design/2026-07-10-multi-target-design.md).
 # ---------------------------------------------------------------------------
 # shellcheck disable=SC2086
 run --src "$assets" --dst "$work/bad-cli-multi" --flavor cli --forge none --target-model multi $commonvars
