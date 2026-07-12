@@ -2,8 +2,8 @@
 
 This is step 0 of the workflow: a design pass that runs *before* the first
 line of Go is written and before `/new-prometheus-exporter` is invoked. It
-produces four decisions — the data source, the single- vs. multi-target
-model, the I/O flavor, and the collector list with its cardinality budget —
+produces four decisions (the data source, the single- vs. multi-target
+model, the I/O flavor, and the collector list with its cardinality budget)
 that everything downstream (the scaffold, the per-collector loop, the
 alerting) is built from. Getting this phase right is cheaper than
 re-architecting a repository that already builds.
@@ -27,7 +27,7 @@ genuinely unavailable:
    targets expose one.
 2. **gRPC.** Prefer it over a REST API when the target's *primary*, best
    maintained interface is gRPC rather than a REST facade bolted on
-   afterward — a typed, generated client is just as mockable as an HTTP one
+   afterward. A typed, generated client is just as mockable as an HTTP one
    (swap the generated client for a fake implementing the same generated
    interface). This scaffold does not ship a dedicated `grpc` flavor today:
    a gRPC-backed collector adapts the HTTP flavor's injectable-client shape
@@ -37,26 +37,26 @@ genuinely unavailable:
    preferred option: output formats are rarely versioned, rarely
    machine-readable by design, and change without notice between tool
    releases. It is the right call only when a target's *only* interface is a
-   CLI binary — commonly a legacy system whose API surface predates its
+   CLI binary, commonly a legacy system whose API surface predates its
    monitoring needs. This scaffold ships a `cli` flavor precisely because
    that situation is common enough to deserve first-class support, not
    because CLI wrapping is the recommended starting point.
 
-**Database targets are out of scope for this plugin — a deliberate
+**Database targets are out of scope for this plugin: a deliberate
 non-goal, not a deferred feature.** When a target's only interface is its
 own database, reach for a purpose-built tool instead of this scaffold: the
 database engine itself is already well served by `postgres_exporter` or
 `mysqld_exporter`, and arbitrary SQL-to-metrics is served by the
 config-driven `sql_exporter` (a YAML mapping from query to metric, no Go to
 write at all). This scaffold exists for programs that have **no existing
-exporter**, reached through their own HTTP API, gRPC, or CLI — a database
+exporter**, reached through their own HTTP API, gRPC, or CLI. A database
 schema was rarely designed as a stable public contract, and the tools above
 already cover that ground better than a hand-rolled collector would.
 
 context7 is one of several grounding inputs, used in the ladder's
 preference order (local spec first, then docs, then context7). Whichever
 rung you land on, use context7 against the **target's own**
-documentation before writing a collector against it — its actual endpoints,
+documentation before writing a collector against it: its actual endpoints,
 payload shapes, authentication, and pagination, not a remembered or assumed
 shape. This is separate from, and happens before, the context7 lookup against
 `prometheus.io` in step 1 of the workflow (`prometheus-principles.md`), which
@@ -74,13 +74,13 @@ Prometheus documents two distinct exporter shapes:
   and `/metrics` endpoint all describe exactly one target.
 - **Multi-target**: the exporter itself queries *N* other instances over the
   network and is queried, per-target, via a `/probe` endpoint carrying a
-  `target` (and often `module`) query parameter — Prometheus's own
+  `target` (and often `module`) query parameter: Prometheus's own
   [multi-target exporter pattern](https://prometheus.io/docs/guides/multi-target-exporter/).
   The canonical example is the Blackbox exporter: a `scrape_configs` entry
   points `metrics_path: /probe` at the exporter's own address, with
   `params: {module: [http_2xx], target: [some-host]}`, and relabeling turns
   the probed target into the resulting series' `instance` label. The
-  exporter process itself is not "the thing being monitored" — it is a
+  exporter process itself is not "the thing being monitored." It is a
   fan-out proxy in front of however many real targets Prometheus asks it to
   probe.
 
@@ -92,8 +92,8 @@ constructed, not process-lifetime).
 
 **Multi-target is scaffolded, opt-in, via `--target-model multi` (http flavor
 only).** If your target is one of many identical instances Prometheus should
-poll on demand — a fleet of identical network devices, a protocol prober,
-anything shaped like the Blackbox exporter — `/new-prometheus-exporter
+poll on demand (a fleet of identical network devices, a protocol prober,
+anything shaped like the Blackbox exporter), `/new-prometheus-exporter
 --target-model multi` produces a `/probe?target=…` handler
 (`internal/probe/`) that builds a fresh, per-request collector set scoped to
 the target, instead of the fixed registry the default `single` model builds
@@ -101,7 +101,7 @@ once at startup. `multi` requires `--flavor http`: there is no `cli`
 multi-target, since the `cli` flavor has no network target to vary. Two
 things remain genuine follow-up work, not shipped today: `/add-collector`
 against a multi-target scaffold (it refuses cleanly and points at the manual
-procedure — see `project-scaffold.md`) and a Blackbox/SNMP-style `module`
+procedure; see `project-scaffold.md`) and a Blackbox/SNMP-style `module`
 query parameter (see the plugin's `ROADMAP.md`). Decide the model now,
 because retrofitting it onto an already-scaffolded single-target `main.go`
 later touches the entry point, the registry, and every collector's
@@ -109,7 +109,7 @@ constructor signature at once.
 
 Multi-target's own two self-metrics, `probe_success` and
 `probe_duration_seconds`, are a deliberate, documented exception to this
-scaffold's usual `namespace_subsystem_name` metric-naming rule — see
+scaffold's usual `namespace_subsystem_name` metric-naming rule. See
 `prometheus-principles.md`'s naming-exception note.
 
 ## 3. The mockable I/O boundary: choosing a flavor
@@ -124,13 +124,13 @@ shape of that dependency is what this scaffold calls a *flavor*:
 | `http` (default) | An injectable `*Client` wrapping `net/http`, pointed at a base URL; swapped for an `httptest.Server` in tests | Shipped |
 | `cli` | A package-level `var Execute` function variable wrapping `exec.CommandContext`; reassigned to a stub in tests | Shipped |
 
-The full mechanics of each boundary — exact types, the five-piece collector
-shape built on top of it, the test triad — are `collector-pattern.md`'s
+The full mechanics of each boundary (exact types, the five-piece collector
+shape built on top of it, the test triad) are `collector-pattern.md`'s
 subject, not this one. What belongs at the architecture stage is just the
 choice itself, made once, up front: **the flavor follows from the source**
 (step 1), not the other way around. A REST/API source picks `http`; a
 CLI-only legacy source picks `cli`. A database-only source has no flavor to
-pick here at all — see the non-goal note in step 1: reach for
+pick here at all. See the non-goal note in step 1: reach for
 `postgres_exporter`/`mysqld_exporter`/`sql_exporter` instead of this
 scaffold.
 
@@ -139,7 +139,7 @@ inside a shared file: `/new-prometheus-exporter` copies the one
 `code/<flavor>/` template subtree that matches your choice into
 `internal/collector/`, and the other flavor's templates are never present in
 the generated repository at all. There is no `if flavor == "cli"` branch
-anywhere in the shipped code to keep in sync — the unused flavor simply isn't
+anywhere in the shipped code to keep in sync. The unused flavor simply isn't
 there.
 
 ## 4. Collector decomposition
@@ -159,17 +159,17 @@ scaffold produces:
 
 For each collector, also decide whether its backend is slow or expensive
 enough (seconds per call, a rate limit, or a device not built for
-high-frequency polling — the kind of backend a scrape should never wait on)
+high-frequency polling, the kind of backend a scrape should never wait on)
 to warrant refreshing on a fixed background interval instead of
 synchronously on every scrape. This is `/add-collector`'s
-`--variant background` — see `collector-pattern.md` for the shape once the
+`--variant background`. See `collector-pattern.md` for the shape once the
 collector list reaches this one. Most collectors do not need it; a fast,
 cheap REST endpoint or CLI call should stay synchronous, the simpler
 default.
 
 A resource that genuinely needs several independent fetches (a `/health`
 endpoint and a `/stats` endpoint that change on unrelated schedules, say)
-is usually two collectors, not one collector with two `*Data` methods — each
+is usually two collectors, not one collector with two `*Data` methods, each
 one only as large as the one thing it reports on.
 
 ## 5. The cardinality budget
@@ -178,7 +178,7 @@ Before writing a parser, decide, per collector:
 
 - **Which labels** it will attach to each metric, and where each label's
   value actually comes from.
-- **How many series** that produces in the worst realistic case — the
+- **How many series** that produces in the worst realistic case: the
   Cartesian product of every label's distinct value count, per metric, summed
   across the collector's metrics.
 - **What flag**, if any, caps that number before it becomes a problem.
@@ -188,12 +188,12 @@ shape (`internal/collector/collector.go`): it emits
 `<namespace>_example{key="..."}`, one series per distinct key the data source
 reports, plus `<namespace>_example_entries` (no labels, always exactly one
 series). The `key` label is safe *in that fixture* because the source's own
-key-space is small and fixed (three keys in `testdata/example.txt`) — the
+key-space is small and fixed (three keys in `testdata/example.txt`): the
 budget for this metric is "however many distinct keys the real target can
 ever report," and that number must be checked against the real target, not
 assumed from the fixture. A label whose values are unbounded or
 user-supplied (a request ID, a raw email, a timestamp) is not a cardinality
-budget that can be stated at all — see `prometheus-principles.md`'s
+budget that can be stated at all. See `prometheus-principles.md`'s
 low-cardinality-label rule before choosing one.
 
 Once a real collector's label choice turns out to be expensive at scale, the
@@ -203,7 +203,7 @@ one aggregate series), or a flag that limits which values populate a label
 (an allow-list or a size cap). Document the flag in `docs/configuration.md`
 next to the collector's other flags, the same way the bundled `example`
 collector documents `--collector.example.timeout` and
-`--collector.example.target` — neither of which is a cardinality-reduction
+`--collector.example.target`, neither of which is a cardinality-reduction
 flag itself, since the example's own single `key` label doesn't need one, but
 the pattern (a `--collector.<name>.<setting>` flag, documented, defaulted
 sensibly) is the one to reuse.
@@ -213,13 +213,13 @@ sensibly) is the one to reuse.
 For every collector on the list, ask one question before moving on: *what
 functional condition, if this collector's own metrics showed it, should page
 or warn someone?* Not "is the exporter up" (that alert is generic and ships
-for free with every scaffold — see `dashboards-and-alerts.md`) but something
+for free with every scaffold; see `dashboards-and-alerts.md`) but something
 specific to what this collector actually measures: a resource approaching
 saturation, a queue depth that stopped draining, an error rate crossing a
 threshold, a value that should never realistically be zero going to zero.
 
-Write these down now, even as a one-line note per collector — "alert if
-saturation exceeds N%", "alert if lag exceeds N seconds" — without wiring the
+Write these down now, even as a one-line note per collector ("alert if
+saturation exceeds N%", "alert if lag exceeds N seconds"), without wiring the
 PromQL yet. `/add-collector` proposes a concrete alert, following the
 two-tier `warning`/`critical` plus `for:` pattern documented in
 `dashboards-and-alerts.md`, at the point each collector is actually
@@ -232,9 +232,9 @@ exists.
 Before `/new-prometheus-exporter` runs, this phase should have produced:
 
 - [ ] **Data source** chosen, in preference order (REST/API, gRPC, or CLI
-      as a last resort — a database-only target is out of scope; see step 1),
+      as a last resort, a database-only target is out of scope; see step 1),
       confirmed against the target's own docs via context7.
-- [ ] **Single- vs. multi-target** decided — and, if multi-target, confirmed
+- [ ] **Single- vs. multi-target** decided, and if multi-target, confirmed
       that the flavor is (or will be) `http`, since `--target-model multi`
       requires it.
 - [ ] **I/O flavor** chosen (`http` or `cli`), following directly from the
@@ -248,7 +248,7 @@ Before `/new-prometheus-exporter` runs, this phase should have produced:
       and any reduction flag needed.
 - [ ] **Candidate business alert(s)** per collector, even as a one-line note.
 
-These seven items are the inputs the rest of the workflow consumes — the
+These seven items are the inputs the rest of the workflow consumes: the
 scaffold takes the flavor and license; the per-collector loop takes the
 collector list; the release/observability step takes the alert candidates.
 
