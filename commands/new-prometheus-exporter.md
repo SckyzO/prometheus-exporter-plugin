@@ -1,12 +1,12 @@
 ---
-description: Scaffold a new Prometheus exporter repository (Go, HTTP or CLI flavor) from an already-decided architecture — collects every template variable, offers a license, runs the packaged scaffolder, and proves the result builds and passes its own quality gate.
+description: Scaffold a new Prometheus exporter repository (Go, HTTP or CLI flavor) from an already-decided architecture: collects every template variable, offers a license, runs the packaged scaffolder, and proves the result builds and passes its own quality gate.
 argument-hint: <name>
 disable-model-invocation: true
 ---
 
 Scaffold a complete, buildable, tested Go Prometheus exporter repository from
-the plugin's templates. This is a side-effecting operation — it creates a new
-directory tree, initializes a git repository, and runs a real build — so only
+the plugin's templates. This is a side-effecting operation (it creates a new
+directory tree, initializes a git repository, and runs a real build), so only
 run it when the user explicitly invokes this command, and walk through every
 step below in order rather than skipping ahead.
 
@@ -19,7 +19,7 @@ explicit path if the user named one, otherwise `./exporter-design-brief.md`
 in the current directory (the file `/design-exporter` produces).
 
 - **If a brief is found:** read it, then present its `## Architecture
-  decisions` section back to the user for confirmation — do not silently
+  decisions` section back to the user for confirmation. Do not silently
   trust it; the user still owns the final call. Take its `## Scaffold
   inputs` values as the defaults for step 1. Still ask for the identity
   fields (`MODULE_PATH`, `OWNER`, `LICENSE`), which the brief never
@@ -35,19 +35,19 @@ for the full method, then confirm the following with the user (don't guess
 on their behalf):
 
 - **Data source and I/O flavor.** Preference order is REST/gRPC-style API >
-  database > CLI (last resort — justify it if chosen, e.g. no API exists).
+  database > CLI (last resort: justify it if chosen, e.g. no API exists).
   This maps directly to `--flavor http` (the default) or `--flavor cli`.
 - **Single-target vs. multi-target.** Maps to `--target-model single`
   (default) or `--target-model multi`. Multi-target (Prometheus's
   `/probe?target=` pattern, for an exporter that polls many remote instances
-  on demand) **requires `--flavor http`** — there is no cli multi-target, and
+  on demand) **requires `--flavor http`**. There is no cli multi-target, and
   the scaffolder rejects that pairing outright. If the design calls for
   multi-target with a CLI-flavored source, stop and flag the conflict to the
   user rather than silently falling back to single-target: either the flavor
   or the target model has to change. `/add-collector` against a multi-target
   scaffold is a documented follow-up (it refuses cleanly and points at the
   manual procedure), not something either command automates yet.
-- **The collector list** — which resources/metrics this exporter will track,
+- **The collector list**: which resources/metrics this exporter will track,
   even if only the first one is built today. Later collectors are added one
   at a time with `/add-collector`.
 - **A rough cardinality budget** and any business-alert candidates per
@@ -61,60 +61,60 @@ architecture reference instead of guessing. Once they're decided, continue.
 
 The scaffolder needs a value for every variable below, plus three directory/
 layer selections (`--flavor`, `--forge`, `--target-model`) that are **not**
-template variables — they choose which files get copied, not text
+template variables: they choose which files get copied, not text
 substituted into them.
 
 If a brief was consumed in step 0, `DATA_SOURCE`, `DATA_SOURCE_PATH`,
 `NAMESPACE`, and `DEFAULT_PORT` arrive pre-filled from its `## Scaffold
 inputs` section, and the I/O flavor from its `## Architecture decisions`
-section — confirm them with the user rather than re-asking;
+section. Confirm them with the user rather than re-asking;
 `MODULE_PATH`, `OWNER`, and `LICENSE` are always asked here regardless.
 
 | Variable | Meaning | HTTP example | CLI example |
 |---|---|---|---|
-| `EXPORTER_NAME` | binary/repo name — validated in step 2 | `redis_exporter` | `redis_exporter` |
+| `EXPORTER_NAME` | binary/repo name, validated in step 2 | `redis_exporter` | `redis_exporter` |
 | `NAMESPACE` | Prometheus metric prefix (`<namespace>_up`, etc.) | `redis` | `redis` |
 | `MODULE_PATH` | Go module import path | `github.com/acme/redis_exporter` | `github.com/acme/redis_exporter` |
 | `DATA_SOURCE` | HTTP: base URL of the target. CLI: the command/binary the collector executes | `http://localhost:9121` | `redis-cli` |
-| `DATA_SOURCE_PATH` | HTTP: the first collector's endpoint path. CLI: unused by the CLI templates — still pass a placeholder | `/api/info` | `unused` |
+| `DATA_SOURCE_PATH` | HTTP: the first collector's endpoint path. CLI: unused by the CLI templates, still pass a placeholder | `/api/info` | `unused` |
 | `DEFAULT_PORT` | port the exporter listens on | `9121` | `9121` |
 | `OWNER` | the exporter's own owner/maintainer identity (attribution: LICENSE, CODEOWNERS, OCI labels) | `acme-corp` | `acme-corp` |
 | `LICENSE` | see step 1b | `apache-2.0` | `apache-2.0` |
 
 Derive or ask for each:
 
-- **`EXPORTER_NAME`** — from the command argument above if given, otherwise
+- **`EXPORTER_NAME`**: from the command argument above if given, otherwise
   ask. Validate it per step 2 before deriving anything else from it.
-- **`NAMESPACE`** — suggest a default by stripping a trailing
+- **`NAMESPACE`**: suggest a default by stripping a trailing
   `_exporter`/`-exporter` from `EXPORTER_NAME` (e.g. `redis_exporter` →
   `redis`) and confirm with the user: this becomes a permanent metric prefix,
   so it's worth getting right before scaffolding.
-- **`MODULE_PATH`** — ask for the Go module path matching wherever this repo
+- **`MODULE_PATH`**: ask for the Go module path matching wherever this repo
   will actually be hosted, conventionally `github.com/<owner>/<name>`. It is
   independent of the `--forge` choice below (a repo can live on GitHub with
   `--forge none`, or elsewhere with a different host in the module path).
-- **`DATA_SOURCE`** / **`DATA_SOURCE_PATH`** — meaning depends on the flavor
+- **`DATA_SOURCE`** / **`DATA_SOURCE_PATH`**: meaning depends on the flavor
   chosen in step 0; see the table above. Ask accordingly.
-- **`DEFAULT_PORT`** — point the user at the official allocation list,
+- **`DEFAULT_PORT`**: point the user at the official allocation list,
   <https://github.com/prometheus/prometheus/wiki/Default-port-allocations>,
   and ask them to pick a free one (or confirm the target's own conventional
   port if it already has one).
-- **`OWNER`** — ask. This is the generated exporter's own owner, a third
-  party — never a hardcoded identity of any kind.
-- **`LICENSE`** — see step 1b.
-- **`--forge`** (`github` or `none`, not a `--var`) — ask which. `github`
+- **`OWNER`**: ask. This is the generated exporter's own owner, a third
+  party, never a hardcoded identity of any kind.
+- **`LICENSE`**: see step 1b.
+- **`--forge`** (`github` or `none`, not a `--var`): ask which. `github`
   ships the `.github/` layer (CI workflows, dependabot, CODEOWNERS, issue/PR
   templates); `none` omits it entirely. Either way the repo stays versioned
   and releasable: SemVer tags, a CHANGELOG, and GoReleaser work with no forge
   at all.
-- **`--flavor`** (`http` or `cli`, not a `--var`) — carried over directly
+- **`--flavor`** (`http` or `cli`, not a `--var`): carried over directly
   from the step 0 decision; don't ask again.
-- **`--target-model`** (`single` or `multi`, not a `--var`) — carried over
+- **`--target-model`** (`single` or `multi`, not a `--var`): carried over
   directly from the step 0 decision; default `single` when step 0 didn't
   specify one. `multi` requires `--flavor http`: reject the combination
   `--target-model multi` + `--flavor cli` yourself with a clear message
   before running anything, rather than passing it through to `scaffold.sh`
-  (which also rejects it, but don't rely on that alone — fail fast here,
+  (which also rejects it, but don't rely on that alone: fail fast here,
   same posture as step 2's name validation).
 
 ## 1b. Offer a license
@@ -122,12 +122,12 @@ Derive or ask for each:
 Present these four, plainly, and default to Apache-2.0 if the user has no
 preference:
 
-- **Apache-2.0** (default) — permissive, with an explicit patent grant; the
+- **Apache-2.0** (default): permissive, with an explicit patent grant; the
   norm for Prometheus exporters.
-- **MIT** — minimal permissive license, no explicit patent grant.
-- **GPL-3.0** — strong copyleft: derivative works must also be open-sourced
+- **MIT**: minimal permissive license, no explicit patent grant.
+- **GPL-3.0**, strong copyleft: derivative works must also be open-sourced
   under GPL.
-- **BSD-3-Clause** — permissive, similar to MIT plus a non-endorsement
+- **BSD-3-Clause**: permissive, similar to MIT plus a non-endorsement
   clause.
 
 Map the choice to the exact `--var LICENSE=` value (lowercase, matches the
@@ -136,8 +136,8 @@ scaffolder's bundled license files): `apache-2.0`, `mit`, `gpl-3.0`, or
 
 ## 2. Validate the exporter name
 
-Before it touches anything else — including before deriving `NAMESPACE` or
-`MODULE_PATH` from it — check `EXPORTER_NAME` against these rules. Reject and
+Before it touches anything else (including before deriving `NAMESPACE` or
+`MODULE_PATH` from it), check `EXPORTER_NAME` against these rules. Reject and
 ask again (explain why) if it:
 
 - is empty,
@@ -155,12 +155,12 @@ above are hard rejections.
 
 ## 3. Scaffold the repository
 
-Pick a target directory — default to `./<EXPORTER_NAME>` under the current
+Pick a target directory: default to `./<EXPORTER_NAME>` under the current
 working directory unless the user says otherwise. Before running anything,
 check whether that directory already exists and is non-empty. If it does,
 stop: tell the user plainly that this command will not overwrite an existing
 project, and ask them to pick a different or empty directory (the scaffolder
-enforces the same refusal independently, but don't rely on it alone — fail
+enforces the same refusal independently, but don't rely on it alone: fail
 fast with a readable message). Never add `--force` unless the user explicitly
 confirms, in this conversation, that they want to overwrite that exact
 directory's contents.
@@ -185,7 +185,7 @@ Then run:
 ```
 
 Show its output. It prints `scaffolded <target-dir>` on success. If it fails
-instead — including a residual-`@@VAR@@`-sentinel error — that means a
+instead (including a residual-`@@VAR@@`-sentinel error), that means a
 variable above is missing or wrong; fix the invocation and retry rather than
 working around the failure.
 
@@ -200,7 +200,7 @@ git commit -m "feat: initial scaffold of <EXPORTER_NAME>"
 
 Use a plain Conventional Commit message. Add **no** AI/automation
 attribution of any kind (no `Co-authored-by: Claude`, no "Generated with…",
-no `claude.ai` link) — this repository belongs entirely to its new owner,
+no `claude.ai` link). This repository belongs entirely to its new owner,
 not to this tool.
 
 ## 5. Prove it builds and passes its own gate
@@ -211,7 +211,7 @@ make build
 make check
 ```
 
-Run both and show the real output — don't claim success without it. `make
+Run both and show the real output. Don't claim success without it. `make
 check` already runs vet, lint, the full test suite, govulncheck, actionlint/
 zizmor (skipped gracefully when `--forge none`), deadcode, and the
 metrics-docs check. If either target fails, stop and show the failure as-is:
@@ -224,15 +224,15 @@ Point the user to:
 
 - **`/add-collector <name>`** to add each further collector from the step 0
   list, with its full test triad and registry wiring.
-- **`docs/metrics.md`** — the metrics reference, kept truthful by `make
+- **`docs/metrics.md`**: the metrics reference, kept truthful by `make
   docs-check`.
-- **`monitoring/`** — the shipped Prometheus health alerts, recording rules,
+- **`monitoring/`**: the shipped Prometheus health alerts, recording rules,
   and health Grafana dashboard.
-- **`docs/release-process.md`** — how to cut a first real release with
+- **`docs/release-process.md`**: how to cut a first real release with
   GoReleaser once there's something worth releasing.
 
 If this exporter was scaffolded with `--target-model multi`, note that
-`/add-collector` will refuse cleanly against it — it only knows how to insert
+`/add-collector` will refuse cleanly against it: it only knows how to insert
 a `register(...)` call into the single-target registry. Adding a collector to
 a multi-target exporter today means adding one factory line by hand at
 `// @@PROBE_FACTORIES@@` in `cmd/*/main.go`; this is documented follow-up
