@@ -74,8 +74,8 @@ The taught knowledge and templates stand on official Prometheus authority
 (`prometheus.io`), never on "distilled from <a specific project>". So no
 shipped file, including this one, may name the production reference exporter
 this plugin's patterns were derived from. Before every commit, run
-`test/zero-source-grep.sh` — the canonical, runnable implementation of
-this gate — and confirm it passes; this is a hard gate.
+`test/zero-source-grep.sh` (the canonical, runnable implementation of
+this gate) and confirm it passes; this is a hard gate.
 
 The scan excludes `docs/` (the design and planning history of how the
 plugin came to be, never loaded by the plugin at runtime), `.git/` and
@@ -86,21 +86,21 @@ walk). This repository's own root `.github/` is excluded for the same
 reason: its CI workflow calls the harness and would otherwise have to
 spell out, in its own YAML, the exact word the harness is checking for.
 That exemption does **not** extend to the taught templates shipped under
-`skills/prometheus-exporter/assets/.github/` — those are fully scanned,
+`skills/prometheus-exporter/assets/.github/`. Those are fully scanned,
 because a leak there would ship inside every generated exporter, which is
 a real defect, not a self-reference artifact. See
 `test/zero-source-grep.sh` for the exact exclude set and how it tells the
 two `.github/` directories apart.
 
-Scaffold templates always attribute the generated exporter to `@@OWNER@@` —
-its own creator, the third party who runs `/new-prometheus-exporter` — never
-a hardcoded real handle. That is why a real maintainer handle never appears
+Scaffold templates always attribute the generated exporter to `@@OWNER@@`
+(its own creator, the third party who runs `/new-prometheus-exporter`),
+never a hardcoded real handle. That is why a real maintainer handle never appears
 under `assets/`.
 
 As a light hygiene check (not a hard gate), the maintainer's handle should
 also stay absent from `skills/`, `commands/`, and `agents/`: generic
 knowledge has no reason to credit anyone. This repository's own credited
-maintainer, named above, is a separate concern — it legitimately appears in
+maintainer, named above, is a separate concern: it legitimately appears in
 this file, the `.claude-plugin/` manifests, and README. (The stock
 Apache-2.0 `LICENSE` keeps its bracketed `[name of copyright owner]`
 placeholder in the "how to apply" appendix, per Apache convention, so the
