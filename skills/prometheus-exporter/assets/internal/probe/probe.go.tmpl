@@ -7,6 +7,7 @@
 package probe
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -27,10 +28,13 @@ import (
 // second scrape of the target.
 const collectorSuccessMetric = "@@NAMESPACE@@_exporter_collector_success"
 
-// Factory builds one collector scoped to one probe target. The multi main.go
-// appends one NamedFactory per collector at its // @@PROBE_FACTORIES@@ marker,
-// and /add-collector appends another every time it adds a collector.
-type Factory func(target string, timeout time.Duration) prometheus.Collector
+// Factory builds one collector scoped to one probe target, bounded by the
+// probe's deadline. ctx is what makes that deadline real: prometheus.Collector's
+// Collect(ch) takes no context, so the collector receives it at construction
+// (see the collector template's ctx field). The multi main.go appends one
+// NamedFactory per collector at its // @@PROBE_FACTORIES@@ marker, and
+// /add-collector appends another every time it adds a collector.
+type Factory func(ctx context.Context, target string, timeout time.Duration) prometheus.Collector
 
 // NamedFactory pairs a Factory with the collector name that the StatusTracker
 // keys its health metric on. Handler holds these in an ordered slice, not a
@@ -43,16 +47,23 @@ type NamedFactory struct {
 
 // Handler serves /probe?target=… .
 type Handler struct {
-	log        *logger.Logger
-	factories  []NamedFactory
-	allowlist  []string      // empty => allow-any (ecosystem default; see SECURITY.md)
-	maxTimeout time.Duration // upper bound on each probe's per-request timeout
+	log           *logger.Logger
+	factories     []NamedFactory
+	allowlist     []string      // empty => allow-any (ecosystem default; see SECURITY.md)
+	maxTimeout    time.Duration // --probe.timeout: ceiling on each probe's deadline
+	timeoutOffset time.Duration // --probe.timeout-offset: answer before Prometheus gives up
 }
 
 // NewHandler builds a /probe handler. An empty allowlist accepts any target
 // that clears the http/https floor (the Blackbox/SNMP default).
-func NewHandler(log *logger.Logger, factories []NamedFactory, allowlist []string, maxTimeout time.Duration) *Handler {
-	return &Handler{log: log, factories: factories, allowlist: allowlist, maxTimeout: maxTimeout}
+func NewHandler(log *logger.Logger, factories []NamedFactory, allowlist []string, maxTimeout, timeoutOffset time.Duration) *Handler {
+	return &Handler{
+		log:           log,
+		factories:     factories,
+		allowlist:     allowlist,
+		maxTimeout:    maxTimeout,
+		timeoutOffset: timeoutOffset,
+	}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -71,11 +82,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	timeout := h.clampTimeout(r)
 
+	// The probe's deadline, and the reason the ctx plumbed through every
+	// collector is not decorative. StatusTracker collects sequentially, so N
+	// collectors cost the SUM of their scrapes; without a shared deadline a
+	// probe could run for N x timeout, long after Prometheus abandoned it.
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
+	defer cancel()
+
 	// Fresh registry + collectors, scoped to THIS target, for THIS request.
 	reg := prometheus.NewRegistry()
 	tracker := collector.NewStatusTracker(h.log)
 	for _, nf := range h.factories {
-		tracker.Add(nf.Name, nf.New(target, timeout))
+		tracker.Add(nf.Name, nf.New(ctx, target, timeout))
 	}
 	reg.MustRegister(tracker)
 
@@ -91,7 +109,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Name: "probe_duration_seconds",
 		Help: "Returns how long the probe took to complete in seconds.",
 	})
-	meta.MustRegister(probeSuccess, probeDuration)
+	probeTimeout := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "probe_timeout_seconds",
+		Help: "Returns the deadline this probe ran under, in seconds.",
+	})
+	meta.MustRegister(probeSuccess, probeDuration, probeTimeout)
+	probeTimeout.Set(timeout.Seconds())
 
 	start := time.Now()
 	mfs, err := reg.Gather() // the ONE scrape of the target's collectors
@@ -157,19 +180,37 @@ func (h *Handler) targetAllowed(target string) bool {
 	return false
 }
 
-// clampTimeout uses min(--collector.example.timeout, Prometheus's own scrape
-// timeout header), so a probe never outruns Prometheus's deadline or the
-// operator's configured ceiling.
+// clampTimeout computes this probe's deadline, following Blackbox's model:
+//
+//	min(--probe.timeout, scrape_timeout - --probe.timeout-offset)
+//
+// The offset is subtracted from Prometheus's own scrape timeout so the exporter
+// answers BEFORE Prometheus abandons the scrape. Without it, a probe that uses
+// its full budget is always a wasted scrape: the result arrives after nobody is
+// listening.
 func (h *Handler) clampTimeout(r *http.Request) time.Duration {
-	t := h.maxTimeout
-	if v := r.Header.Get("X-Prometheus-Scrape-Timeout-Seconds"); v != "" {
-		if secs, err := strconv.ParseFloat(v, 64); err == nil && secs > 0 {
-			if d := time.Duration(secs * float64(time.Second)); d < t {
-				t = d
-			}
-		}
+	v := r.Header.Get("X-Prometheus-Scrape-Timeout-Seconds")
+	if v == "" {
+		return h.maxTimeout // scraped by something that is not Prometheus
 	}
-	return t
+	secs, err := strconv.ParseFloat(v, 64)
+	if err != nil || secs <= 0 {
+		return h.maxTimeout
+	}
+
+	budget := time.Duration((secs - h.timeoutOffset.Seconds()) * float64(time.Second))
+	if budget <= 0 {
+		// The offset swallows Prometheus's entire scrape timeout: one of the two
+		// is misconfigured. Warn and ignore the offset, rather than handing every
+		// probe an already-expired context and failing every scrape silently.
+		h.log.Warn("probe timeout offset exceeds Prometheus's scrape timeout; ignoring the offset",
+			"scrape_timeout_seconds", v, "timeout_offset", h.timeoutOffset)
+		budget = time.Duration(secs * float64(time.Second))
+	}
+	if budget < h.maxTimeout {
+		return budget
+	}
+	return h.maxTimeout
 }
 
 // collectorsHealthy reports whether every collector scoped to this probe

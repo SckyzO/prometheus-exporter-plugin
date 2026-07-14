@@ -22,7 +22,7 @@ type recordingFactory struct {
 	metric  string // the stub series this factory's collector emits
 }
 
-func (f *recordingFactory) make(target string, timeout time.Duration) prometheus.Collector {
+func (f *recordingFactory) make(ctx context.Context, target string, timeout time.Duration) prometheus.Collector {
 	f.calls++
 	f.target = target
 	f.timeout = timeout
@@ -54,6 +54,25 @@ type panicCollector struct{}
 func (panicCollector) Describe(chan<- *prometheus.Desc) {}
 func (panicCollector) Collect(chan<- prometheus.Metric) { panic("collector boom") }
 
+// blockingCollector models a target that never answers. Its Collect returns
+// only when its context is cancelled, or after a delay far longer than any
+// test would wait.
+type blockingCollector struct {
+	ctx  context.Context
+	desc *prometheus.Desc
+}
+
+func (b *blockingCollector) Describe(ch chan<- *prometheus.Desc) { ch <- b.desc }
+func (b *blockingCollector) Collect(ch chan<- prometheus.Metric) {
+	select {
+	case <-b.ctx.Done():
+		// The probe's deadline fired. Emit nothing: StatusTracker reads zero
+		// metrics as a failed scrape, which is exactly what this was.
+	case <-time.After(30 * time.Second):
+		ch <- prometheus.MustNewConstMetric(b.desc, prometheus.GaugeValue, 1)
+	}
+}
+
 func serve(h *Handler, rawurl string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, rawurl, nil)
@@ -62,7 +81,7 @@ func serve(h *Handler, rawurl string) *httptest.ResponseRecorder {
 }
 
 func newTestHandler(f *recordingFactory, allowlist []string) *Handler {
-	return NewHandler(logger.NewTextLogger("error"), []NamedFactory{f.named("example")}, allowlist, 5*time.Second)
+	return NewHandler(logger.NewTextLogger("error"), []NamedFactory{f.named("example")}, allowlist, 5*time.Second, 0)
 }
 
 func TestFloorRejectsNonHTTPScheme(t *testing.T) {
@@ -154,7 +173,7 @@ func TestAllFactoriesAreGathered(t *testing.T) {
 	a := &recordingFactory{metric: "stub_a"}
 	b := &recordingFactory{metric: "stub_b"}
 	h := NewHandler(logger.NewTextLogger("error"),
-		[]NamedFactory{a.named("alpha"), b.named("beta")}, nil, 5*time.Second)
+		[]NamedFactory{a.named("alpha"), b.named("beta")}, nil, 5*time.Second, 0)
 
 	rec := serve(h, "/probe?target=http://node1:9100")
 
@@ -172,22 +191,60 @@ func TestAllFactoriesAreGathered(t *testing.T) {
 	}
 }
 
-func TestClampTimeoutHonoursHeaderAndCeiling(t *testing.T) {
-	h := NewHandler(logger.NewTextLogger("error"), []NamedFactory{(&recordingFactory{}).named("example")}, nil, 5*time.Second)
+// TestProbeDeadlineAbortsHangingCollector is the regression test for the inert
+// context. Before the deadline was injected into the collector's constructor,
+// Collect minted its own context.Background(), so a hanging target ran until
+// the HTTP client's own timeout with nothing able to interrupt it. A probe that
+// has run out of time must stop, not grind on for a response nobody will read.
+func TestProbeDeadlineAbortsHangingCollector(t *testing.T) {
+	hang := NamedFactory{
+		Name: "hang",
+		New: func(ctx context.Context, target string, timeout time.Duration) prometheus.Collector {
+			return &blockingCollector{ctx: ctx, desc: prometheus.NewDesc("stub_hang", "stub", nil, nil)}
+		},
+	}
+	h := NewHandler(logger.NewTextLogger("error"), []NamedFactory{hang}, nil, 100*time.Millisecond, 0)
+
+	start := time.Now()
+	rec := serve(h, "/probe?target=http://hangs.internal:9100")
+	elapsed := time.Since(start)
+
+	if elapsed > 5*time.Second {
+		t.Fatalf("probe took %v: the deadline did not reach the collector", elapsed)
+	}
+	if !strings.Contains(rec.Body.String(), "probe_success 0") {
+		t.Errorf("expected probe_success 0 for a timed-out probe, body:\n%s", rec.Body.String())
+	}
+}
+
+func TestClampTimeoutHonoursHeaderCeilingAndOffset(t *testing.T) {
+	h := NewHandler(logger.NewTextLogger("error"),
+		[]NamedFactory{(&recordingFactory{}).named("example")}, nil, 5*time.Second, 500*time.Millisecond)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/probe?target=http://x:9100", nil)
+
+	// Header far above the ceiling: the ceiling wins.
 	req.Header.Set("X-Prometheus-Scrape-Timeout-Seconds", "30")
 	if got := h.clampTimeout(req); got != 5*time.Second {
 		t.Errorf("header above ceiling: got %v, want 5s", got)
 	}
 
+	// Header below the ceiling: the header wins, minus the offset.
 	req.Header.Set("X-Prometheus-Scrape-Timeout-Seconds", "2")
-	if got := h.clampTimeout(req); got != 2*time.Second {
-		t.Errorf("header below ceiling: got %v, want 2s", got)
+	if got := h.clampTimeout(req); got != 1500*time.Millisecond {
+		t.Errorf("header below ceiling: got %v, want 1.5s (2s - 0.5s offset)", got)
 	}
 
+	// No header at all (not scraped by Prometheus): the ceiling stands.
 	req.Header.Del("X-Prometheus-Scrape-Timeout-Seconds")
 	if got := h.clampTimeout(req); got != 5*time.Second {
 		t.Errorf("no header: got %v, want 5s", got)
+	}
+
+	// Offset larger than the scrape timeout: ignore the offset rather than
+	// handing the probe an already-expired context.
+	req.Header.Set("X-Prometheus-Scrape-Timeout-Seconds", "0.2")
+	if got := h.clampTimeout(req); got != 200*time.Millisecond {
+		t.Errorf("offset exceeds scrape timeout: got %v, want 200ms", got)
 	}
 }

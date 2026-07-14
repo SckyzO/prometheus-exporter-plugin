@@ -1,6 +1,6 @@
 	factories = append(factories, probe.NamedFactory{
 		Name: "example",
-		New: func(target string, timeout time.Duration) prometheus.Collector {
-			return collector.NewExampleCollector(context.Background(), log, collector.NewClient(target, timeout))
+		New: func(ctx context.Context, target string, timeout time.Duration) prometheus.Collector {
+			return collector.NewExampleCollector(ctx, log, collector.NewClient(target, timeout))
 		},
 	})
