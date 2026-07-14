@@ -344,14 +344,26 @@ Shared by both target models (the context injection, §3.3):
 
 - `code/http/collector.go.tmpl`, `code/cli/collector.go.tmpl` — constructor
   takes `ctx`, `Collect` uses `c.ctx` instead of `context.Background()`.
-- `code/http/variants/background_collector.go.tmpl`,
-  `code/cli/variants/background_collector.go.tmpl` — same, for consistency of
-  the taught shape. The background variant is single-target only (§3.7), so
-  its `ctx` is always `context.Background()`; it takes it anyway so that every
-  collector the plugin generates has one constructor shape.
 - `code/http/wiring/registry.frag`, `code/cli/wiring/registry.frag` — pass
   `context.Background()`. Behavior-identical to today.
 - The matching `*_test.go.tmpl` files, for the new constructor argument.
+
+**The background variants are deliberately NOT touched.** An earlier draft of
+this section had them take a constructor `ctx` too, "for consistency of the
+taught shape". That was wrong on the facts. A background collector's `Collect`
+never calls `context.Background()`: it only reads a cache under a mutex
+(`variants/background_collector.go.tmpl:194`). Its I/O happens in
+`refresh(ctx)`, driven by `Start(ctx)`, which already receives `main`'s real
+`signal.NotifyContext` shutdown context. The inert-context bug simply does not
+exist in that variant, because the variant already solves the problem another
+way: it moves the I/O out of `Collect` entirely.
+
+Giving it a constructor `ctx` on top would add a field that nothing reads, to
+a collector that already carries a live context, in a repository whose
+`CLAUDE.md` forbids dead code. Worse, it would teach the confusion this epic
+exists to remove: a collector holding two contexts, one of which does nothing.
+One context per collector, always live. The two variants reach it by different
+routes, and that difference is the lesson, not an inconsistency to sand off.
 
 ### Modified (plugin knowledge, never shipped)
 
