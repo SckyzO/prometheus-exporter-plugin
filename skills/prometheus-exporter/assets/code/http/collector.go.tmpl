@@ -55,6 +55,14 @@ func (c *ExampleCollector) exampleGetMetrics(ctx context.Context) (exampleStats,
 // parse then glue then Describe then Collect, is the one every collector you
 // add should follow.
 type ExampleCollector struct {
+	// ctx bounds this collector's I/O. Storing a context in a struct is
+	// normally discouraged in Go, and this is the standard exception:
+	// prometheus.Collector's Collect(ch) predates context and offers no other
+	// channel to pass one. In a single-target exporter this is
+	// context.Background() (no deadline, exactly as before). In a multi-target
+	// exporter it is the probe's deadline, so a slow target aborts the scrape
+	// instead of outrunning Prometheus.
+	ctx     context.Context
 	client  *Client
 	log     *logger.Logger
 	items   *prometheus.Desc
@@ -62,9 +70,10 @@ type ExampleCollector struct {
 }
 
 // NewExampleCollector wires a Client into a ready-to-register
-// prometheus.Collector.
-func NewExampleCollector(log *logger.Logger, client *Client) prometheus.Collector {
+// prometheus.Collector, bounded by ctx.
+func NewExampleCollector(ctx context.Context, log *logger.Logger, client *Client) prometheus.Collector {
 	return &ExampleCollector{
+		ctx:    ctx,
 		client: client,
 		log:    log,
 		items: prometheus.NewDesc(
@@ -104,7 +113,7 @@ func (c *ExampleCollector) Describe(ch chan<- *prometheus.Desc) {
 // send a metric (for example a gauge set to 0), not bare-return like the
 // error path below.
 func (c *ExampleCollector) Collect(ch chan<- prometheus.Metric) {
-	stats, err := c.exampleGetMetrics(context.Background())
+	stats, err := c.exampleGetMetrics(c.ctx)
 	if err != nil {
 		// Error path: log and return with zero metrics sent — see the
 		// collector-authoring rule above for why that bare return is only
