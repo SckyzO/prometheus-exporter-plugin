@@ -61,15 +61,43 @@ Multi also has no `register()` at all (single's `main.go.tmpl` has 15
 `register`-related lines; multi's has none), so multi collectors have never
 been individually selectable.
 
-### The misnamed timeout flag
+### The misnamed timeout flag, and the inert context behind it
 
 `mains/multi/main.go.tmpl:71` declares `--collector.example.timeout` and
 passes it to `NewHandler` as `maxTimeout` (line 91). The flag does not
 configure the `example` collector: it is the ceiling on *every* probe's
-timeout. The underlying model is correct (a probe has one time budget,
-inherited from Prometheus's `X-Prometheus-Scrape-Timeout-Seconds` header,
-clamped, then handed to the collector). Only the name is wrong, and the name
-stops making sense entirely once a probe runs more than one collector.
+timeout. With one collector the two are the same thing, so the lie is
+invisible.
+
+With N collectors it becomes load-bearing, because **`StatusTracker.Collect`
+runs its entries sequentially** (`internal/collector/status_tracker.go.tmpl:74-107`:
+`for _, e := range st.entries`, each fully drained via `<-done` before the
+next). Four collectors with a 5s budget each therefore make a probe that can
+run for 20s, long after Prometheus gave up on it. A flag named
+`--probe.timeout` that permits a 4x overrun would simply be a new lie.
+
+The root cause sits one layer down. `code/http/collector.go.tmpl:107`:
+
+```go
+func (c *ExampleCollector) Collect(ch chan<- prometheus.Metric) {
+	stats, err := c.exampleGetMetrics(context.Background())
+```
+
+The context threaded through the five-piece pattern (`exampleData(ctx)`,
+`Client.Fetch(ctx, path)`) is **inert**: `Collect` mints a fresh
+`context.Background()` that is never cancelled. The only real bound anywhere
+is `http.Client{Timeout: …}` (`code/http/client.go.tmpl:57`). Cancellation is
+plumbed and then thrown away.
+
+This is not an oversight in the scaffold so much as an API constraint:
+`prometheus.Collector.Collect(ch)` takes no context. Blackbox sidesteps it
+entirely by *not* using the Collector interface for probing at all, calling
+ctx-taking prober functions that populate a registry directly. That option is
+closed to us: reusing the same collector shape in both target models is
+precisely what lets `/add-collector` work here at all, and is the point of
+this epic.
+
+So the context has to reach the collector some other way. See §3.3.
 
 ## 3. Design
 
@@ -82,8 +110,9 @@ shipped contract. Phase 1 is independently useful: it unblocks
 `internal/probe/probe.go.tmpl`:
 
 ```go
-// Factory builds one collector scoped to one probe target. Unchanged.
-type Factory func(target string, timeout time.Duration) prometheus.Collector
+// Factory builds one collector scoped to one probe target, under the probe's
+// deadline. The ctx is what makes the deadline in §3.3 real.
+type Factory func(ctx context.Context, target string, timeout time.Duration) prometheus.Collector
 
 // NamedFactory pairs a Factory with the collector name the StatusTracker
 // and the module selector both key on.
@@ -134,23 +163,81 @@ can stack at the marker:
 ```go
 	factories = append(factories, probe.NamedFactory{
 		Name: "example",
-		New: func(target string, timeout time.Duration) prometheus.Collector {
-			return collector.NewExampleCollector(log, collector.NewClient(target, timeout))
+		New: func(ctx context.Context, target string, timeout time.Duration) prometheus.Collector {
+			return collector.NewExampleCollector(ctx, log, collector.NewClient(target, timeout))
 		},
 	})
+```
+
+The single-target `registry.frag` gains the same argument, passing
+`context.Background()`, which is what its collectors already use today:
+
+```go
+	register("example", func() prometheus.Collector {
+		return collector.NewExampleCollector(context.Background(), log, collector.NewClient(*exampleTarget, *exampleTimeout))
+	}, true)
 ```
 
 `mains/multi/main.go.tmpl` declares `var factories []probe.NamedFactory`
 immediately before the `// @@PROBE_FACTORIES@@` marker, so the frag has a
 slice to append to, and passes it to `NewHandler`.
 
-### 3.3 Phase 1: rename the timeout flag
+### 3.3 Phase 1: a real deadline, injected at construction
 
-`--collector.example.timeout` becomes **`--probe.timeout`** (default `5s`,
-same value, same role as `maxTimeout`). This is a breaking flag change for a
-repository scaffolded with v0.3.0, and it is absorbed by the migration in
-§3.6. It is justified: the old name asserts something false about what the
-flag does, and it becomes actively misleading with more than one collector.
+The collector constructor takes the context, and `Collect` uses it instead of
+minting `context.Background()`:
+
+```go
+type ExampleCollector struct {
+	ctx    context.Context // the probe's deadline; context.Background() in single-target
+	log    *logger.Logger
+	client *Client
+	// ... Desc fields
+}
+
+func NewExampleCollector(ctx context.Context, log *logger.Logger, client *Client) prometheus.Collector
+
+func (c *ExampleCollector) Collect(ch chan<- prometheus.Metric) {
+	stats, err := c.exampleGetMetrics(c.ctx) // was: context.Background()
+}
+```
+
+Storing a context in a struct is normally discouraged in Go. It is the
+standard escape hatch for `prometheus.Collector`, whose `Collect(ch)` predates
+`context` and offers no other channel. The template says so in a comment,
+because the plugin teaches this shape to every exporter it generates.
+
+**This is behavior-preserving for single-target.** Passing
+`context.Background()` explicitly reproduces exactly what `Collect` does
+today, line for line. Single's `registry.frag` gains one argument; the code
+that runs is identical, the bounds are identical. Nothing about the default
+model changes at runtime. Only multi passes a context that can actually fire.
+
+**The probe's deadline** follows Blackbox's calculation:
+
+```
+effective = min(X-Prometheus-Scrape-Timeout-Seconds - timeoutOffset, probeTimeout)
+```
+
+- `--probe.timeout` (default `5s`) replaces the misnamed
+  `--collector.example.timeout`, and now genuinely bounds the probe.
+- `--probe.timeout-offset` (default `0.5s`) is subtracted from Prometheus's
+  scrape timeout so the exporter answers *before* Prometheus abandons the
+  scrape. Without it, a probe that uses its full budget is always a wasted
+  scrape.
+
+The handler builds `context.WithTimeout(r.Context(), effective)`, hands it to
+every factory, and `defer cancel()`s it. When the deadline fires, the
+in-flight HTTP request is cancelled and the sequential collector chain aborts
+immediately rather than grinding through the remaining collectors for a
+response nobody will read.
+
+`probe_timeout_seconds` is exported alongside `probe_success` and
+`probe_duration_seconds`, mirroring Blackbox, so the effective deadline is
+visible to whoever is debugging a slow target.
+
+The v0.3.0 flag rename is a breaking change for a repository scaffolded with
+v0.3.0, absorbed by the migration in §3.6.
 
 ### 3.4 Phase 2: `--probe.module`, a repeatable flag
 
@@ -184,11 +271,20 @@ scaffold already takes with its startup warnings.
 
 ### 3.5 Phase 2: `/probe` module semantics
 
+`module` is **repeatable and comma-separated**, and the named modules
+**combine**, exactly as SNMP's `/snmp?target=X&module=a,b` does. Both
+`?module=a&module=b` and `?module=a,b` select the union of `a` and `b`.
+
 | `module=` | Behavior |
 |---|---|
 | absent | every registered collector runs. This preserves the v0.3.0 contract exactly. |
-| known | only that module's collectors, in their declared order. |
-| unknown | `400 Bad Request`, alongside the existing target-floor and allowlist rejections. |
+| one or more known modules | the union of their collectors, deduplicated, in the handler's declared factory order. |
+| any unknown module named | `400 Bad Request`, alongside the existing target-floor and allowlist rejections. |
+
+The union is deduplicated (a collector named by two selected modules runs
+once) and emitted in the handler's declared order rather than the order the
+modules were listed, so a probe's output is stable regardless of how the
+scrape config spells its module list.
 
 An absent `module` meaning "all collectors" is what makes Phase 2 additive: a
 v0.3.0 Prometheus scrape config that only sets `target` keeps working
@@ -233,13 +329,29 @@ turn out to decouple cleanly.
 
 ### Modified (assets, shipped into scaffolds)
 
+Multi-target only:
+
 - `internal/probe/probe.go.tmpl` — `NamedFactory`, `Handler.factories`,
-  `NewHandler` signature, module map, module selection, startup validation,
-  the `ServeHTTP` loop.
+  `NewHandler` signature, the deadline (`context.WithTimeout`, timeout
+  offset), `probe_timeout_seconds`, the module map, module selection and
+  union, startup validation, the `ServeHTTP` loop.
 - `internal/probe/probe_test.go.tmpl` — see §5.
 - `mains/multi/main.go.tmpl` — `var factories`, `--probe.timeout`,
-  `--probe.module`, `NewHandler` call.
-- `code/http/wiring/probe_factory.frag` — becomes an `append`.
+  `--probe.timeout-offset`, `--probe.module`, `NewHandler` call.
+- `code/http/wiring/probe_factory.frag` — becomes an `append`, passes `ctx`.
+
+Shared by both target models (the context injection, §3.3):
+
+- `code/http/collector.go.tmpl`, `code/cli/collector.go.tmpl` — constructor
+  takes `ctx`, `Collect` uses `c.ctx` instead of `context.Background()`.
+- `code/http/variants/background_collector.go.tmpl`,
+  `code/cli/variants/background_collector.go.tmpl` — same, for consistency of
+  the taught shape. The background variant is single-target only (§3.7), so
+  its `ctx` is always `context.Background()`; it takes it anyway so that every
+  collector the plugin generates has one constructor shape.
+- `code/http/wiring/registry.frag`, `code/cli/wiring/registry.frag` — pass
+  `context.Background()`. Behavior-identical to today.
+- The matching `*_test.go.tmpl` files, for the new constructor argument.
 
 ### Modified (plugin knowledge, never shipped)
 
@@ -258,10 +370,20 @@ turn out to decouple cleanly.
 
 ## 5. Testing strategy
 
-The generated exporter's own `probe_test.go.tmpl` covers: N factories all
-gathered under their correct tracker names; module absent runs everything;
-a known module runs only its members; an unknown module returns 400; and a
-module naming an unknown collector fails startup validation.
+The generated exporter's own `probe_test.go.tmpl` covers:
+
+- N factories all gathered, under their correct tracker names.
+- **The deadline is real**: a collector wired to a target that never responds
+  must abort when the probe's context fires, not when its HTTP client timeout
+  does. This is the test that would have caught the inert context, and it is
+  the one that must fail before the fix and pass after it.
+- The timeout calculation: `min(scrape_timeout - offset, probe.timeout)`,
+  including the case where Prometheus sends no header at all.
+- Module absent runs everything; a known module runs only its members; two
+  modules combine as a deduplicated union in declared order; an unknown module
+  returns 400.
+- Startup validation rejects an unknown collector in a module, a duplicate
+  module name, and an empty module.
 
 The plugin's golden test gets the assertion that actually proves the hole is
 closed: **scaffold a multi-target exporter, then run the `/add-collector`
@@ -272,9 +394,19 @@ compiles into a real repository.
 
 ## 6. Non-regression guarantees
 
-- Single-target scaffolds are untouched. No shared file changes: single drops
-  `internal/probe/` and uses different markers, a different main, and a
-  different wiring frag.
+- **Single-target's runtime behavior is unchanged, and this is provable rather
+  than asserted.** The context injection (§3.3) reaches single's collector
+  templates, but single passes `context.Background()`, which is exactly the
+  value `Collect` mints for itself today (`collector.go.tmpl:107`). The same
+  code runs under the same bounds. The constructor grows an argument; nothing
+  else moves. `make check` and the golden cells for `{http,cli}×{none,github}`
+  are the proof obligation.
+- Single keeps its own entry point, markers, and wiring frag, and never gets
+  `internal/probe/`, a probe deadline, or a module flag.
+- An existing scaffold is never reached into. A repository generated by v0.3.0
+  keeps compiling and running as it does now; a collector added to it by
+  `/add-collector` simply carries the new constructor shape, which is
+  per-collector and coexists with the old one.
 - A v0.3.0 multi scaffold that is never re-run through `/add-collector` keeps
   working. Nothing reaches into an existing repository on its own.
 - A v0.3.0 Prometheus scrape config (`target` only, no `module`) keeps
@@ -302,4 +434,11 @@ compiles into a real repository.
   selecting compiled collectors. See Non-goals.
 - The lazy TTL-cache collector variant, still a fast-follow from v0.2.
 - Per-collector timeouts within one probe. Every collector in a probe shares
-  the probe's clamped time budget, which is Blackbox's model too.
+  the probe's deadline, which is Blackbox's model too.
+- **Concurrent collection.** `StatusTracker.Collect` is sequential, so a probe
+  costs the *sum* of its collectors, not the slowest. Making it concurrent
+  would speed up both target models (a single-target exporter with 15
+  collectors scrapes them one after another today), but it changes shared,
+  concurrency-sensitive code on the default path and deserves its own epic
+  with its own race-detector budget. The deadline in §3.3 bounds the damage in
+  the meantime: a probe that runs out of time stops, rather than running long.
