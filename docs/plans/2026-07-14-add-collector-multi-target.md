@@ -1727,8 +1727,47 @@ one with no references.
 
 **Files:**
 - Modify: `skills/prometheus-exporter/references/exporter-architecture.md`
+- Modify: `skills/prometheus-exporter/references/collector-pattern.md:97-99` (documents the pre-`ctx` constructor signature)
+- Modify: `skills/prometheus-exporter/references/project-scaffold.md:137` (shows a `register(…)` call without `context.Background()`)
 - Modify: `ROADMAP.md` (the v0.3 section's two follow-ups)
 - Modify: `CHANGELOG.md` (`[Unreleased]`)
+
+- [ ] **Step 0: Correct the constructor signature in the two references that still teach the old one**
+
+Task 1 added a leading `ctx context.Context` to `NewExampleCollector`. Two taught
+references still show the old signature, and they are what the skill reads when
+it generates or extends an exporter. A reference that contradicts the template it
+describes is worse than no reference: it teaches a shape that will not compile.
+
+In `skills/prometheus-exporter/references/collector-pattern.md`, lines 97-99
+currently read:
+
+```
+   `NewExampleCollector(log *logger.Logger, client *Client)`. CLI:
+   `NewExampleCollector(log *logger.Logger, timeout time.Duration)`. Builds
+```
+
+Update both signatures to lead with `ctx context.Context`, and add one sentence
+saying why the context arrives at construction rather than at `Collect`:
+`prometheus.Collector.Collect(ch)` takes no context, so the constructor is the
+only channel. In a single-target exporter that context is
+`context.Background()`; in a multi-target probe it is the probe's deadline.
+
+In `skills/prometheus-exporter/references/project-scaffold.md`, line 137 currently
+reads:
+
+```go
+	return collector.NewExampleCollector(log, collector.NewClient(*exampleTarget, *exampleTimeout))
+```
+
+Update it to match the shipped `code/http/wiring/registry.frag` exactly:
+
+```go
+	return collector.NewExampleCollector(context.Background(), log, collector.NewClient(*exampleTarget, *exampleTimeout))
+```
+
+Read both files before editing: verify every claim you write against the real
+template, not against this plan.
 
 - [ ] **Step 1: Correct the architecture reference**
 
