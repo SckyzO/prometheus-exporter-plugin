@@ -86,9 +86,15 @@ func main() {
 	warnIfExposedAndUnauthenticated(log, *toolkitFlags.WebListenAddresses, *toolkitFlags.WebConfigFile)
 	warnIfProbeUnrestricted(log, *probeTargetAllowlist)
 
+	// factories holds one entry per probed collector, in declaration order.
+	// The // @@PROBE_FACTORIES@@ marker below is where scaffold.sh injects the
+	// starter collector, and where /add-collector appends every collector you
+	// add later. Leave the marker in place.
+	var factories []probe.NamedFactory
+
 	// @@PROBE_FACTORIES@@
 
-	probeHandler := probe.NewHandler(log, factory, *probeTargetAllowlist, *exampleTimeout)
+	probeHandler := probe.NewHandler(log, factories, *probeTargetAllowlist, *exampleTimeout)
 
 	// /metrics reports on the EXPORTER ITSELF (build info, Go runtime/process,
 	// aggregate request timing), scraped independently of any probed target —

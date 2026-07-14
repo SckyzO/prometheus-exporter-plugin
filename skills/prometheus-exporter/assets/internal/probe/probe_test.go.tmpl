@@ -18,7 +18,8 @@ type recordingFactory struct {
 	calls   int
 	target  string
 	timeout time.Duration
-	panics  bool // when true, the returned collector panics on Collect
+	panics  bool   // when true, the returned collector panics on Collect
+	metric  string // the stub series this factory's collector emits
 }
 
 func (f *recordingFactory) make(target string, timeout time.Duration) prometheus.Collector {
@@ -28,7 +29,17 @@ func (f *recordingFactory) make(target string, timeout time.Duration) prometheus
 	if f.panics {
 		return panicCollector{}
 	}
-	return &stubCollector{desc: prometheus.NewDesc("stub_up", "stub", nil, nil)}
+	metric := f.metric
+	if metric == "" {
+		metric = "stub_up"
+	}
+	return &stubCollector{desc: prometheus.NewDesc(metric, "stub", nil, nil)}
+}
+
+// named wraps this factory under a collector name, the way main.go's
+// // @@PROBE_FACTORIES@@ block does.
+func (f *recordingFactory) named(name string) NamedFactory {
+	return NamedFactory{Name: name, New: f.make}
 }
 
 type stubCollector struct{ desc *prometheus.Desc }
@@ -51,7 +62,7 @@ func serve(h *Handler, rawurl string) *httptest.ResponseRecorder {
 }
 
 func newTestHandler(f *recordingFactory, allowlist []string) *Handler {
-	return NewHandler(logger.NewTextLogger("error"), f.make, allowlist, 5*time.Second)
+	return NewHandler(logger.NewTextLogger("error"), []NamedFactory{f.named("example")}, allowlist, 5*time.Second)
 }
 
 func TestFloorRejectsNonHTTPScheme(t *testing.T) {
@@ -136,8 +147,33 @@ func TestProbeSuccessFalseWhenCollectorPanics(t *testing.T) {
 	}
 }
 
+// TestAllFactoriesAreGathered is the whole point of the multi-collector seam:
+// a probe must gather every registered factory, under its own tracker name,
+// not just the first one.
+func TestAllFactoriesAreGathered(t *testing.T) {
+	a := &recordingFactory{metric: "stub_a"}
+	b := &recordingFactory{metric: "stub_b"}
+	h := NewHandler(logger.NewTextLogger("error"),
+		[]NamedFactory{a.named("alpha"), b.named("beta")}, nil, 5*time.Second)
+
+	rec := serve(h, "/probe?target=http://node1:9100")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200", rec.Code)
+	}
+	if a.calls != 1 || b.calls != 1 {
+		t.Fatalf("factory calls: alpha=%d beta=%d, want 1 and 1", a.calls, b.calls)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"stub_a", "stub_b", "probe_success 1"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body is missing %q:\n%s", want, body)
+		}
+	}
+}
+
 func TestClampTimeoutHonoursHeaderAndCeiling(t *testing.T) {
-	h := NewHandler(logger.NewTextLogger("error"), (&recordingFactory{}).make, nil, 5*time.Second)
+	h := NewHandler(logger.NewTextLogger("error"), []NamedFactory{(&recordingFactory{}).named("example")}, nil, 5*time.Second)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/probe?target=http://x:9100", nil)
 	req.Header.Set("X-Prometheus-Scrape-Timeout-Seconds", "30")

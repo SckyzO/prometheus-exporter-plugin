@@ -27,27 +27,32 @@ import (
 // second scrape of the target.
 const collectorSuccessMetric = "@@NAMESPACE@@_exporter_collector_success"
 
-// Factory builds the collector scoped to one probe target. The multi main.go
-// fills a factory at its // @@PROBE_FACTORIES@@ marker. Handler holds exactly
-// one Factory today (this scaffold's multi-target starting point is a single
-// probed collector); adding a second collector means widening Handler to hold
-// and gather more than one Factory, which is why multi-target /add-collector
-// is documented follow-up rather than a one-line change (see the scaffold's
-// docs and ROADMAP).
+// Factory builds one collector scoped to one probe target. The multi main.go
+// appends one NamedFactory per collector at its // @@PROBE_FACTORIES@@ marker,
+// and /add-collector appends another every time it adds a collector.
 type Factory func(target string, timeout time.Duration) prometheus.Collector
+
+// NamedFactory pairs a Factory with the collector name that the StatusTracker
+// keys its health metric on. Handler holds these in an ordered slice, not a
+// map: Go randomizes map iteration, which would make collector ordering and
+// error messages nondeterministic for no benefit.
+type NamedFactory struct {
+	Name string
+	New  Factory
+}
 
 // Handler serves /probe?target=… .
 type Handler struct {
 	log        *logger.Logger
-	factory    Factory
+	factories  []NamedFactory
 	allowlist  []string      // empty => allow-any (ecosystem default; see SECURITY.md)
 	maxTimeout time.Duration // upper bound on each probe's per-request timeout
 }
 
 // NewHandler builds a /probe handler. An empty allowlist accepts any target
 // that clears the http/https floor (the Blackbox/SNMP default).
-func NewHandler(log *logger.Logger, factory Factory, allowlist []string, maxTimeout time.Duration) *Handler {
-	return &Handler{log: log, factory: factory, allowlist: allowlist, maxTimeout: maxTimeout}
+func NewHandler(log *logger.Logger, factories []NamedFactory, allowlist []string, maxTimeout time.Duration) *Handler {
+	return &Handler{log: log, factories: factories, allowlist: allowlist, maxTimeout: maxTimeout}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -69,7 +74,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Fresh registry + collectors, scoped to THIS target, for THIS request.
 	reg := prometheus.NewRegistry()
 	tracker := collector.NewStatusTracker(h.log)
-	tracker.Add("example", h.factory(target, timeout))
+	for _, nf := range h.factories {
+		tracker.Add(nf.Name, nf.New(target, timeout))
+	}
 	reg.MustRegister(tracker)
 
 	// probe_success / probe_duration_seconds live in a separate registry so we
