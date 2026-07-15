@@ -90,7 +90,7 @@ run_check() {
         "$ok" "$TOTAL" "$description"
 }
 
-echo "${C_BOLD}Go Report Card — offline ($TOTAL Go files)${C_RESET}"
+echo "${C_BOLD}Go Report Card: offline ($TOTAL Go files)${C_RESET}"
 echo
 run_check "gofmt"       "Standard formatting (gofmt -s)"   count_gofmt
 run_check "go vet"      "Standard static checks"           count_govet
