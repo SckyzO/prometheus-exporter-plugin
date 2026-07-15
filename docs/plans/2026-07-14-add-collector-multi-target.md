@@ -1524,32 +1524,70 @@ back from the generated main, which is the same trick
 namespace=$(command grep -hoE 'const[[:space:]]+namespace[[:space:]]*=[[:space:]]*"[A-Za-z_][A-Za-z0-9_]*"' "$work"/cmd/*/main.go | head -n1 | sed -E 's/.*"([A-Za-z_][A-Za-z0-9_]*)".*/\1/')
 ```
 
-- [ ] **Step 2: Probe the two-collector exporter and assert both series appear**
+- [ ] **Step 2: Probe the two-collector exporter and assert both collectors are gathered**
 
-Immediately after the `make check` above, inside the same `if`, reuse the cell's
-existing live-probe machinery to start the rebuilt binary and probe it. Assert
-that one probe carries **both** collectors' series and still reports success:
+Placement matters. The existing live-probe block (search `test/golden-smoke.sh`
+for `http-multi live-probe check`) starts a server on `$probe_port`, installs a
+`trap … EXIT`, probes, then **tears the server down and clears the trap**
+(`kill "$server_pid"; wait …; trap - EXIT`). Put this whole Step 1 + Step 2
+section **after** that teardown, so no server is running and no trap is
+installed when you start yours. Do not start a second server while the first is
+still bound to the port.
+
+**Assert on the collector health series, not the business metrics.** This is the
+one thing the brief gets right only if you read why. The live probe targets the
+exporter's own `/metrics` (a self-contained target, no external dependency), so
+the example collector's data fetch (`@@DATA_SOURCE_PATH@@` against that target)
+does not return the JSON shape it expects and **fails** — which is exactly why
+the existing block asserts only that `probe_success` is *present*, never that it
+is `1`. A failed collector emits **zero** business metrics, so
+`@@NAMESPACE@@_items` and `@@NAMESPACE@@_second_items` will NOT appear, and
+`probe_success 1` is not reachable this way.
+
+What IS always emitted, once per registered-and-gathered collector regardless of
+whether its own fetch succeeded, is the `StatusTracker` health series
+`@@NAMESPACE@@_exporter_collector_success{collector="<name>"}` (verify in
+`assets/internal/collector/status_tracker.go.tmpl`: label key is `collector`,
+value `0` on a failed scrape, `1` on success). That series appearing for
+`collector="second"` is the reliable proof that the second collector was wired
+into the seam and gathered. Assert on it:
 
 ```sh
   echo "== live /probe with two collectors =="
-  # (start the rebuilt binary and curl /probe?target=… exactly as the existing
-  # live-probe block above does, into $probe_body)
-  for want in "${namespace}_items" "${namespace}_second_items" "probe_success 1" "probe_timeout_seconds"; do
-    command grep -q "$want" "$probe_body" || die "two-collector probe is missing $want"
+  # (start the rebuilt binary and curl /probe?target=http://127.0.0.1:$probe_port/metrics
+  #  into $probe_body, EXACTLY as the existing live-probe block does — same port
+  #  var, same healthz poll, same trap discipline)
+  command grep -q "probe_timeout_seconds" "$probe_body" || die "two-collector probe is missing probe_timeout_seconds"
+  for name in example second; do
+    command grep -q "collector_success{collector=\"$name\"}" "$probe_body" \
+      || die "two-collector probe did not gather collector \"$name\" (no collector_success series)"
   done
 
   echo "== module selection on the live exporter =="
-  # Restart with a module that names only the second collector, and assert the
-  # first one's series is absent: this is the module parameter doing real work,
-  # not just passing a unit test.
-  # (restart with --probe.module=only-second:second, curl /probe?…&module=only-second)
-  command grep -q "${namespace}_second_items" "$module_body" || die "module probe is missing the collector it selected"
-  command grep -q "${namespace}_items{" "$module_body" && die "module probe carries a collector it did not select"
+  # Restart with a module that names only the second collector, then probe with
+  # &module=only-second. The example collector must NOT be gathered: its health
+  # series must be absent. This is the module parameter doing real work end to
+  # end, not just passing a unit test.
+  # (restart with --probe.module=only-second:second, curl /probe?target=…&module=only-second
+  #  into $module_body, same start/poll/teardown discipline)
+  command grep -q 'collector_success{collector="second"}' "$module_body" \
+    || die "module probe did not gather the collector it selected"
+  command grep -q 'collector_success{collector="example"}' "$module_body" \
+    && die "module probe gathered a collector the module did not select"
 ```
 
 Follow the existing live-probe block's exact conventions for starting the binary,
-waiting for the port, capturing the body, and killing the process. Do not invent
-a second mechanism.
+waiting for readiness on `/healthz`, capturing the body with `curl -fsS`, and
+killing the process (`kill`/`wait`/`trap - EXIT`). Do not invent a second
+mechanism. If you start more than one server across these two probes, make sure
+each is torn down before the next starts, and that the final one leaves no trap
+or listener behind for the docs-check block that follows.
+
+**Do not assert `probe_success`'s value.** Match the existing block: it may be
+`0` here because the self-probe's collectors cannot fetch their expected data.
+Asserting `probe_success 1` would be asserting a lie. The proof this task owes is
+"two collectors compiled in and were both gathered", and the `collector_success`
+series is what proves it.
 
 - [ ] **Step 3: Run the full multi cell**
 
@@ -1558,8 +1596,9 @@ bash test/golden-smoke.sh --flavor http --forge none --target-model multi
 ```
 
 Expected: green. The scaffolded exporter builds with two collectors, `make check`
-passes, one probe carries both `@@NAMESPACE@@_items` and
-`@@NAMESPACE@@_second_items`, and a module-scoped probe carries only the second.
+passes, one probe gathers both (`collector_success{collector="example"}` and
+`collector_success{collector="second"}` both present), and a module-scoped probe
+gathers only the second (`collector="example"` absent).
 
 - [ ] **Step 4: Run the whole matrix, to prove nothing else moved**
 
