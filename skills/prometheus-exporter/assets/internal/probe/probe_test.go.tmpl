@@ -319,3 +319,93 @@ func TestValidateModulesRejectsUnknownCollector(t *testing.T) {
 		t.Errorf("error does not name the offending collector: %v", err)
 	}
 }
+
+// threeFactoryHandler registers alpha, beta and gamma, with two modules over
+// them, and hands back the factories so a test can assert which ones ran.
+func threeFactoryHandler(t *testing.T) (*Handler, map[string]*recordingFactory) {
+	t.Helper()
+	fs := map[string]*recordingFactory{
+		"alpha": {metric: "stub_alpha"},
+		"beta":  {metric: "stub_beta"},
+		"gamma": {metric: "stub_gamma"},
+	}
+	factories := []NamedFactory{
+		fs["alpha"].named("alpha"),
+		fs["beta"].named("beta"),
+		fs["gamma"].named("gamma"),
+	}
+	modules := map[string][]string{
+		"ab": {"alpha", "beta"},
+		"bc": {"beta", "gamma"},
+	}
+	h := NewHandler(logger.NewTextLogger("error"), factories, nil, 5*time.Second, 0, modules)
+	return h, fs
+}
+
+func TestModuleAbsentRunsEveryCollector(t *testing.T) {
+	h, fs := threeFactoryHandler(t)
+	rec := serve(h, "/probe?target=http://n:9100")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200", rec.Code)
+	}
+	for name, f := range fs {
+		if f.calls != 1 {
+			t.Errorf("collector %q ran %d times, want 1: an absent module must run everything", name, f.calls)
+		}
+	}
+}
+
+func TestModuleSelectsOnlyItsMembers(t *testing.T) {
+	h, fs := threeFactoryHandler(t)
+	rec := serve(h, "/probe?target=http://n:9100&module=ab")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200", rec.Code)
+	}
+	if fs["alpha"].calls != 1 || fs["beta"].calls != 1 {
+		t.Errorf("module ab did not run its members: alpha=%d beta=%d", fs["alpha"].calls, fs["beta"].calls)
+	}
+	if fs["gamma"].calls != 0 {
+		t.Errorf("module ab ran gamma %d times, want 0", fs["gamma"].calls)
+	}
+	if strings.Contains(rec.Body.String(), "stub_gamma") {
+		t.Errorf("body carries a series from a collector the module did not select:\n%s", rec.Body.String())
+	}
+}
+
+func TestModulesCombineAsDeduplicatedUnion(t *testing.T) {
+	// ab and bc overlap on beta: it must run ONCE, not twice.
+	for _, rawurl := range []string{
+		"/probe?target=http://n:9100&module=ab&module=bc", // repeated
+		"/probe?target=http://n:9100&module=ab,bc",        // comma-separated
+	} {
+		t.Run(rawurl, func(t *testing.T) {
+			h, fs := threeFactoryHandler(t)
+			rec := serve(h, rawurl)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("got %d, want 200", rec.Code)
+			}
+			for _, name := range []string{"alpha", "beta", "gamma"} {
+				if fs[name].calls != 1 {
+					t.Errorf("collector %q ran %d times, want exactly 1", name, fs[name].calls)
+				}
+			}
+		})
+	}
+}
+
+func TestUnknownModuleRejected(t *testing.T) {
+	h, fs := threeFactoryHandler(t)
+	rec := serve(h, "/probe?target=http://n:9100&module=nope")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("unknown module: got %d, want 400", rec.Code)
+	}
+	for name, f := range fs {
+		if f.calls != 0 {
+			t.Errorf("collector %q ran for a rejected module, want 0 calls", name)
+		}
+	}
+}

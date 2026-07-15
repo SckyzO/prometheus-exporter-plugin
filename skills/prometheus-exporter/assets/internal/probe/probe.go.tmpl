@@ -109,6 +109,57 @@ func ParseModules(vals []string) (map[string][]string, error) {
 	return modules, nil
 }
 
+// moduleNames flattens the module parameter, which is both repeatable and
+// comma-separated: ?module=a&module=b,c selects a, b and c. This is SNMP's
+// grammar, and a scrape config should not have to care which spelling it used.
+func moduleNames(vals []string) []string {
+	var out []string
+	for _, v := range vals {
+		for _, part := range strings.Split(v, ",") {
+			if part = strings.TrimSpace(part); part != "" {
+				out = append(out, part)
+			}
+		}
+	}
+	return out
+}
+
+// selectFactories resolves a request's module parameter to the collectors that
+// will run. Named modules COMBINE: the result is the union of their collectors,
+// deduplicated, emitted in the handler's declared factory order rather than the
+// order the modules were listed, so a probe's output is stable regardless of how
+// the scrape config spells its module list.
+//
+// An absent module runs every registered collector. That is what makes this
+// additive: a scrape config that only sets target keeps working untouched.
+func (h *Handler) selectFactories(vals []string) ([]NamedFactory, error) {
+	names := moduleNames(vals)
+	if len(names) == 0 {
+		return h.factories, nil
+	}
+
+	wanted := make(map[string]bool)
+	for _, name := range names {
+		cols, ok := h.modules[name]
+		if !ok {
+			return nil, fmt.Errorf("unknown module %q", name)
+		}
+		for _, c := range cols {
+			wanted[c] = true
+		}
+	}
+
+	// Declared order, and deduplicated by construction: each factory is
+	// considered exactly once, however many selected modules named it.
+	var out []NamedFactory
+	for _, nf := range h.factories {
+		if wanted[nf.Name] {
+			out = append(out, nf)
+		}
+	}
+	return out, nil
+}
+
 // ValidateModules checks every module against the registered collectors. Call it
 // at startup and fail the boot on error: discovering a typo when the process
 // starts is strictly better than discovering it on a probe at 3am.
@@ -150,6 +201,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	factories, err := h.selectFactories(r.URL.Query()["module"])
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	timeout := h.clampTimeout(r)
 
 	// The probe's deadline, and the reason the ctx plumbed through every
@@ -162,7 +219,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Fresh registry + collectors, scoped to THIS target, for THIS request.
 	reg := prometheus.NewRegistry()
 	tracker := collector.NewStatusTracker(h.log)
-	for _, nf := range h.factories {
+	for _, nf := range factories {
 		tracker.Add(nf.Name, nf.New(ctx, target, timeout))
 	}
 	reg.MustRegister(tracker)
@@ -187,11 +244,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	probeTimeout.Set(timeout.Seconds())
 
 	start := time.Now()
-	mfs, err := reg.Gather() // the ONE scrape of the target's collectors
+	mfs, gatherErr := reg.Gather() // the ONE scrape of the target's collectors
 	probeDuration.Set(time.Since(start).Seconds())
 	switch {
-	case err != nil:
-		h.log.Warn("probe gather reported an error", "target", target, "err", err)
+	case gatherErr != nil:
+		h.log.Warn("probe gather reported an error", "target", target, "err", gatherErr)
 	case collectorsHealthy(mfs):
 		probeSuccess.Set(1)
 	}
