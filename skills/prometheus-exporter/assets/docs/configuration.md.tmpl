@@ -38,17 +38,20 @@ Prometheus itself uses.
 | `--log.level` | Log level: `debug`, `info`, `warn`, `error` | `info` |
 | `--log.format` | Log format: `json`, `text` | `text` |
 | `--web.disable-exporter-metrics` | Exclude Go runtime and process metrics from `/metrics` | `false` |
-| `--[no-]collector.<name>` | Enable or disable a collector (kingpin boolean flag) | see below |
+| `--[no-]collector.<name>` | *(single-target builds only)* Enable or disable a collector (kingpin boolean flag) | see below |
 | `--probe.target-allowlist` | *(multi-target builds only, `--target-model multi`)* Restrict `/probe` to these target hosts (repeatable; host or host:port, exact match) | (empty = allow-any) |
 | `--probe.timeout` | *(multi-target builds only)* Ceiling on each `/probe` request's own deadline | `5s` |
 | `--probe.timeout-offset` | *(multi-target builds only)* Subtracted from Prometheus's scrape timeout when computing a probe's deadline, so the exporter answers before Prometheus abandons the scrape | `0.5s` |
+| `--probe.module` | *(multi-target builds only)* Declare a named module (a subset of collectors) selectable per probe with `&module=<name>` (repeatable; `<name>:<collector>[,<collector>]`) | (none) |
 
-Individual collectors may also expose their own flags. The bundled `example` collector does:
+In **single-target builds**, individual collectors may also expose their own flags. The bundled `example` collector does:
 
 | Flag | Description | Default | Flavor |
 |------|-------------|---------|--------|
 | `--collector.example.timeout` | Per-request/per-command timeout for the `example` collector | `5s` | HTTP and CLI |
 | `--collector.example.target` | Base URL the `example` collector fetches | `@@DATA_SOURCE@@` | HTTP only |
+
+In **multi-target builds** (`--target-model multi`), the `example` collector is built fresh per `/probe` request: its target and timeout come from the request (bounded by the `--probe.*` flags above), so it exposes no `--collector.example.*` flags, and multi has no `--[no-]collector.<name>` toggle.
 
 There is no single global command/request timeout — each collector owns its own, following
 the `example` collector's pattern above. Run `--help` after adding your own collectors to see
