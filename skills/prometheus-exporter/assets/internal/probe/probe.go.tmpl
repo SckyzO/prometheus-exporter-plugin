@@ -9,6 +9,7 @@ package probe
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -194,23 +195,30 @@ func (h *Handler) clampTimeout(r *http.Request) time.Duration {
 		return h.maxTimeout // scraped by something that is not Prometheus
 	}
 	secs, err := strconv.ParseFloat(v, 64)
-	if err != nil || secs <= 0 {
+	if err != nil || math.IsNaN(secs) || math.IsInf(secs, 0) || secs <= 0 {
 		return h.maxTimeout
 	}
 
-	budget := time.Duration((secs - h.timeoutOffset.Seconds()) * float64(time.Second))
-	if budget <= 0 {
+	budgetSecs := secs - h.timeoutOffset.Seconds()
+	if budgetSecs <= 0 {
 		// The offset swallows Prometheus's entire scrape timeout: one of the two
 		// is misconfigured. Warn and ignore the offset, rather than handing every
 		// probe an already-expired context and failing every scrape silently.
 		h.log.Warn("probe timeout offset exceeds Prometheus's scrape timeout; ignoring the offset",
 			"scrape_timeout_seconds", v, "timeout_offset", h.timeoutOffset)
-		budget = time.Duration(secs * float64(time.Second))
+		budgetSecs = secs
 	}
-	if budget < h.maxTimeout {
-		return budget
+
+	// Compare in the float-seconds domain, BEFORE converting to time.Duration:
+	// an astronomically large but finite header (e.g. "1e300") would overflow
+	// budgetSecs*float64(time.Second) to +Inf, and time.Duration(+Inf) yields
+	// the "integer indefinite" bit pattern — a huge negative duration. Clamping
+	// here means that overflow-prone conversion never runs on an out-of-range
+	// value: min(maxTimeout, huge) == maxTimeout is the correct answer anyway.
+	if budgetSecs >= h.maxTimeout.Seconds() {
+		return h.maxTimeout
 	}
-	return h.maxTimeout
+	return time.Duration(budgetSecs * float64(time.Second))
 }
 
 // collectorsHealthy reports whether every collector scoped to this probe

@@ -248,3 +248,27 @@ func TestClampTimeoutHonoursHeaderCeilingAndOffset(t *testing.T) {
 		t.Errorf("offset exceeds scrape timeout: got %v, want 200ms", got)
 	}
 }
+
+// TestClampTimeoutRejectsNonFiniteAndOverflowingHeaders covers header values
+// that a naive "secs <= 0" guard lets through: NaN and +/-Inf compare false
+// against <= 0, and a finite-but-astronomical value like 1e300 passes the
+// guard but overflows time.Duration's conversion into a negative garbage
+// value. Every one of these must fall back to h.maxTimeout, exactly like the
+// empty-header and parse-error paths.
+func TestClampTimeoutRejectsNonFiniteAndOverflowingHeaders(t *testing.T) {
+	h := NewHandler(logger.NewTextLogger("error"),
+		[]NamedFactory{(&recordingFactory{}).named("example")}, nil, 5*time.Second, 500*time.Millisecond)
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/probe?target=http://x:9100", nil)
+
+	for _, header := range []string{"NaN", "Inf", "+Inf", "-Inf", "1e300"} {
+		req.Header.Set("X-Prometheus-Scrape-Timeout-Seconds", header)
+		got := h.clampTimeout(req)
+		if got != 5*time.Second {
+			t.Errorf("header %q: got %v, want 5s (h.maxTimeout fallback)", header, got)
+		}
+		if got <= 0 {
+			t.Errorf("header %q: got non-positive duration %v", header, got)
+		}
+	}
+}
