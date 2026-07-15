@@ -403,7 +403,7 @@ then after the last existing `register(...)` call under
 
 ```go
 register("<name>", func() prometheus.Collector {
-	return collector.New<Name>Collector(log, collector.NewClient(*<name>Target, *<name>Timeout))
+	return collector.New<Name>Collector(context.Background(), log, collector.NewClient(*<name>Target, *<name>Timeout))
 }, true)
 ```
 
@@ -419,7 +419,7 @@ then after the last existing `register(...)` call under
 
 ```go
 register("<name>", func() prometheus.Collector {
-	return collector.New<Name>Collector(log, *<name>Timeout)
+	return collector.New<Name>Collector(context.Background(), log, *<name>Timeout)
 }, true)
 ```
 

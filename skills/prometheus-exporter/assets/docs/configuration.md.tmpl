@@ -40,6 +40,8 @@ Prometheus itself uses.
 | `--web.disable-exporter-metrics` | Exclude Go runtime and process metrics from `/metrics` | `false` |
 | `--[no-]collector.<name>` | Enable or disable a collector (kingpin boolean flag) | see below |
 | `--probe.target-allowlist` | *(multi-target builds only, `--target-model multi`)* Restrict `/probe` to these target hosts (repeatable; host or host:port, exact match) | (empty = allow-any) |
+| `--probe.timeout` | *(multi-target builds only)* Ceiling on each `/probe` request's own deadline | `5s` |
+| `--probe.timeout-offset` | *(multi-target builds only)* Subtracted from Prometheus's scrape timeout when computing a probe's deadline, so the exporter answers before Prometheus abandons the scrape | `0.5s` |
 
 Individual collectors may also expose their own flags. The bundled `example` collector does:
 
@@ -107,9 +109,15 @@ curl 'http://localhost:@@DEFAULT_PORT@@/probe?target=http://some-host:9100'
   `node1` will not match `NODE1` or `node1.`) or the probe returns `403`.
   Empty (the default) accepts any target that clears the floor above.
 - **`X-Prometheus-Scrape-Timeout-Seconds`**: Prometheus sends this header on
-  every scrape; the handler uses `min(header, --collector.example.timeout)`
-  as the request's own timeout, so a probe never outruns Prometheus's
-  deadline or the operator's configured ceiling.
+  every scrape; the handler computes the probe's own deadline as
+  `min(--probe.timeout, X-Prometheus-Scrape-Timeout-Seconds - --probe.timeout-offset)`,
+  so a probe never outruns Prometheus's deadline or the operator's configured
+  ceiling. `--probe.timeout-offset` (default `0.5s`) is subtracted from
+  Prometheus's own scrape timeout so the exporter answers before Prometheus
+  abandons the scrape: a probe that uses its full budget and replies a
+  moment too late is a wasted scrape. `--probe.timeout` (default `5s`) is
+  the ceiling applied when the header is missing, unparseable, or would
+  leave no budget once the offset is subtracted.
 - **SSRF posture**: `/probe` making this exporter fetch an operator-supplied
   URL is a deliberate, ecosystem-standard trade-off (Blackbox/SNMP/IPMI all
   work this way) — see [SECURITY.md](../SECURITY.md) before exposing this

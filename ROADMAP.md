@@ -63,14 +63,20 @@ it points to.
   dialogue) is unchanged when no live instance is offered.
 - **Multi-target scaffolding** (`--target-model multi`, http flavor only):
   `/new-prometheus-exporter --target-model multi` scaffolds a
-  `/probe?target=…` exporter — a fresh registry and collector set built per
+  `/probe?target=…` exporter, a fresh registry and collector set built per
   request, scoped to the target, alongside `internal/probe/`'s always-on
   http/https floor and an opt-in `--probe.target-allowlist` hardening flag.
-  `--target-model single` (still the default) is unchanged. Remaining
-  follow-up: `/add-collector` multi-target awareness (today it refuses
-  cleanly on a multi-target scaffold and points at the manual procedure) and
-  a `module` query parameter, mirroring Blackbox/SNMP's probe-profile
-  selection.
+  `--target-model single` (still the default) is unchanged. The probe seam
+  holds an ordered slice of named collectors rather than exactly one, each
+  probe runs under a real deadline (`--probe.timeout`,
+  `--probe.timeout-offset`), and `--probe.module` selects a subset of
+  collectors per probe, mirroring Blackbox/SNMP's probe-profile selection.
+  Both remaining follow-ups from the first cut are now delivered:
+  `/add-collector` works on a multi-target scaffold (it migrates an older
+  scaffold's seam first when needed, then appends a factory), and the
+  `module` query parameter is live. They decoupled cleanly, because modules
+  are runtime flags naming collectors, so adding a collector can never
+  invalidate one.
 
 ## v1.0
 
