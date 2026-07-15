@@ -14,7 +14,7 @@ monitoring/
 ```
 
 **Boundary: alerting is a Prometheus concern (core, shipped here); dashboards
-are a Grafana concern** (this repo ships one — health — plus the pattern to
+are a Grafana concern** (this repo ships one, health, plus the pattern to
 build your own). See [Observability](../README.md#observability) for where
 this fits among the rest of the exporter's docs.
 
@@ -31,8 +31,8 @@ Everything in `alerts.yml` follows the same shape:
   specific to your target, so there is no version of a business alert
   that's true out of the box for every exporter. The commented block at the
   bottom of `alerts.yml` teaches the same warning/critical + `for:` +
-  portable-labels pattern against the bundled `ExampleCollector`'s metric —
-  uncomment and adapt it, or add a new one, as you build real collectors.
+  portable-labels pattern against the bundled `ExampleCollector`'s metric.
+  Uncomment and adapt it, or add a new one, as you build real collectors.
   `/add-collector` (if you have the scaffolding plugin available) proposes
   a real alert here for every collector's own metrics as you add them.
 
@@ -47,24 +47,24 @@ Both tiers share the same conventions:
 
 Site-specific labels (`team`, `runbook_url`, `dashboard_url`, cluster/env
 tags, etc.) are **intentionally not in this file**. Add them via your local
-override, Prometheus `external_labels`, or Alertmanager routing config —
-keeping them out keeps this file portable across environments.
+override, Prometheus `external_labels`, or Alertmanager routing config.
+Keeping them out keeps this file portable across environments.
 
 Alert thresholds are reasonable defaults; tune them to your deployment size
-and operational tolerance — see the comments in `alerts.yml` and
+and operational tolerance: see the comments in `alerts.yml` and
 [docs/configuration.md](../docs/configuration.md)'s `scrape_interval` /
 `scrape_timeout` guidance.
 
 ## `rules.yml`
 
 One active recording rule,
-`job:@@NAMESPACE@@_exporter_collector_duration_seconds:avg_healthy` —
+`job:@@NAMESPACE@@_exporter_collector_duration_seconds:avg_healthy`:
 average scrape duration across collectors that are currently succeeding,
 guarded against the 0/0 case where every collector is failing at once (see
 the comment above the rule for exactly when that guard is real, not
 decorative). A second, commented-out example shows the classic
 counter-based `rate(...) / (rate(...) > 0)` form of the same guard, applied
-to this exporter's own request/command duration histogram — the pattern to
+to this exporter's own request/command duration histogram: the pattern to
 reach for once you add a collector with a real counter metric.
 
 ## Grafana dashboard
@@ -73,14 +73,14 @@ reach for once you add a collector with a real counter metric.
 ("+ → Import → Upload JSON file"), the Grafana HTTP API, or file
 provisioning. It has two template variables:
 
-- `datasource` — pick your Prometheus data source.
-- `job` — the Prometheus scrape `job` label(s) to show (multi-select,
+- `datasource`: pick your Prometheus data source.
+- `job`: the Prometheus scrape `job` label(s) to show (multi-select,
   defaults to all).
 
 Panels cover exactly what's generic across every exporter this plugin
 scaffolds: target up/down, per-collector success/failure (current status,
 percentage healthy, and history), scrape duration (current, sorted, and over
-time), and Go build info. There is no business-metric panel here by design —
+time), and Go build info. There is no business-metric panel here by design:
 see [Business dashboards](#business-dashboards) below.
 
 ## Wiring it up in Prometheus
@@ -106,7 +106,7 @@ groups load without errors.
 `up{job="@@EXPORTER_NAME@@"} == 0`, matching the `job_name` in the
 `scrape_configs` snippet above. If your own `scrape_configs` entry uses a
 different `job_name`, edit that selector (and any other `job=` selector you
-rely on across `alerts.yml` / `rules.yml`) to match — otherwise the alert
+rely on across `alerts.yml` / `rules.yml`) to match. Otherwise the alert
 silently never fires, since it's just comparing against a `job` label value
 that no series will ever have.
 
@@ -125,12 +125,12 @@ Both should report `SUCCESS`.
 
 ## Business dashboards
 
-A business-metric dashboard (what your collectors actually measure — queue
+A business-metric dashboard (what your collectors actually measure: queue
 depth, error rates, saturation, whatever your target's domain is) is
 deliberately **not** shipped here: unlike the health dashboard above, there
 is no version of it that's generic across every exporter. Generate one from
 this repo's own `docs/metrics.md` with `/generate-dashboard` (if you have the
-scaffolding plugin available) — a short design pass (audience, the RED/USE
+scaffolding plugin available), a short design pass (audience, the RED/USE
 method, key metrics, template variables, drill-down) on top of a deterministic
 backbone that emits exportable Grafana JSON, one panel per documented metric.
 The generated dashboards land here in `grafana/` next to `health-dashboard.json`
@@ -140,8 +140,8 @@ in `docs/metrics.md`.
 ## What's not in this folder
 
 - **Alertmanager configuration**: routing, silencing, notification
-  receivers. Site-specific — see the
+  receivers. Site-specific: see the
   [Alertmanager docs](https://prometheus.io/docs/alerting/latest/configuration/).
-- **Prometheus storage / retention / scrape interval**: same reason — see
+- **Prometheus storage / retention / scrape interval**: same reason, see
   [docs/configuration.md](../docs/configuration.md).
 - **Grafana datasource provisioning**: depends on your Grafana topology.

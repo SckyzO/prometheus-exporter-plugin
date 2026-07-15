@@ -47,7 +47,7 @@ bin/@@EXPORTER_NAME@@ --version
 - `make build` produces `bin/@@EXPORTER_NAME@@` without warnings.
 - `bin/@@EXPORTER_NAME@@ --version` prints a first line of the form `@@EXPORTER_NAME@@, version
   <VERSION> (branch: <BRANCH>, revision: <REVISION>)`, followed by indented `build user`/
-  `build date`/`go version`/`platform`/`tags` lines — branch and revision are separate fields,
+  `build date`/`go version`/`platform`/`tags` lines: branch and revision are separate fields,
   never fused into the version string itself. For an unreleased build, `<VERSION>` comes from
   `git describe --tags --always --dirty --abbrev=7` and typically looks like `v0.2.0-dirty` or
   `v0.2.0-3-gabcdef1`, depending on how many commits/tags exist since the last tag.
