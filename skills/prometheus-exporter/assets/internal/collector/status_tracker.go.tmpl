@@ -63,9 +63,9 @@ func (st *StatusTracker) Describe(ch chan<- *prometheus.Desc) {
 // collector's output is buffered on a private per-entry channel (instead of
 // writing directly into ch) so this method can count how many metrics it
 // produced before forwarding them. A collector that returns normally but
-// emits zero metrics — the documented "log the error, then bare return"
+// emits zero metrics, the documented "log the error, then bare return"
 // shape every collector in this exporter follows (see collector.go's Collect
-// doc comment) — is exactly as much a failed scrape as one that panics, so
+// doc comment), is exactly as much a failed scrape as one that panics, so
 // both are reported as collector_success=0 here. Panics are still caught via
 // defer/recover in the same goroutine that calls Collect; deferring the
 // channel close ahead of the recover (LIFO: recover runs first) guarantees

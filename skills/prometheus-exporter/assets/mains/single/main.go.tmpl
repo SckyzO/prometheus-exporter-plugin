@@ -62,15 +62,15 @@ var registry []registryEntry
 // Both the initial scaffold and /add-collector insert one register(...) call
 // per collector at the // @@COLLECTOR_REGISTRY@@ marker in main() below.
 //
-// register — like every other kingpin.Flag call — must run before
+// register (like every other kingpin.Flag call) must run before
 // kingpin.Parse(), so newFn must NOT eagerly dereference any flag-derived
 // value (the shared logger, a flavor client's target address, ...): those
 // still hold their zero value at this point, not their real default or any
-// user-supplied override (verified empirically against kingpin/v2 — flag
+// user-supplied override (verified empirically against kingpin/v2: flag
 // pointers are zero until Parse() runs). newFn is only actually invoked
 // once, later in main(), after kingpin.Parse() and logger/client
 // construction have completed. It's safe for the closure passed as newFn to
-// reference those variables — Go closures capture them by reference — as
+// reference those variables (Go closures capture them by reference) as
 // long as it isn't called before they're assigned, which main() guarantees.
 func register(name string, newFn func() prometheus.Collector, enabledByDefault bool) {
 	enabled := kingpin.Flag("collector."+name, "Enable the "+name+" collector.").
@@ -89,14 +89,14 @@ var indexHTML = fmt.Sprintf(`<html>
 
 func main() {
 	// log is declared here (nil) and assigned for real only after
-	// kingpin.Parse(), below — see register()'s doc comment for why. Any
+	// kingpin.Parse(), below. See register()'s doc comment for why. Any
 	// closure created at the markers below may reference it.
 	var log *logger.Logger
 
 	// ctx is created up-front, before the // @@CLIENT_INIT@@ /
 	// // @@COLLECTOR_REGISTRY@@ markers below, so a background-refresh
 	// collector variant registered at that marker can capture it in its
-	// register() closure (for c.Start(ctx)) — the same early-declaration
+	// register() closure (for c.Start(ctx)), the same early-declaration
 	// rationale as log just above: the closure only dereferences ctx later,
 	// after kingpin.Parse(), when the registry loop actually invokes it.
 	// signal.NotifyContext needs no flags, so calling it before
@@ -111,7 +111,7 @@ func main() {
 	// background-refresh collector variant satisfies (Start/Done, see
 	// internal/collector's background_collector.go once /add-collector has
 	// added one). backgroundCollectors stays empty in a purely synchronous
-	// exporter — the wait loop after web.ListenAndServe below still runs
+	// exporter: the wait loop after web.ListenAndServe below still runs
 	// (over an empty slice, so it is an immediate no-op), which is what
 	// lets this seam ship unconditionally without special-casing "no
 	// background collectors are registered". /add-collector's background
@@ -136,7 +136,7 @@ func main() {
 	}
 
 	// Security posture check (security-and-hardening.md Rule 3): never
-	// refuses to start and never changes the default (Rule 2) — just makes
+	// refuses to start and never changes the default (Rule 2), just makes
 	// sure the operator knows /metrics is unauthenticated on a reachable
 	// address, since ":@@DEFAULT_PORT@@" already binds every interface.
 	warnIfExposedAndUnauthenticated(log, *toolkitFlags.WebListenAddresses, *toolkitFlags.WebConfigFile)
@@ -185,7 +185,7 @@ func main() {
 	// collector's metrics too and fail the entire /metrics response with an
 	// HTTP error, defeating that promise at the handler level. ContinueOnError
 	// serves every metric family that gathered cleanly and only falls back
-	// to an HTTP error if literally nothing could be gathered — the same
+	// to an HTTP error if literally nothing could be gathered, the same
 	// idiom multi-collector exporters like node_exporter use.
 	http.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{
 		EnableOpenMetrics: true,
@@ -229,7 +229,7 @@ func main() {
 	log.Info("Server stopped")
 
 	// Wait for every background-refresh collector's goroutine to finish (if
-	// any were registered — see backgroundCollectors above), bounded so a
+	// any were registered, see backgroundCollectors above), bounded so a
 	// collector whose refresh is genuinely stuck never hangs process exit.
 	for _, bc := range backgroundCollectors { //nolint:gosec // G602: a for-range over a slice never indexes out of bounds (there is no explicit index expression), so G602 is a false positive here
 		select {

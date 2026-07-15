@@ -40,7 +40,7 @@ var (
 	).Default("false").Bool()
 
 	// probeTargetAllowlist restricts which targets /probe will scrape. Empty
-	// (the default) accepts any http/https target — the Blackbox/SNMP
+	// (the default) accepts any http/https target, the Blackbox/SNMP
 	// ecosystem default. See SECURITY.md and the startup warning.
 	probeTargetAllowlist = kingpin.Flag(
 		"probe.target-allowlist",
@@ -123,7 +123,7 @@ func main() {
 	probeHandler := probe.NewHandler(log, factories, *probeTargetAllowlist, *probeTimeout, *probeTimeoutOffset, modules)
 
 	// /metrics reports on the EXPORTER ITSELF (build info, Go runtime/process,
-	// aggregate request timing), scraped independently of any probed target —
+	// aggregate request timing), scraped independently of any probed target,
 	// exactly like the Blackbox exporter. The per-target series come from
 	// /probe, on a fresh registry per request.
 	reg := prometheus.NewRegistry()

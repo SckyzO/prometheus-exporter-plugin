@@ -7,22 +7,22 @@
 // Flavor-agnostic by construction: this file ships unmodified to both the
 // http and cli flavors, exactly like status_tracker.go/status_tracker_test.go
 // alongside it. It never imports or names a specific collector type
-// (ExampleCollector, Client, ...) — instead it parses whichever *.go files
+// (ExampleCollector, Client, ...). Instead, it parses whichever *.go files
 // happen to live in this same directory at build time and extracts every
 // prometheus.NewDesc(...) call and every Opts-based constructor call
 // (NewHistogramVec/NewCounterVec/NewGaugeVec/NewSummaryVec and their non-Vec
 // NewHistogram/NewCounter/NewGauge/NewSummary forms) it finds via go/ast, the
 // same way for either flavor. A metric name built with
-// prometheus.BuildFQName(namespace, subsystem, name) — the standard,
+// prometheus.BuildFQName(namespace, subsystem, name), the standard,
 // idiomatic way to compose a fqName (used throughout client_golang itself),
-// not a naming anti-pattern — is resolved exactly like a bare string literal,
+// and not a naming anti-pattern, is resolved exactly like a bare string literal,
 // provided all three arguments are themselves string literals (see
 // resolveNameExpr/buildFQName below).
 //
 // This is a source-extraction check, not a construct-and-Describe check:
 // nothing here constructs a collector or mocks any I/O. A metric's name and
 // label set are fixed at its call site in source, regardless of whether that
-// collector's own Collect ever successfully runs — constructing collectors
+// collector's own Collect ever successfully runs: constructing collectors
 // and calling Gather() instead would make this check depend on whether a
 // fake client/Execute happens to succeed this run, which has nothing to do
 // with whether the DOCS are truthful (see collector.go's own Collect doc
@@ -36,7 +36,7 @@
 //     prometheus.BuildFQName(ns, sub, name) call whose three arguments are
 //     themselves string literals, at its NewDesc/Opts.Name call site. A
 //     genuinely computed name (fmt.Sprintf, string concatenation, a
-//     variable, ...) cannot be resolved — also a Prometheus naming
+//     variable, ...) cannot be resolved, also a Prometheus naming
 //     anti-pattern independent of this tool (metric names and label keys
 //     are meant to be static; see CONTRIBUTING.md's "Adding a new
 //     collector" section), so this is not expected to bite a
@@ -55,22 +55,22 @@
 //     (NewHistogram/NewCounter/NewGauge/NewSummary), Opts only, no second
 //     argument. A differently-shaped call to one of these same function
 //     names (for example an Opts value built from a variable instead of a
-//     composite literal) is reported as a WARNING, not silently skipped —
-//     see extractSourceMetrics. A *different* constructor entirely
+//     composite literal) is reported as a WARNING, not silently skipped.
+//     See extractSourceMetrics. A *different* constructor entirely
 //     (promauto's auto-registering variants, NewGaugeFunc/NewCounterFunc/
 //     NewUntypedFunc, a differently aliased or wrapped "prometheus"
-//     import, ...) is still genuinely invisible to this extractor — out of
+//     import, ...) is still genuinely invisible to this extractor, out of
 //     scope, not merely unresolved, since recognizing every possible
 //     metric-constructing call shape in the client_golang API is not this
 //     tool's goal.
-//   - Only this package's own directory (".") is scanned, non-recursively —
+//   - Only this package's own directory (".") is scanned, non-recursively:
 //     correct for this scaffold's flat internal/collector/ layout; a future
 //     reorganization into subpackages would need a wider walk.
 //   - A label list that isn't a literal `nil` or `[]string{"a", "b"}` (for
 //     example a shared package-level variable reused across several Desc
 //     calls) cannot be resolved here. Rather than guessing wrong, such a
 //     metric's labels are marked unknown (metricDesc.labelsKnown = false)
-//     and TestDocsCheck skips label verification for it — this extractor
+//     and TestDocsCheck skips label verification for it. This extractor
 //     must never manufacture a false "docs lie" out of its own inability to
 //     resolve a label list. This gap is also surfaced as a WARNING naming
 //     the file:line, for the same reason as the name-resolution case above.
@@ -93,14 +93,14 @@ import (
 // docsMetricsPath is docs/metrics.md, expressed relative to this package's
 // own directory (internal/collector/, always exactly two levels below repo
 // root in every flavor this scaffold ships) since `go test` runs with the
-// package's source directory as its working directory — the same
+// package's source directory as its working directory, the same
 // convention every other test file here already relies on for its own
 // testdata/ fixtures.
 const docsMetricsPath = "../../docs/metrics.md"
 
 // metricDesc is one Prometheus metric's variable label keys, as either
 // extracted from source (extractSourceMetrics) or parsed from
-// docs/metrics.md (parseMetricsDoc). The metric's name is not stored here —
+// docs/metrics.md (parseMetricsDoc). The metric's name is not stored here:
 // it is always the key of the map this type is a value in.
 type metricDesc struct {
 	labels []string
@@ -114,14 +114,14 @@ type metricDesc struct {
 
 // TestDocsCheck is `make docs-check`'s implementation: docs/metrics.md must
 // never document a metric or label this package's source cannot produce
-// (docs subset-of code — a hard failure, since a lying doc is worse than no
+// (docs subset-of code, a hard failure, since a lying doc is worse than no
 // doc at all). The reverse gap, a real metric missing from docs/metrics.md,
 // is only logged as a warning (visible under `go test -v`, which is how
-// `make docs-check` always invokes this) — see CONTRIBUTING.md's Definition
+// `make docs-check` always invokes this). See CONTRIBUTING.md's Definition
 // of Done, step 4: undocumented is a quality gap, not a lie. Any call site
 // extractSourceMetrics recognized by function name but could not fully
 // resolve (an unresolvable name, Opts, or variable-label list) is also
-// logged as a warning, naming the file:line — see extractSourceMetrics's own
+// logged as a warning, naming the file:line. See extractSourceMetrics's own
 // doc comment for why that must never be silent.
 func TestDocsCheck(t *testing.T) {
 	extracted, warnings, err := extractSourceMetrics(".")
@@ -130,14 +130,14 @@ func TestDocsCheck(t *testing.T) {
 	}
 	// A completely empty extraction almost certainly means this extractor
 	// itself broke (a refactor changed the call shapes it recognizes)
-	// rather than that this package genuinely defines zero metrics — every
+	// rather than that this package genuinely defines zero metrics: every
 	// flavor this scaffold ships defines at least the shared StatusTracker's
 	// two. Left unchecked, an extractor that silently finds nothing would
 	// make every future run of this test vacuously pass forever regardless
-	// of what docs/metrics.md claims — exactly the kind of lie this test
+	// of what docs/metrics.md claims, exactly the kind of lie this test
 	// exists to catch.
 	if len(extracted) == 0 {
-		t.Fatal("extractSourceMetrics found zero metrics in internal/collector/*.go — either this package defines none (unexpected) or the extractor's go/ast pattern matching no longer recognizes this code; see this file's own doc comment")
+		t.Fatal("extractSourceMetrics found zero metrics in internal/collector/*.go: either this package defines none (unexpected) or the extractor's go/ast pattern matching no longer recognizes this code; see this file's own doc comment")
 	}
 	for _, w := range warnings {
 		t.Logf("WARNING: %s", w)
@@ -160,9 +160,9 @@ func TestDocsCheck(t *testing.T) {
 // diffDocs compares extracted (from source, via extractSourceMetrics) against
 // documented (from docs/metrics.md, via parseMetricsDoc) and reports both
 // directions of disagreement. lies are documented metrics/labels the code
-// cannot produce — TestDocsCheck fails the build on these, since a lying doc
+// cannot produce: TestDocsCheck fails the build on these, since a lying doc
 // is worse than no doc at all. undocumented are metrics the code emits that
-// docs/metrics.md never mentions — TestDocsCheck only warns on these (see
+// docs/metrics.md never mentions: TestDocsCheck only warns on these (see
 // CONTRIBUTING.md's Definition of Done, step 4). Split out from TestDocsCheck
 // as a pure function so the comparison logic itself is directly unit
 // testable against hand-built maps, without needing a real docs/metrics.md
@@ -208,7 +208,7 @@ func containsString(haystack []string, needle string) bool {
 // and returns every prometheus.NewDesc / Opts-based constructor call site
 // (NewHistogramVec, NewCounterVec, NewGaugeVec, NewSummaryVec, and their
 // non-Vec NewHistogram/NewCounter/NewGauge/NewSummary forms) it can
-// statically resolve, keyed by metric name — resolving a
+// statically resolve, keyed by metric name: resolving a
 // prometheus.BuildFQName(...) fqName argument or an Opts.Name/Namespace/
 // Subsystem field exactly like a bare string literal (see
 // resolveNameExpr/optsFQName). Test files are skipped deliberately:
@@ -221,7 +221,7 @@ func containsString(haystack []string, needle string) bool {
 // name but could not fully resolve (an unresolvable name, Opts, or
 // variable-label list). The caller (TestDocsCheck) surfaces each via t.Logf
 // so an unverifiable metric is visible under `go test -v`/`make docs-check`
-// instead of silently vanishing from the extracted map — a metric this
+// instead of silently vanishing from the extracted map. A metric this
 // extractor cannot vouch for must never look, to a reader of test output,
 // indistinguishable from a metric that simply doesn't exist.
 func extractSourceMetrics(dir string) (map[string]metricDesc, []string, error) {
@@ -255,7 +255,7 @@ func extractSourceMetrics(dir string) (map[string]metricDesc, []string, error) {
 			}
 			// Assumes the conventional, unaliased
 			// `"github.com/prometheus/client_golang/prometheus"` import
-			// every template file in this scaffold actually uses — see
+			// every template file in this scaffold actually uses. See
 			// this file's own doc comment for why a differently-aliased
 			// import is out of scope.
 			pkgIdent, ok := sel.X.(*ast.Ident)
@@ -270,50 +270,50 @@ func extractSourceMetrics(dir string) (map[string]metricDesc, []string, error) {
 			case "NewDesc":
 				// prometheus.NewDesc(fqName, help, variableLabels, constLabels)
 				if len(call.Args) < 3 {
-					warnings = append(warnings, fmt.Sprintf("%s: prometheus.NewDesc call does not have the expected argument shape (fqName, help, variableLabels, constLabels) — skipped", loc))
+					warnings = append(warnings, fmt.Sprintf("%s: prometheus.NewDesc call does not have the expected argument shape (fqName, help, variableLabels, constLabels), skipped", loc))
 					return true
 				}
 				fqName, ok := resolveNameExpr(call.Args[0])
 				if !ok {
-					warnings = append(warnings, fmt.Sprintf("%s: prometheus.NewDesc's metric name could not be statically resolved (not a string literal or prometheus.BuildFQName(...) with literal arguments) — this metric is invisible to docs-check", loc))
+					warnings = append(warnings, fmt.Sprintf("%s: prometheus.NewDesc's metric name could not be statically resolved (not a string literal or prometheus.BuildFQName(...) with literal arguments), this metric is invisible to docs-check", loc))
 					return true
 				}
 				labels, labelsKnown := stringSliceLit(call.Args[2])
 				if !labelsKnown {
-					warnings = append(warnings, fmt.Sprintf("%s: metric `%s`'s variable-label list could not be statically resolved (not `nil` or a []string{...} literal) — docs-check cannot verify its documented labels", loc, fqName))
+					warnings = append(warnings, fmt.Sprintf("%s: metric `%s`'s variable-label list could not be statically resolved (not `nil` or a []string{...} literal), docs-check cannot verify its documented labels", loc, fqName))
 				}
 				result[fqName] = metricDesc{labels: labels, labelsKnown: labelsKnown}
 
 			case "NewHistogramVec", "NewCounterVec", "NewGaugeVec", "NewSummaryVec":
 				// prometheus.New<X>Vec(prometheus.<X>Opts{Namespace, Subsystem, Name, ...}, variableLabels)
 				if len(call.Args) < 2 {
-					warnings = append(warnings, fmt.Sprintf("%s: prometheus.%s call does not have the expected argument shape (Opts, variableLabels) — skipped", loc, fn))
+					warnings = append(warnings, fmt.Sprintf("%s: prometheus.%s call does not have the expected argument shape (Opts, variableLabels), skipped", loc, fn))
 					return true
 				}
 				fqName, ok := optsFQName(call.Args[0])
 				if !ok {
-					warnings = append(warnings, fmt.Sprintf("%s: prometheus.%s's Opts (Namespace/Subsystem/Name) could not be statically resolved (expected a prometheus.Opts{...}-shaped composite literal with string-literal fields) — this metric is invisible to docs-check", loc, fn))
+					warnings = append(warnings, fmt.Sprintf("%s: prometheus.%s's Opts (Namespace/Subsystem/Name) could not be statically resolved (expected a prometheus.Opts{...}-shaped composite literal with string-literal fields), this metric is invisible to docs-check", loc, fn))
 					return true
 				}
 				labels, labelsKnown := stringSliceLit(call.Args[1])
 				if !labelsKnown {
-					warnings = append(warnings, fmt.Sprintf("%s: metric `%s`'s variable-label list could not be statically resolved (not `nil` or a []string{...} literal) — docs-check cannot verify its documented labels", loc, fqName))
+					warnings = append(warnings, fmt.Sprintf("%s: metric `%s`'s variable-label list could not be statically resolved (not `nil` or a []string{...} literal), docs-check cannot verify its documented labels", loc, fqName))
 				}
 				result[fqName] = metricDesc{labels: labels, labelsKnown: labelsKnown}
 
 			case "NewHistogram", "NewCounter", "NewGauge", "NewSummary":
-				// prometheus.New<X>(prometheus.<X>Opts{Namespace, Subsystem, Name, ...})
-				// — a single, non-Vec metric has no variable-label argument
+				// prometheus.New<X>(prometheus.<X>Opts{Namespace, Subsystem, Name, ...}):
+				// a single, non-Vec metric has no variable-label argument
 				// at all (its ConstLabels are constant, not "variable" in
 				// the sense this checker tracks), so a resolved name always
 				// pairs with a known, empty label set.
 				if len(call.Args) < 1 {
-					warnings = append(warnings, fmt.Sprintf("%s: prometheus.%s call does not have the expected argument shape (Opts) — skipped", loc, fn))
+					warnings = append(warnings, fmt.Sprintf("%s: prometheus.%s call does not have the expected argument shape (Opts), skipped", loc, fn))
 					return true
 				}
 				fqName, ok := optsFQName(call.Args[0])
 				if !ok {
-					warnings = append(warnings, fmt.Sprintf("%s: prometheus.%s's Opts (Namespace/Subsystem/Name) could not be statically resolved (expected a prometheus.Opts{...}-shaped composite literal with string-literal fields) — this metric is invisible to docs-check", loc, fn))
+					warnings = append(warnings, fmt.Sprintf("%s: prometheus.%s's Opts (Namespace/Subsystem/Name) could not be statically resolved (expected a prometheus.Opts{...}-shaped composite literal with string-literal fields), this metric is invisible to docs-check", loc, fn))
 					return true
 				}
 				result[fqName] = metricDesc{labels: nil, labelsKnown: true}
@@ -339,7 +339,7 @@ func stringLit(expr ast.Expr) (string, bool) {
 
 // resolveNameExpr resolves expr as a metric name: either a plain string
 // literal, or a prometheus.BuildFQName(namespace, subsystem, name) call
-// whose three arguments are themselves string literals — the standard,
+// whose three arguments are themselves string literals, the standard,
 // idiomatic way many real-world exporters compose a fqName without a
 // separate Opts struct (see NewDesc's own call shape). Returns ok=false for
 // anything else (a variable, string concatenation, a differently-shaped
@@ -384,7 +384,7 @@ func resolveNameExpr(expr ast.Expr) (string, bool) {
 // buildFQName mirrors prometheus.BuildFQName's own join logic exactly
 // (client_golang's prometheus/metric.go): namespace and subsystem are each
 // joined with "_" only when non-empty, and the whole result collapses to ""
-// when name itself is empty, regardless of namespace/subsystem — this
+// when name itself is empty, regardless of namespace/subsystem: this
 // extractor cannot import and call the real function on values it only
 // knows as parsed source text, never live strings the real function would
 // receive at runtime, so the join logic is deliberately kept in lockstep
@@ -407,11 +407,11 @@ func buildFQName(namespace, subsystem, name string) string {
 }
 
 // stringSliceLit resolves expr as either the bare identifier nil (no
-// labels — ok=true, a known-empty label set) or a []string{"a", "b", ...}
+// labels, ok=true, a known-empty label set) or a []string{"a", "b", ...}
 // composite literal of plain string literals (ok=true). Anything else (a
 // variable, a function call, a slice built from a non-literal element, ...)
 // reports ok=false: the caller must then treat that metric's label set as
-// unknown, not as empty — see metricDesc's labelsKnown field.
+// unknown, not as empty. See metricDesc's labelsKnown field.
 func stringSliceLit(expr ast.Expr) ([]string, bool) {
 	if ident, ok := expr.(*ast.Ident); ok && ident.Name == "nil" {
 		return nil, true
@@ -432,18 +432,18 @@ func stringSliceLit(expr ast.Expr) ([]string, bool) {
 }
 
 // optsFQName resolves expr as a prometheus Opts-shaped composite literal
-// (Opts, HistogramOpts, SummaryOpts, GaugeOpts, CounterOpts — this doesn't
+// (Opts, HistogramOpts, SummaryOpts, GaugeOpts, CounterOpts, this doesn't
 // care which one, it only looks at field names) and returns its
 // fully-qualified metric name, composed from whichever of its
 // Namespace/Subsystem/Name fields are present exactly the way
 // prometheus.BuildFQName (called internally by every one of these
-// constructors at registration time) would — see buildFQName. A Name field
+// constructors at registration time) would. See buildFQName. A Name field
 // is mandatory (ok=false if absent, matching client_golang's own "It is
 // mandatory to set Name" contract); Namespace/Subsystem default to "" when
 // absent, matching Go's own zero-value struct-literal semantics. A field
 // that is present but not a plain string literal (a variable, a
 // prometheus.BuildFQName(...) call, a computed expression, ...) makes the
-// whole call unresolvable (ok=false) — this must never guess at a
+// whole call unresolvable (ok=false): this must never guess at a
 // namespace/subsystem/name it cannot prove statically.
 func optsFQName(expr ast.Expr) (string, bool) {
 	comp, ok := expr.(*ast.CompositeLit)
@@ -491,29 +491,29 @@ func optsFQName(expr ast.Expr) (string, bool) {
 }
 
 // metricsDocNameRE matches a markdown table cell that is exactly one
-// backtick-quoted name, nothing else — this is what excludes
+// backtick-quoted name, nothing else: this is what excludes
 // docs/metrics.md's header row (`| Metric | Type | ... |`, no backticks)
 // and separator row (`|---|---|...|`) from being misread as metric rows.
 var metricsDocNameRE = regexp.MustCompile("^`([A-Za-z_][A-Za-z0-9_]*)`$")
 
 // metricsDocLabelRE finds every backtick-quoted token inside a table row's
 // Labels cell (see docs/metrics.md's own header comment for the table
-// format) — comma/space-separated doesn't matter, this just extracts each
+// format): comma/space-separated doesn't matter, this just extracts each
 // `name` in turn. A cell of "-" (no labels) simply yields zero matches.
 var metricsDocLabelRE = regexp.MustCompile("`([A-Za-z_][A-Za-z0-9_]*)`")
 
 // parseMetricsDoc parses path (docs/metrics.md) as a sequence of
-// "| `metric` | Type | `label`, ... | Description |" table rows — see this
+// "| `metric` | Type | `label`, ... | Description |" table rows. See this
 // file's own header comment and docs/metrics.md's header comment for the
 // exact format. Any line that isn't a well-formed, backtick-first-cell row
 // is ignored, which is what lets prose and headings coexist in the same
 // file without special-casing them here. Lines inside an HTML comment
-// (`<!-- ... -->`, on their own lines — docs/metrics.md's own format-guide
+// (`<!-- ... -->`, on their own lines, docs/metrics.md's own format-guide
 // block is written exactly this way) are skipped outright: that block's own
 // example row, `| \`metric_name\` | Type | \`label1\`, \`label2\` |
 // Description |`, is itself well-formed table syntax and would otherwise be
 // misread as documenting real metrics literally named "metric_name" with
-// labels "label1"/"label2" — a false lie this checker would report against
+// labels "label1"/"label2", a false lie this checker would report against
 // itself on every single run.
 func parseMetricsDoc(path string) (map[string]metricDesc, error) {
 	data, err := os.ReadFile(path)
@@ -563,11 +563,11 @@ func parseMetricsDoc(path string) (map[string]metricDesc, error) {
 // TestDocsCheck_BuildFQName is a regression test for a false-FAIL the
 // pre-fix extractor produced: prometheus.BuildFQName(ns, sub, name) is the
 // standard, idiomatic way many real-world exporters compose a metric's
-// fqName — not a naming anti-pattern — yet the pre-fix extractor only
+// fqName, not a naming anti-pattern, yet the pre-fix extractor only
 // recognized a bare string literal as NewDesc's first argument, so a
 // collector written this way was silently invisible to docs-check: a
 // truthful docs/metrics.md row for such a metric then failed with
-// "documents metric `x`, which does not exist in internal/collector/*.go" —
+// "documents metric `x`, which does not exist in internal/collector/*.go",
 // a false accusation against a correct doc. See resolveNameExpr/buildFQName.
 func TestDocsCheck_BuildFQName(t *testing.T) {
 	dir := t.TempDir()

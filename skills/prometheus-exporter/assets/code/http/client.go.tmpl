@@ -20,13 +20,13 @@ import (
 //
 // Deliberately built with plain prometheus.NewHistogramVec, not
 // promauto.NewHistogramVec: promauto's factories auto-register into
-// prometheus.DefaultRegisterer, the process-wide global registry — but
+// prometheus.DefaultRegisterer, the process-wide global registry. But
 // main.go builds its own prometheus.NewRegistry() instead of using that
 // global one (see main.go's own comment on that line), and only collectors
 // reachable via register()/tracker.Add(...) ever reach /metrics. A
 // *prometheus.HistogramVec already implements prometheus.Collector, so
 // registry.frag registers this var the exact same way it registers every
-// other collector — no promauto, no second registry to thread through
+// other collector: no promauto, no second registry to thread through
 // NewClient.
 //
 // Single process-wide histogram, labeled only by outcome: if

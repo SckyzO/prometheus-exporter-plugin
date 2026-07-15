@@ -114,7 +114,7 @@ func NewExampleCollector(log *logger.Logger, client *Client, interval time.Durat
 // Start launches the background refresh goroutine. Call once, after
 // construction. The first refresh runs immediately (so the cache starts
 // filling as soon as the process starts) without Start itself waiting for
-// it — a slow first fetch never blocks process startup. The goroutine exits
+// it: a slow first fetch never blocks process startup. The goroutine exits
 // when ctx is cancelled; Done() can then be used to wait for it to finish.
 func (c *ExampleCollector) Start(ctx context.Context) {
 	go func() {
@@ -144,13 +144,13 @@ func (c *ExampleCollector) Done() <-chan struct{} {
 // refresh performs the one flavor-specific I/O call (exampleGetMetrics, via
 // the injected *Client) and, on success, atomically replaces the cache.
 // On error it logs and returns, leaving the previous cache and lastRefresh
-// untouched — fail-open: a transient failure serves the last-known-good
+// untouched, fail-open: a transient failure serves the last-known-good
 // data instead of dropping the series, and the freshness gauge (below) is
 // the signal that a refresh is stale, not a dropped scrape.
 func (c *ExampleCollector) refresh(ctx context.Context) {
 	stats, err := c.exampleGetMetrics(ctx)
 	if err != nil {
-		c.log.Error("Failed to refresh example metrics — keeping previous cache", "err", err)
+		c.log.Error("Failed to refresh example metrics: keeping previous cache", "err", err)
 		return
 	}
 
@@ -178,11 +178,11 @@ func (c *ExampleCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.lastRefreshDesc
 }
 
-// Collect replays the cached metrics from the last successful refresh —
+// Collect replays the cached metrics from the last successful refresh:
 // O(cached size), never touches the target, never blocks on it. It then
 // ALWAYS sends the freshness gauge, even before any refresh has ever
 // completed (value 0 in that case, since a zero time.Time's Unix() is a
-// large negative, not a meaningful "ancient" epoch marker) — see the
+// large negative, not a meaningful "ancient" epoch marker). See the
 // collector-authoring rule in collector.go.tmpl's Collect for why a
 // collector must never emit zero metrics on what it considers a healthy
 // outcome: StatusTracker counts emitted metrics per scrape, and an empty
@@ -190,7 +190,7 @@ func (c *ExampleCollector) Describe(ch chan<- *prometheus.Desc) {
 // a failure. The freshness gauge alone guarantees at least one metric every
 // scrape, so StatusTracker reports this collector as alive; the gauge's own
 // value (0 until the first refresh lands) is the separate, correct signal
-// for staleness — see NewExampleCollector's lastRefreshDesc help text.
+// for staleness: see NewExampleCollector's lastRefreshDesc help text.
 func (c *ExampleCollector) Collect(ch chan<- prometheus.Metric) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

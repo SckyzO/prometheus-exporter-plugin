@@ -18,7 +18,7 @@ import (
 // TestParseExample exercises parseExample (piece 2, the pure parser) with a
 // static byte fixture: no subprocess, no collector, no logger, no goroutine
 // involved. Identical in spirit to the synchronous flavor's own test of the
-// same name — the parser is pure regardless of how its caller schedules I/O.
+// same name: the parser is pure regardless of how its caller schedules I/O.
 func TestParseExample(t *testing.T) {
 	data, err := os.ReadFile("testdata/example.txt")
 	if err != nil {
@@ -69,7 +69,7 @@ func TestParseExample(t *testing.T) {
 }
 
 // TestExampleCollector_Describe locks the descriptor count at exactly 3
-// (entries, value, and the freshness gauge lastRefreshDesc — one more than
+// (entries, value, and the freshness gauge lastRefreshDesc, one more than
 // the synchronous flavor, which has no freshness gauge) so a future edit
 // that silently adds or drops a metric is caught here rather than
 // downstream.
@@ -112,21 +112,21 @@ func TestExampleCollector_DoneClosesOnCancel(t *testing.T) {
 	case <-c.Done():
 		// success
 	case <-time.After(2 * time.Second):
-		t.Fatal("Done() did not close within 2s after cancel — graceful shutdown broken")
+		t.Fatal("Done() did not close within 2s after cancel: graceful shutdown broken")
 	}
 }
 
 // TestExampleCollector_CollectServesCacheWithoutIO proves Collect never
 // runs the command: after Start's own immediate refresh completes, a long
 // interval (1 hour) guarantees the ticker cannot fire again during this
-// test, so any further Execute call could only come from Collect itself —
+// test, so any further Execute call could only come from Collect itself,
 // which the design forbids. Scraping (via Gather) three times back to back
 // must not move the call counter past whatever Start's own first refresh
 // already set it to.
 //
 // Execute is restored via defer immediately after saving it, and the test
 // waits on c.Done() after cancelling before that restore runs, so the
-// background goroutine's own read of Execute can never race the restore —
+// background goroutine's own read of Execute can never race the restore:
 // the same ordering the reference collector's own tests use.
 func TestExampleCollector_CollectServesCacheWithoutIO(t *testing.T) {
 	var calls atomic.Int64
@@ -172,8 +172,8 @@ func TestExampleCollector_CollectServesCacheWithoutIO(t *testing.T) {
 // TestExampleCollector_ErrorKeepsPreviousCache scripts Execute to succeed
 // once, then fail on every later call, and drives at least one more
 // refresh via a short interval. The cache from the successful first refresh
-// must survive the later failure — fail-open, per this collector's Collect
-// doc comment — rather than being cleared or replaced with nothing.
+// must survive the later failure (fail-open, per this collector's Collect
+// doc comment) rather than being cleared or replaced with nothing.
 func TestExampleCollector_ErrorKeepsPreviousCache(t *testing.T) {
 	var calls atomic.Int64
 
@@ -199,7 +199,7 @@ func TestExampleCollector_ErrorKeepsPreviousCache(t *testing.T) {
 	// Wait for call 3 to start, rather than sleeping a fixed duration:
 	// refresh runs synchronously on Start's single goroutine, so the ticker
 	// cannot dispatch call 3 until call 2 (the first failing refresh) has
-	// fully returned — its error branch included. Seeing calls reach 3 is
+	// fully returned, its error branch included. Seeing calls reach 3 is
 	// therefore a deterministic proof that call 2's whole error path has
 	// already completed, which a fixed sleep can only ever approximate.
 	deadline := time.Now().Add(2 * time.Second)
@@ -219,11 +219,11 @@ func TestExampleCollector_ErrorKeepsPreviousCache(t *testing.T) {
 		t.Fatalf("GatherAndCount: %v", err)
 	}
 	// A surviving cache emits exactly 4 metrics on a scrape: the entries
-	// gauge (1, valued 2 — the parsed-entry count) plus one value gauge per
+	// gauge (1, valued 2, the parsed-entry count) plus one value gauge per
 	// key (2, from the successful first refresh's "foo 1\nbar 2\n") cached
 	// by refresh, plus the freshness gauge Collect always emits regardless
 	// of cache state. A wrongly-cleared cache would emit only 1 (the
-	// freshness gauge alone) — count > 0 cannot tell those two outcomes
+	// freshness gauge alone): count > 0 cannot tell those two outcomes
 	// apart, since the gauge alone already satisfies "> 0". Assert the exact
 	// count instead.
 	if count != 4 { // entries gauge + 2 cached value gauges + freshness gauge; a cleared cache would emit only 1
@@ -235,7 +235,7 @@ func TestExampleCollector_ErrorKeepsPreviousCache(t *testing.T) {
 // window before Start's first refresh has completed (Start is deliberately
 // never called here). Collect must still emit exactly the freshness gauge,
 // valued 0 (not a zero time.Time's large-negative Unix()), and StatusTracker
-// must still report this collector as successful — because "Collect ran
+// must still report this collector as successful, because "Collect ran
 // and returned data" and "the data is fresh" are different questions (see
 // this collector's Collect doc comment); an empty cache before the first
 // refresh is a normal startup state, not a failed scrape.

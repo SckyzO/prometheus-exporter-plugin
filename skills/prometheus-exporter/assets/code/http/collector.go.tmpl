@@ -107,7 +107,7 @@ func (c *ExampleCollector) Describe(ch chan<- *prometheus.Desc) {
 // logic this relies on).
 //
 // Collector-authoring rule: on a successful scrape always emit your
-// metrics — with zero VALUES when there is no data — never zero metrics.
+// metrics (with zero VALUES when there is no data), never zero metrics.
 // Emitting nothing is what StatusTracker treats as a failed scrape, so a
 // collector that wants to report "no data" as a normal outcome must still
 // send a metric (for example a gauge set to 0), not bare-return like the
@@ -115,7 +115,7 @@ func (c *ExampleCollector) Describe(ch chan<- *prometheus.Desc) {
 func (c *ExampleCollector) Collect(ch chan<- prometheus.Metric) {
 	stats, err := c.exampleGetMetrics(c.ctx)
 	if err != nil {
-		// Error path: log and return with zero metrics sent — see the
+		// Error path: log and return with zero metrics sent. See the
 		// collector-authoring rule above for why that bare return is only
 		// correct here, on a genuine failure, and not as a stand-in for "no
 		// data this scrape".

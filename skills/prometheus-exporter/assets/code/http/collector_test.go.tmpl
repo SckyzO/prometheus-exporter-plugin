@@ -176,12 +176,12 @@ func TestExampleCollector_StatusTrackerSuccess(t *testing.T) {
 
 // TestExampleCollector_StatusTrackerFailure wraps an ExampleCollector pointed
 // at an unreachable target (so Collect logs an error and bare-returns, per
-// its documented error path — see collector.go's Collect) in a StatusTracker
+// its documented error path, see collector.go's Collect) in a StatusTracker
 // and asserts the collector is reported UNsuccessful, even though nothing
 // panicked. Before the count-based fix, StatusTracker only flipped success
 // to 0 on a recovered panic, so a plain log-and-return error path like
 // ExampleCollector's left it reporting success=1 with zero metrics
-// published — this test fails against that pre-fix StatusTracker (RED) and
+// published. This test fails against that pre-fix StatusTracker (RED) and
 // passes once Collect counts emitted metrics instead (GREEN).
 func TestExampleCollector_StatusTrackerFailure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
@@ -205,9 +205,9 @@ func TestExampleCollector_StatusTrackerFailure(t *testing.T) {
 
 // TestRequestDuration_CustomRegistryReachable locks the other Critical fix:
 // RequestDuration must be a plain, exported *prometheus.HistogramVec that
-// this exporter's own custom registry can register directly — the same way
+// this exporter's own custom registry can register directly (the same way
 // registry.frag's injected register("http_client_requests", ...) call does
-// in main.go — not a promauto value reachable only from
+// in main.go), not a promauto value reachable only from
 // prometheus.DefaultRegisterer. Before the fix, promauto.NewHistogramVec
 // self-registered into that process-wide default registerer as a side
 // effect of package init: reachable from prometheus.DefaultGatherer, but
@@ -232,6 +232,6 @@ func TestRequestDuration_CustomRegistryReachable(t *testing.T) {
 		t.Fatalf("GatherAndCount(DefaultGatherer): %v", err)
 	}
 	if dcount != 0 {
-		t.Fatalf("GatherAndCount(DefaultGatherer) = %d, want 0: RequestDuration must not self-register into the process-wide default registerer (that was the pre-fix bug — promauto.NewHistogramVec auto-registers there, a registry main.go's own /metrics handler never gathers)", dcount)
+		t.Fatalf("GatherAndCount(DefaultGatherer) = %d, want 0: RequestDuration must not self-register into the process-wide default registerer (that was the pre-fix bug: promauto.NewHistogramVec auto-registers there, a registry main.go's own /metrics handler never gathers)", dcount)
 	}
 }

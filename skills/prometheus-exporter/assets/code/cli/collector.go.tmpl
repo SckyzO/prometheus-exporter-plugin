@@ -14,8 +14,8 @@ import (
 	"@@MODULE_PATH@@/internal/logger"
 )
 
-// exampleMetric is one parsed key/value line from the example data source —
-// for example the line "foo 1" parses to {Key: "foo", Value: 1}. This is a
+// exampleMetric is one parsed key/value line from the example data source.
+// For example, the line "foo 1" parses to {Key: "foo", Value: 1}. This is a
 // placeholder shape documenting the pattern, not any real target's real
 // output. Replace it, and parseExample below, with your actual data
 // source's real parsing logic when adapting this collector.
@@ -28,7 +28,7 @@ type exampleMetric struct {
 // and returns its raw output. Kept separate from parsing (parseExample,
 // below) so parsing stays pure and unit-testable without running a real
 // command. The per-command timeout is applied here, around the single
-// Execute call, rather than inside Execute itself — see execute.go's own
+// Execute call, rather than inside Execute itself: see execute.go's own
 // doc comment for why that split is deliberate.
 func (c *ExampleCollector) exampleData(ctx context.Context) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
@@ -38,7 +38,7 @@ func (c *ExampleCollector) exampleData(ctx context.Context) ([]byte, error) {
 
 // parseExample decodes exampleData's raw output into one exampleMetric per
 // non-blank line. Pure: no I/O, no logging, no side effects, so every input
-// maps deterministically to an output — this is what makes it
+// maps deterministically to an output: this is what makes it
 // unit-testable with plain byte fixtures (see parser_test.go's
 // TestParseExample).
 //
@@ -48,13 +48,13 @@ func (c *ExampleCollector) exampleData(ctx context.Context) ([]byte, error) {
 //	foo 1
 //	bar 2
 //
-// Blank lines are skipped. Anything else — a line that isn't exactly two
+// Blank lines are skipped. Anything else (a line that isn't exactly two
 // whitespace-separated fields, whose second field isn't a number, or whose
-// key repeats a key already seen earlier in the same input — is a parse
+// key repeats a key already seen earlier in the same input) is a parse
 // error. The repeated-key rule is deliberate, not incidental: Collect below
 // emits one MustNewConstMetric per entry, all sharing the same descriptor
 // and labeled only by key, so two entries with the same key would produce
-// two metrics with an identical label set on that descriptor — something
+// two metrics with an identical label set on that descriptor: something
 // Prometheus's Registry.Gather rejects at scrape time (see main.go's
 // ErrorHandling comment for what an unguarded Gather error there does to
 // the REST of the scrape). Rejecting the duplicate here, at parse time,
@@ -63,7 +63,7 @@ func (c *ExampleCollector) exampleData(ctx context.Context) ([]byte, error) {
 // instead of surfacing downstream as a Gather error. Adapting this parser
 // for a real data source that can legitimately repeat keys must
 // dedupe/aggregate before returning, or add a further label to
-// disambiguate — never let two ConstMetrics reach the same label set. This
+// disambiguate: never let two ConstMetrics reach the same label set. This
 // generic shape only exists to document the I/O → pure-parse → glue pattern
 // every collector in this exporter follows, not to model any specific
 // target; replace it with your real data source's real parsing logic when
@@ -117,8 +117,8 @@ func (c *ExampleCollector) exampleGetMetrics(ctx context.Context) ([]exampleMetr
 
 // ExampleCollector is the starter collector materialized by
 // /new-prometheus-exporter. It is meant to be renamed and pointed at a real
-// command (see exampleMetric's doc comment), but its shape — I/O then pure
-// parse then glue then Describe then Collect — is the one every collector
+// command (see exampleMetric's doc comment), but its shape (I/O then pure
+// parse then glue then Describe then Collect) is the one every collector
 // you add should follow.
 type ExampleCollector struct {
 	// ctx bounds this collector's I/O. Storing a context in a struct is
@@ -173,20 +173,20 @@ func (c *ExampleCollector) Describe(ch chan<- *prometheus.Desc) {
 // logic this relies on).
 //
 // Collector-authoring rule: on a successful scrape always emit your
-// metrics — with zero VALUES when there is no data — never zero metrics.
+// metrics (with zero VALUES when there is no data), never zero metrics.
 // Emitting nothing is what StatusTracker treats as a failed scrape, so a
 // collector that wants to report "no data" as a normal outcome must still
 // send a metric, not bare-return like the error path below. entries exists
 // precisely to satisfy that rule here: it is a fixed-shape gauge (no
 // labels), always emitted below, valued 0 when metrics is empty, so a
 // successful-but-empty parse still reports success. value's per-key gauges,
-// by contrast, legitimately emit nothing when there is nothing to report —
-// that's fine, because entries has already satisfied the rule for this
+// by contrast, legitimately emit nothing when there is nothing to report.
+// That's fine, because entries has already satisfied the rule for this
 // scrape regardless.
 func (c *ExampleCollector) Collect(ch chan<- prometheus.Metric) {
 	metrics, err := c.exampleGetMetrics(c.ctx)
 	if err != nil {
-		// Error path: log and return with zero metrics sent — see the
+		// Error path: log and return with zero metrics sent: see the
 		// collector-authoring rule above for why that bare return is only
 		// correct here, on a genuine failure, and not as a stand-in for "no
 		// data this scrape".

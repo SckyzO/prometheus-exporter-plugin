@@ -191,7 +191,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	target := r.URL.Query().Get("target")
 
 	// Non-negotiable floor: must parse as an http/https URL. Always on, even
-	// in allow-any mode — bounds the SSRF surface to HTTP.
+	// in allow-any mode, bounds the SSRF surface to HTTP.
 	if err := validateTargetFloor(target); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -338,7 +338,7 @@ func (h *Handler) clampTimeout(r *http.Request) time.Duration {
 	// Compare in the float-seconds domain, BEFORE converting to time.Duration:
 	// an astronomically large but finite header (e.g. "1e300") would overflow
 	// budgetSecs*float64(time.Second) to +Inf, and time.Duration(+Inf) yields
-	// the "integer indefinite" bit pattern — a huge negative duration. Clamping
+	// the "integer indefinite" bit pattern, a huge negative duration. Clamping
 	// here means that overflow-prone conversion never runs on an out-of-range
 	// value: min(maxTimeout, huge) == maxTimeout is the correct answer anyway.
 	if budgetSecs >= h.maxTimeout.Seconds() {
