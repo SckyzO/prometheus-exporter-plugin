@@ -80,6 +80,13 @@ func main() {
 		"Subtracted from Prometheus's scrape timeout when computing a probe's deadline.",
 	).Default("0.5s").Duration()
 
+	// Modules are scrape profiles: named subsets of this exporter's collectors,
+	// selected per request with /probe?target=…&module=…. Repeatable.
+	probeModules := kingpin.Flag(
+		"probe.module",
+		"Declare a module: <name>:<collector>[,<collector>...] (repeatable).",
+	).Strings()
+
 	kingpin.Version(version.Print("@@EXPORTER_NAME@@"))
 	kingpin.HelpFlag.Short('h')
 	kingpin.Parse()
@@ -101,7 +108,19 @@ func main() {
 
 	// @@PROBE_FACTORIES@@
 
-	probeHandler := probe.NewHandler(log, factories, *probeTargetAllowlist, *probeTimeout, *probeTimeoutOffset)
+	modules, err := probe.ParseModules(*probeModules)
+	if err != nil {
+		log.Error("Invalid --probe.module", "err", err)
+		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+		os.Exit(1) //nolint:gocritic // stop() called explicitly above
+	}
+	if err := probe.ValidateModules(factories, modules); err != nil {
+		log.Error("Invalid --probe.module", "err", err)
+		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+		os.Exit(1) //nolint:gocritic // stop() called explicitly above
+	}
+
+	probeHandler := probe.NewHandler(log, factories, *probeTargetAllowlist, *probeTimeout, *probeTimeoutOffset, modules)
 
 	// /metrics reports on the EXPORTER ITSELF (build info, Go runtime/process,
 	// aggregate request timing), scraped independently of any probed target —

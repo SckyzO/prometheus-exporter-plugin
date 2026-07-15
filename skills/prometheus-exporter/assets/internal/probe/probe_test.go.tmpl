@@ -81,7 +81,7 @@ func serve(h *Handler, rawurl string) *httptest.ResponseRecorder {
 }
 
 func newTestHandler(f *recordingFactory, allowlist []string) *Handler {
-	return NewHandler(logger.NewTextLogger("error"), []NamedFactory{f.named("example")}, allowlist, 5*time.Second, 0)
+	return NewHandler(logger.NewTextLogger("error"), []NamedFactory{f.named("example")}, allowlist, 5*time.Second, 0, nil)
 }
 
 func TestFloorRejectsNonHTTPScheme(t *testing.T) {
@@ -173,7 +173,7 @@ func TestAllFactoriesAreGathered(t *testing.T) {
 	a := &recordingFactory{metric: "stub_a"}
 	b := &recordingFactory{metric: "stub_b"}
 	h := NewHandler(logger.NewTextLogger("error"),
-		[]NamedFactory{a.named("alpha"), b.named("beta")}, nil, 5*time.Second, 0)
+		[]NamedFactory{a.named("alpha"), b.named("beta")}, nil, 5*time.Second, 0, nil)
 
 	rec := serve(h, "/probe?target=http://node1:9100")
 
@@ -203,7 +203,7 @@ func TestProbeDeadlineAbortsHangingCollector(t *testing.T) {
 			return &blockingCollector{ctx: ctx, desc: prometheus.NewDesc("stub_hang", "stub", nil, nil)}
 		},
 	}
-	h := NewHandler(logger.NewTextLogger("error"), []NamedFactory{hang}, nil, 100*time.Millisecond, 0)
+	h := NewHandler(logger.NewTextLogger("error"), []NamedFactory{hang}, nil, 100*time.Millisecond, 0, nil)
 
 	start := time.Now()
 	rec := serve(h, "/probe?target=http://hangs.internal:9100")
@@ -219,7 +219,7 @@ func TestProbeDeadlineAbortsHangingCollector(t *testing.T) {
 
 func TestClampTimeoutHonoursHeaderCeilingAndOffset(t *testing.T) {
 	h := NewHandler(logger.NewTextLogger("error"),
-		[]NamedFactory{(&recordingFactory{}).named("example")}, nil, 5*time.Second, 500*time.Millisecond)
+		[]NamedFactory{(&recordingFactory{}).named("example")}, nil, 5*time.Second, 500*time.Millisecond, nil)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/probe?target=http://x:9100", nil)
 
@@ -257,7 +257,7 @@ func TestClampTimeoutHonoursHeaderCeilingAndOffset(t *testing.T) {
 // empty-header and parse-error paths.
 func TestClampTimeoutRejectsNonFiniteAndOverflowingHeaders(t *testing.T) {
 	h := NewHandler(logger.NewTextLogger("error"),
-		[]NamedFactory{(&recordingFactory{}).named("example")}, nil, 5*time.Second, 500*time.Millisecond)
+		[]NamedFactory{(&recordingFactory{}).named("example")}, nil, 5*time.Second, 500*time.Millisecond, nil)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/probe?target=http://x:9100", nil)
 
@@ -270,5 +270,52 @@ func TestClampTimeoutRejectsNonFiniteAndOverflowingHeaders(t *testing.T) {
 		if got <= 0 {
 			t.Errorf("header %q: got non-positive duration %v", header, got)
 		}
+	}
+}
+
+func TestParseModules(t *testing.T) {
+	mods, err := ParseModules([]string{"basic:disks,pools", "full:disks,pools,perf"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := mods["basic"]; len(got) != 2 || got[0] != "disks" || got[1] != "pools" {
+		t.Errorf("basic = %v, want [disks pools]", got)
+	}
+	if got := mods["full"]; len(got) != 3 {
+		t.Errorf("full = %v, want 3 collectors", got)
+	}
+}
+
+func TestParseModulesRejectsMalformed(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   []string
+	}{
+		{"no colon", []string{"basic"}},
+		{"empty module name", []string{":disks"}},
+		{"empty collector list", []string{"basic:"}},
+		{"duplicate module", []string{"basic:disks", "basic:pools"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := ParseModules(tc.in); err == nil {
+				t.Fatalf("ParseModules(%v) accepted a malformed module, want an error", tc.in)
+			}
+		})
+	}
+}
+
+func TestValidateModulesRejectsUnknownCollector(t *testing.T) {
+	factories := []NamedFactory{(&recordingFactory{}).named("disks")}
+
+	if err := ValidateModules(factories, map[string][]string{"basic": {"disks"}}); err != nil {
+		t.Fatalf("a module naming a registered collector was rejected: %v", err)
+	}
+
+	err := ValidateModules(factories, map[string][]string{"basic": {"disks", "typo"}})
+	if err == nil {
+		t.Fatal("a module naming an unregistered collector was accepted, want an error")
+	}
+	if !strings.Contains(err.Error(), "typo") {
+		t.Errorf("error does not name the offending collector: %v", err)
 	}
 }
