@@ -1768,6 +1768,7 @@ one with no references.
 - Modify: `skills/prometheus-exporter/references/exporter-architecture.md`
 - Modify: `skills/prometheus-exporter/references/collector-pattern.md:97-99` (documents the pre-`ctx` constructor signature)
 - Modify: `skills/prometheus-exporter/references/project-scaffold.md:137` (shows a `register(…)` call without `context.Background()`)
+- Modify: `commands/add-collector.md:406,422` (the http/cli register snippets still call the pre-`ctx` constructor; Step 0a)
 - Modify: `skills/prometheus-exporter/assets/docs/configuration.md.tmpl` (shipped doc; the multi-target timeout section still names the renamed flag)
 - Modify: `ROADMAP.md` (the v0.3 section's two follow-ups)
 - Modify: `CHANGELOG.md` (`[Unreleased]`)
@@ -1837,6 +1838,49 @@ Update it to match the shipped `code/http/wiring/registry.frag` exactly:
 
 Read both files before editing: verify every claim you write against the real
 template, not against this plan.
+
+- [ ] **Step 0a: Fix the two stale register snippets in `commands/add-collector.md`**
+
+The same Task 1 signature change left two more stale call sites, in the
+command's own "5. Register the collector" section. These are the snippets the
+command tells the user to paste when registering a **single-target** collector,
+so following the command today produces code that will not compile. Task 7
+touched only the multi-target section of this file and correctly left these
+alone; fix them here with the rest of the stale-signature cleanup.
+
+`commands/add-collector.md:406` (the **http** register snippet) currently reads:
+
+```go
+	return collector.New<Name>Collector(log, collector.NewClient(*<name>Target, *<name>Timeout))
+```
+
+Update it to lead with `context.Background()`, matching the shipped
+`code/http/wiring/registry.frag`:
+
+```go
+	return collector.New<Name>Collector(context.Background(), log, collector.NewClient(*<name>Target, *<name>Timeout))
+```
+
+`commands/add-collector.md:422` (the **cli** register snippet) currently reads:
+
+```go
+	return collector.New<Name>Collector(log, *<name>Timeout)
+```
+
+Update it to:
+
+```go
+	return collector.New<Name>Collector(context.Background(), log, *<name>Timeout)
+```
+
+**Do NOT touch the two background-variant snippets at lines 441 and 461**
+(`New<Name>Collector(log, collector.NewClient(...), *<name>Interval)` and
+`New<Name>Collector(log, *<name>Timeout, *<name>Interval)`). The background
+variants deliberately keep their pre-`ctx` constructor signature (they carry a
+live context via `Start(ctx)` instead), so those two are correct as written and
+adding a `ctx` argument would make THEM the ones that fail to compile. Read all
+four snippets and confirm which two take a `client`/`timeout` as a plain
+collector (fix) versus which two take an `interval` (background variant, leave).
 
 - [ ] **Step 1: Correct the architecture reference**
 
