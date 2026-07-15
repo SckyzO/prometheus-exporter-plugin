@@ -375,10 +375,14 @@ func TestModuleSelectsOnlyItsMembers(t *testing.T) {
 }
 
 func TestModulesCombineAsDeduplicatedUnion(t *testing.T) {
-	// ab and bc overlap on beta: it must run ONCE, not twice.
+	// ab and bc overlap on beta: it must run ONCE, not twice. The reversed
+	// spellings (bc before ab) prove the union does not just happen to match
+	// declared order by accident of how this table lists ab and bc.
 	for _, rawurl := range []string{
 		"/probe?target=http://n:9100&module=ab&module=bc", // repeated
 		"/probe?target=http://n:9100&module=ab,bc",        // comma-separated
+		"/probe?target=http://n:9100&module=bc&module=ab", // reversed, repeated
+		"/probe?target=http://n:9100&module=bc,ab",        // reversed, comma-separated
 	} {
 		t.Run(rawurl, func(t *testing.T) {
 			h, fs := threeFactoryHandler(t)
@@ -391,6 +395,22 @@ func TestModulesCombineAsDeduplicatedUnion(t *testing.T) {
 				if fs[name].calls != 1 {
 					t.Errorf("collector %q ran %d times, want exactly 1", name, fs[name].calls)
 				}
+			}
+
+			// Output order must match the handler's DECLARED factory order
+			// (alpha, beta, gamma), regardless of how the module list was
+			// spelled. A regression that emitted collectors in
+			// module-listed order instead would flip this for the reversed
+			// cases above.
+			body := rec.Body.String()
+			idxAlpha := strings.Index(body, "stub_alpha")
+			idxBeta := strings.Index(body, "stub_beta")
+			idxGamma := strings.Index(body, "stub_gamma")
+			if idxAlpha < 0 || idxBeta < 0 || idxGamma < 0 {
+				t.Fatalf("body is missing a series: alpha=%d beta=%d gamma=%d\n%s", idxAlpha, idxBeta, idxGamma, body)
+			}
+			if idxAlpha >= idxBeta || idxBeta >= idxGamma {
+				t.Errorf("series not in declared factory order alpha, beta, gamma: got offsets alpha=%d beta=%d gamma=%d\n%s", idxAlpha, idxBeta, idxGamma, body)
 			}
 		})
 	}
