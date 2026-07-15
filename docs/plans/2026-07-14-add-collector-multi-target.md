@@ -1729,8 +1729,38 @@ one with no references.
 - Modify: `skills/prometheus-exporter/references/exporter-architecture.md`
 - Modify: `skills/prometheus-exporter/references/collector-pattern.md:97-99` (documents the pre-`ctx` constructor signature)
 - Modify: `skills/prometheus-exporter/references/project-scaffold.md:137` (shows a `register(…)` call without `context.Background()`)
+- Modify: `skills/prometheus-exporter/assets/docs/configuration.md.tmpl` (shipped doc; the multi-target timeout section still names the renamed flag)
 - Modify: `ROADMAP.md` (the v0.3 section's two follow-ups)
 - Modify: `CHANGELOG.md` (`[Unreleased]`)
+
+- [ ] **Step 0b: Fix the shipped configuration doc, which the Task 3 flag rename made wrong for multi-target**
+
+Task 3 renamed `--collector.example.timeout` to `--probe.timeout` in the multi
+main and added `--probe.timeout-offset`. `assets/docs/configuration.md.tmpl`
+still documents the old formula, and this doc **ships into every generated
+exporter**, so the lie reaches real users. The `X-Prometheus-Scrape-Timeout-Seconds`
+bullet currently reads:
+
+```
+- **`X-Prometheus-Scrape-Timeout-Seconds`**: Prometheus sends this header on
+  every scrape; the handler uses `min(header, --collector.example.timeout)`
+  as the request's own timeout, so a probe never outruns Prometheus's
+  deadline or the operator's configured ceiling.
+```
+
+First read the file and confirm how it is scaffolded: the surrounding bullets
+(`--probe.target-allowlist`, the `/probe` floor, the SSRF posture) are
+multi-target content, so establish whether this section ships only into multi
+scaffolds or into both, before editing. Then correct the formula to Task 3's
+actual calculation and document both new flags. The corrected bullet must state
+`min(--probe.timeout, X-Prometheus-Scrape-Timeout-Seconds - --probe.timeout-offset)`
+and explain the offset (the exporter answers before Prometheus abandons the
+scrape). Do not invent defaults: read them from
+`assets/mains/multi/main.go.tmpl` (`--probe.timeout` default `5s`,
+`--probe.timeout-offset` default `0.5s`). If the single-target flavor still uses
+`--collector.example.timeout`, do not remove that name where it is genuinely
+still correct for single; fix only the multi-target claim. Verify every value
+against the real template before writing it.
 
 - [ ] **Step 0: Correct the constructor signature in the two references that still teach the old one**
 
