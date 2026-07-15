@@ -1,11 +1,11 @@
 #!/bin/sh
-# generate-dashboard.sh — the deterministic backbone behind /generate-dashboard.
+# generate-dashboard.sh: the deterministic backbone behind /generate-dashboard.
 #
 # Reads an already-scaffolded exporter repo's docs/metrics.md and its real
 # namespace (const namespace in cmd/*/main.go), then emits 1..N exportable
-# Grafana dashboards — one panel per DOCUMENTED business metric, PromQL chosen
+# Grafana dashboards, one panel per DOCUMENTED business metric, PromQL chosen
 # by the metric's Type, deterministic <namespace>-<slug> uids. It is
-# deterministic by construction: no dialogue, no context7, no LLM — which is
+# deterministic by construction: no dialogue, no context7, no LLM. That is
 # exactly what lets both /generate-dashboard AND test/golden-smoke.sh invoke
 # this one script (single source, no drift). The command layers an interactive
 # ceiling (dialogue, context7, dataviz) on top; the golden bypasses all of it
@@ -57,7 +57,7 @@ done
 [ -d "$repo" ] || die "repo not found: $repo"
 case "$decompose" in overview|per-collector) ;; *) echo "$prog: error: --decompose must be overview or per-collector" >&2; usage ;; esac
 
-# run_jq — container-first jq, native → docker → podman → exit 4. Every jq call
+# run_jq: container-first jq, native → docker → podman → exit 4. Every jq call
 # in this script is stdin/args → stdout only (no bind mounts needed): filters
 # are passed as args, data arrives on stdin, output goes to stdout. That keeps
 # the containerized fallback a plain `run … -i <image>` with no volume
@@ -72,12 +72,12 @@ run_jq() {
   elif command -v podman >/dev/null 2>&1; then
     podman run --rm -i "$JQ_IMAGE" "$@"
   else
-    echo "$prog: error: jq is required (native, or a docker/podman engine to run $JQ_IMAGE) — install jq or a container engine" >&2
+    echo "$prog: error: jq is required (native, or a docker/podman engine to run $JQ_IMAGE). Install jq or a container engine" >&2
     exit 4
   fi
 }
 
-# read_namespace — the metric prefix and uid prefix, read from the real
+# read_namespace: the metric prefix and uid prefix, read from the real
 # const namespace = "<literal>" in cmd/*/main.go (design §3). Never guessed.
 read_namespace() {
   ns=$(grep -hoE 'const[[:space:]]+namespace[[:space:]]*=[[:space:]]*"[A-Za-z_][A-Za-z0-9_]*"' "$repo"/cmd/*/main.go 2>/dev/null \
@@ -86,7 +86,7 @@ read_namespace() {
   printf '%s\n' "$ns"
 }
 
-# parse_metrics — emit one TAB line per DOCUMENTED business metric:
+# parse_metrics: emit one TAB line per DOCUMENTED business metric:
 #   <Collector>\t<name>\t<Type>\t<labels-comma-joined-or-->
 # Reuses docs_check_test.go's parseMetricsDoc CONTRACT (backtick-quoted name
 # cell, backtick-quoted labels, `|`-split cells, <!-- --> comment skipping) and
@@ -157,14 +157,14 @@ if [ "$print_model" -eq 1 ]; then
 fi
 
 if [ "$metric_lines" -eq 0 ]; then
-  echo "$prog: error: no business metrics documented in $repo/docs/metrics.md (only self-instrumentation) — add collectors and document them with 'make docs-check' first" >&2
+  echo "$prog: error: no business metrics documented in $repo/docs/metrics.md (only self-instrumentation). Add collectors and document them with 'make docs-check' first" >&2
   exit 3
 fi
 
 [ -n "$out_dir" ] || usage
 mkdir -p "$out_dir"
 
-# unit_for — infer a Grafana unit from the Prometheus name suffix (design §5.7:
+# unit_for: infer a Grafana unit from the Prometheus name suffix (design §5.7:
 # units are absent from metrics.md, inferred from _seconds/_bytes/_ratio). An
 # empty result means "leave unit unset" (Grafana's dimensionless default).
 unit_for() {
@@ -176,7 +176,7 @@ unit_for() {
   esac
 }
 
-# expr_for <name> <Type> — PromQL by metric Type (design §6.3, grounded via
+# expr_for <name> <Type>: PromQL by metric Type (design §6.3, grounded via
 # context7). $__rate_interval windows (never a hardcoded [5m]); by (job,
 # instance) for multi-instance safety; the Histogram _bucket series is
 # synthesized from the parent (metrics.md never lists _bucket) and the le label
@@ -193,7 +193,7 @@ expr_for() {
   esac
 }
 
-# emit_panel <id> <x> <y> <w> <h> <title> <expr> <unit> — one timeseries panel
+# emit_panel <id> <x> <y> <w> <h> <title> <expr> <unit>: one timeseries panel
 # object, built entirely with jq --arg (no hand-rolled JSON escaping). Mirrors
 # the health dashboard's own timeseries panel (palette-classic line style,
 # table legend, multi tooltip). unit is added only when non-empty.
@@ -218,7 +218,7 @@ emit_panel() {
     }'
 }
 
-# emit_dashboard <slug> <title> <links_json> <model> — assemble one exportable
+# emit_dashboard <slug> <title> <links_json> <model>: assemble one exportable
 # dashboard from the model lines given on stdin-substitute (passed as $4), and
 # write <out-dir>/<slug>.json. Panels are laid out two-per-row (w=12,h=8), a
 # row header per collector, y advancing deterministically. All panel objects
@@ -270,7 +270,7 @@ emit_dashboard() {
         {type:"panel",id:"row",name:"Row",version:""}
       ],
       annotations:{list:[]},
-      description:("Business metrics for " + $ns + ", generated by /generate-dashboard from docs/metrics.md. Safe to regenerate — see monitoring/README.md."),
+      description:("Business metrics for " + $ns + ", generated by /generate-dashboard from docs/metrics.md. Safe to regenerate. See monitoring/README.md."),
       editable:true,
       graphTooltip:1,
       links:$links,
@@ -295,11 +295,11 @@ emit_dashboard() {
 # per-collector. A trivial default so the golden needs no dialogue in CI.
 case "$decompose" in
   overview)
-    emit_dashboard overview "$ns — Business Overview" '[]' "$model"
+    emit_dashboard overview "$ns - Business Overview" '[]' "$model"
     echo "$prog: generated $out_dir/overview.json"
     ;;
   per-collector)
-    # collector_slug — lowercase, drop a trailing "collector", underscore-join
+    # collector_slug: lowercase, drop a trailing "collector", underscore-join
     # camelCase word boundaries: RequestsCollector -> requests,
     # HttpClientRequestsCollector -> http_client_requests. Deterministic.
     collector_slug() {
@@ -314,11 +314,11 @@ case "$decompose" in
     # Fail loud on any collector name the floor can't turn into a stable
     # slug/uid, rather than silently clobbering a sibling drill-down or writing
     # a degenerate file. Validate the whole names here, before `for` word-splits
-    # them. Only per-collector mode needs a slug — overview mode uses the name
+    # them. Only per-collector mode needs a slug, overview mode uses the name
     # only as a row title, so this lives in this branch, not globally.
     if printf '%s\n' "$collectors" | grep -qvE '^[A-Za-z_][A-Za-z0-9_]*$'; then
       bad=$(printf '%s\n' "$collectors" | grep -vE '^[A-Za-z_][A-Za-z0-9_]*$' | head -n1)
-      die "collector name '$bad' is not a clean identifier (letters, digits, underscore only) — cannot derive a stable per-collector slug/uid; rename the collector or use --decompose overview"
+      die "collector name '$bad' is not a clean identifier (letters, digits, underscore only): cannot derive a stable per-collector slug/uid; rename the collector or use --decompose overview"
     fi
 
     # Build the overview's dashboard-level links (one per drill-down) and emit
@@ -327,20 +327,20 @@ case "$decompose" in
     seen_slugs=""
     for c in $collectors; do
       slug=$(collector_slug "$c")
-      [ -n "$slug" ] || die "collector '$c' produces an empty slug (is it named only 'Collector'?) — rename it so a stable uid can be derived"
+      [ -n "$slug" ] || die "collector '$c' produces an empty slug (is it named only 'Collector'?). Rename it so a stable uid can be derived"
       prev=$(printf '%s\n' "$seen_slugs" | awk -F'\t' -v s="$slug" '$1==s{print $2; exit}')
-      [ -z "$prev" ] || die "collectors '$prev' and '$c' both map to slug '$slug' — rename one so their drill-down dashboards and uids don't collide"
+      [ -z "$prev" ] || die "collectors '$prev' and '$c' both map to slug '$slug': rename one so their drill-down dashboards and uids don't collide"
       seen_slugs=$(printf '%s\n%s\t%s' "$seen_slugs" "$slug" "$c")
       submodel=$(printf '%s\n' "$model" | awk -F'\t' -v c="$c" '$1=="metric" && $2==c')
       back_link=$(run_jq -n --arg uid "$ns-overview" \
         '[{asDropdown:false,icon:"external link",includeVars:true,keepTime:true,tags:[],targetBlank:false,title:"Overview",tooltip:"",type:"link",url:("/d/" + $uid)}]')
-      emit_dashboard "$slug" "$ns — $c" "$back_link" "$submodel"
+      emit_dashboard "$slug" "$ns - $c" "$back_link" "$submodel"
       overview_links=$(printf '%s\n' "$overview_links" \
         | run_jq --arg uid "$ns-$slug" --arg title "$c" \
             '. + [{asDropdown:false,icon:"external link",includeVars:true,keepTime:true,tags:[],targetBlank:false,title:$title,tooltip:"",type:"link",url:("/d/" + $uid)}]')
     done
 
-    emit_dashboard overview "$ns — Business Overview" "$overview_links" "$model"
+    emit_dashboard overview "$ns - Business Overview" "$overview_links" "$model"
     echo "$prog: generated $out_dir/overview.json and $(printf '%s\n' "$collectors" | wc -l | tr -d ' ') drill-down(s)"
     ;;
 esac

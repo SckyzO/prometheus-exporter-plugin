@@ -14,7 +14,7 @@ invokes this command, and walk every step below in order.
 Optional dashboard name from the command argument: $ARGUMENTS. If given, it
 becomes the **title** of the overview dashboard (step 3). Its deterministic slug
 and uid are left unchanged, so drill-down links and regeneration-by-uid still
-work. If empty, the overview keeps its default `<namespace> — Business Overview`
+work. If empty, the overview keeps its default `<namespace> - Business Overview`
 title.
 
 ## 0. Confirm this is a scaffolded exporter, and detect its I/O flavor
