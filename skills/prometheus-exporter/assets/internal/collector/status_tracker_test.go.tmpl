@@ -22,7 +22,7 @@ import (
 // (see scaffold.sh's code/<flavor>/ staging vs. plain internal/collector/
 // path) and ships into every flavor's internal/collector package
 // unconditionally, so its package-level identifiers must never collide with
-// a flavor's own test file — code/http/collector_test.go.tmpl already
+// a flavor's own test file: code/http/collector_test.go.tmpl already
 // defines a const named statusTrackerSuccessMetric for the same value.
 const statusTrackerSuccessMetricName = "@@NAMESPACE@@_exporter_collector_success"
 
@@ -31,7 +31,7 @@ const statusTrackerSuccessMetricName = "@@NAMESPACE@@_exporter_collector_success
 // and failure-detection behavior can be locked down without depending on any
 // flavor-specific collector (ExampleCollector, an HTTP client, fixtures,
 // ...): status_tracker.go.tmpl has no flavor dependency, so its tests must
-// not gain one either — this file has to build and pass identically no
+// not gain one either: this file has to build and pass identically no
 // matter which --flavor was scaffolded.
 type stubStatusTrackerCollector struct {
 	desc   *prometheus.Desc
@@ -42,9 +42,9 @@ type stubStatusTrackerCollector struct {
 // newStubStatusTrackerCollector's Describe always sends exactly one
 // descriptor, whether or not Collect ends up emitting it: every stub here is
 // a well-formed collector that *promises* a metric, so a Collect that emits
-// nothing is a genuine broken scrape — the "log the error, then bare return"
+// nothing is a genuine broken scrape (the "log the error, then bare return"
 // shape every real collector in this exporter follows on its error path, see
-// status_tracker.go.tmpl's Collect doc comment — and not merely an
+// status_tracker.go.tmpl's Collect doc comment) and not merely an
 // intentionally metric-less collector (which Prometheus also allows).
 func newStubStatusTrackerCollector(metricName string, panics, emits bool) *stubStatusTrackerCollector {
 	return &stubStatusTrackerCollector{
@@ -71,7 +71,7 @@ func (s *stubStatusTrackerCollector) Collect(ch chan<- prometheus.Metric) {
 // and asserts two things at once: the panic never escapes StatusTracker (a
 // hung or crashed Gather would mean the defer-close-before-recover ordering
 // documented on StatusTracker.Collect regressed), and the wrapped collector
-// is reported failed even though nothing about "emitted metrics" said so —
+// is reported failed even though nothing about "emitted metrics" said so:
 // here the panic itself is the only failure signal.
 func TestStatusTracker_PanicMarksFailed(t *testing.T) {
 	log := logger.NewTextLogger("error")
@@ -108,7 +108,7 @@ func TestStatusTracker_PanicMarksFailed(t *testing.T) {
 }
 
 // TestStatusTracker_ZeroMetricsMarksFailed wraps a collector that returns
-// normally from Collect but emits nothing — the same "log the error, then
+// normally from Collect but emits nothing: the same "log the error, then
 // bare return" shape every collector in this exporter follows on its own
 // error path. Nothing here panics or returns an error value, so this pins
 // down that StatusTracker detects the failure purely by counting emitted
@@ -132,7 +132,7 @@ func TestStatusTracker_ZeroMetricsMarksFailed(t *testing.T) {
 
 // TestStatusTracker_SuccessWhenMetricsEmitted wraps a healthy collector and
 // asserts both halves of the success path: collector_success reports 1,
-// and — just as important — the wrapped collector's own metric is still
+// and (just as important) the wrapped collector's own metric is still
 // forwarded through the tracker into the final gather output, rather than
 // being swallowed by the per-entry buffering StatusTracker.Collect uses to
 // count metrics.

@@ -48,7 +48,7 @@ func TestParseExample(t *testing.T) {
 	// A repeated key must be rejected here, at parse time: two entries
 	// sharing a key would otherwise reach Collect and produce two
 	// MustNewConstMetric calls with an identical label set on the same
-	// descriptor, which Registry.Gather rejects — see parseExample's own
+	// descriptor, which Registry.Gather rejects: see parseExample's own
 	// doc comment for why that failure belongs in this fail-closed parser,
 	// not downstream at scrape time.
 	t.Run("duplicate key yields an error, not a panic", func(t *testing.T) {

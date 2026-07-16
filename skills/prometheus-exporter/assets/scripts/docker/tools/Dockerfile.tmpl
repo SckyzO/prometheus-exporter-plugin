@@ -1,15 +1,15 @@
 # Image with every CI / report tool baked in.
 #
 # Used by `make check` and `make report` so contributors can run them
-# without installing Go, golangci-lint, gocyclo, etc. on their host —
-# only a container engine (Docker or Podman) is required.
+# without installing Go, golangci-lint, gocyclo, etc. on their host.
+# Only a container engine (Docker or Podman) is required.
 #
 # This Dockerfile is the SINGLE source of truth for the Go version used to
 # build and test this exporter: there is no separate GO_VERSION in the
 # Makefile. Bump the base image tag below to change it.
 #
 # Reciprocal note: Dockerfile and Dockerfile.minimal (repo root) pin this
-# exact same golang:*-alpine tag/digest in their own build stage — bump
+# exact same golang:*-alpine tag/digest in their own build stage: bump
 # those two along with this one, or the three will silently drift apart.
 #
 # Built locally on first use via `make tools-image` (a prerequisite of every

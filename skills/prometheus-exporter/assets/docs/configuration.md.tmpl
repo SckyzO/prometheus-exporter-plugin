@@ -19,8 +19,8 @@ The exporter is configured entirely through command-line flags.
 ```
 
 For the `web-config.yml` format, see
-[Prometheus's TLS/Basic Auth configuration reference](https://prometheus.io/docs/prometheus/latest/configuration/https/)
-— `@@EXPORTER_NAME@@` parses this file with the same `prometheus/exporter-toolkit` library
+[Prometheus's TLS/Basic Auth configuration reference](https://prometheus.io/docs/prometheus/latest/configuration/https/).
+`@@EXPORTER_NAME@@` parses this file with the same `prometheus/exporter-toolkit` library
 Prometheus itself uses.
 
 **View help and every available flag:**
@@ -38,17 +38,22 @@ Prometheus itself uses.
 | `--log.level` | Log level: `debug`, `info`, `warn`, `error` | `info` |
 | `--log.format` | Log format: `json`, `text` | `text` |
 | `--web.disable-exporter-metrics` | Exclude Go runtime and process metrics from `/metrics` | `false` |
-| `--[no-]collector.<name>` | Enable or disable a collector (kingpin boolean flag) | see below |
+| `--[no-]collector.<name>` | *(single-target builds only)* Enable or disable a collector (kingpin boolean flag) | see below |
 | `--probe.target-allowlist` | *(multi-target builds only, `--target-model multi`)* Restrict `/probe` to these target hosts (repeatable; host or host:port, exact match) | (empty = allow-any) |
+| `--probe.timeout` | *(multi-target builds only)* Ceiling on each `/probe` request's own deadline | `5s` |
+| `--probe.timeout-offset` | *(multi-target builds only)* Subtracted from Prometheus's scrape timeout when computing a probe's deadline, so the exporter answers before Prometheus abandons the scrape | `0.5s` |
+| `--probe.module` | *(multi-target builds only)* Declare a named module (a subset of collectors) selectable per probe with `&module=<name>` (repeatable; `<name>:<collector>[,<collector>]`) | (none) |
 
-Individual collectors may also expose their own flags. The bundled `example` collector does:
+In **single-target builds**, individual collectors may also expose their own flags. The bundled `example` collector does:
 
 | Flag | Description | Default | Flavor |
 |------|-------------|---------|--------|
 | `--collector.example.timeout` | Per-request/per-command timeout for the `example` collector | `5s` | HTTP and CLI |
 | `--collector.example.target` | Base URL the `example` collector fetches | `@@DATA_SOURCE@@` | HTTP only |
 
-There is no single global command/request timeout — each collector owns its own, following
+In **multi-target builds** (`--target-model multi`), the `example` collector is built fresh per `/probe` request: its target and timeout come from the request (bounded by the `--probe.*` flags above), so it exposes no `--collector.example.*` flags, and multi has no `--[no-]collector.<name>` toggle.
+
+There is no single global command/request timeout: each collector owns its own, following
 the `example` collector's pattern above. Run `--help` after adding your own collectors to see
 the full, current flag list.
 
@@ -56,12 +61,12 @@ the full, current flag list.
 
 | Collector | Default | Description |
 |-----------|---------|-------------|
-| `example` | enabled | Starter collector — replace with your real data source (see `CONTRIBUTING.md`) |
+| `example` | enabled | Starter collector: replace with your real data source (see `CONTRIBUTING.md`) |
 | `http_client_requests` *(HTTP flavor)* | enabled | Self-instrumentation: HTTP request duration by outcome |
 | `command_exec` *(CLI flavor)* | enabled | Self-instrumentation: command execution duration by outcome |
 
 Both the `example` collector and the self-instrumentation histogram are registered through the
-same `--[no-]collector.<name>` mechanism — there is nothing special about self-instrumentation
+same `--[no-]collector.<name>` mechanism: there is nothing special about self-instrumentation
 from the flag's point of view.
 
 ### Enabling and disabling collectors
@@ -87,7 +92,7 @@ Use `--[no-]collector.<name>` (kingpin boolean syntax) to enable or disable a co
 
 Multi-target builds (scaffolded with `--target-model multi`, http flavor
 only) also expose `/probe?target=<url>`: Prometheus's own
-[multi-target exporter pattern](https://prometheus.io/docs/guides/multi-target-exporter/) —
+[multi-target exporter pattern](https://prometheus.io/docs/guides/multi-target-exporter/):
 each request builds a fresh registry and collector set scoped to `target`,
 instead of the fixed, process-lifetime registry `/metrics` reports on. A
 single-target build (`--target-model single`, the default) has no `/probe`
@@ -98,21 +103,27 @@ was chosen at scaffold time.
 curl 'http://localhost:@@DEFAULT_PORT@@/probe?target=http://some-host:9100'
 ```
 
-- **Always-on floor:** `target` must parse as an `http`/`https` URL — a
-  missing scheme, `file://`, or any other scheme gets a `400`, regardless of
+- **Always-on floor:** `target` must parse as an `http`/`https` URL:
+  a missing scheme, `file://`, or any other scheme gets a `400`, regardless of
   the allowlist below.
 - **`--probe.target-allowlist`** (repeatable, empty by default): when set, a
   target's host must match one of these entries exactly (case- and
-  trailing-dot-sensitive; matches the parsed host or `host:port` verbatim —
+  trailing-dot-sensitive; matches the parsed host or `host:port` verbatim:
   `node1` will not match `NODE1` or `node1.`) or the probe returns `403`.
   Empty (the default) accepts any target that clears the floor above.
 - **`X-Prometheus-Scrape-Timeout-Seconds`**: Prometheus sends this header on
-  every scrape; the handler uses `min(header, --collector.example.timeout)`
-  as the request's own timeout, so a probe never outruns Prometheus's
-  deadline or the operator's configured ceiling.
+  every scrape; the handler computes the probe's own deadline as
+  `min(--probe.timeout, X-Prometheus-Scrape-Timeout-Seconds - --probe.timeout-offset)`,
+  so a probe never outruns Prometheus's deadline or the operator's configured
+  ceiling. `--probe.timeout-offset` (default `0.5s`) is subtracted from
+  Prometheus's own scrape timeout so the exporter answers before Prometheus
+  abandons the scrape: a probe that uses its full budget and replies a
+  moment too late is a wasted scrape. `--probe.timeout` (default `5s`) is
+  the ceiling applied when the header is missing, unparseable, or would
+  leave no budget once the offset is subtracted.
 - **SSRF posture**: `/probe` making this exporter fetch an operator-supplied
   URL is a deliberate, ecosystem-standard trade-off (Blackbox/SNMP/IPMI all
-  work this way) — see [SECURITY.md](../SECURITY.md) before exposing this
+  work this way): see [SECURITY.md](../SECURITY.md) before exposing this
   endpoint beyond a trusted network.
 
 ---
@@ -129,7 +140,7 @@ scrape_configs:
 ```
 
 - **scrape_interval**: pick a value that comfortably exceeds how long a full scrape takes
-  against your real target — start at 30s and tighten only once you've measured
+  against your real target: start at 30s and tighten only once you've measured
   `@@NAMESPACE@@_exporter_collector_duration_seconds` under load.
 - **scrape_timeout**: should be equal to or less than `scrape_interval`, to avoid
   `context_deadline_exceeded` errors piling up in Prometheus itself.
@@ -164,7 +175,7 @@ In addition, each I/O flavor exposes a histogram timing its own outbound calls:
 ### Performance considerations
 
 - **Per-collector timeouts**: raise a collector's own `--collector.<name>.timeout` flag if
-  your target is slow to respond — but remember Prometheus's `scrape_timeout` still applies
+  your target is slow to respond, but remember Prometheus's `scrape_timeout` still applies
   across *all* collectors combined, so a single slow collector can still starve the others.
 - **Scrape interval**: use an interval that comfortably exceeds your measured
   `@@NAMESPACE@@_exporter_collector_duration_seconds` to avoid overlapping scrapes.

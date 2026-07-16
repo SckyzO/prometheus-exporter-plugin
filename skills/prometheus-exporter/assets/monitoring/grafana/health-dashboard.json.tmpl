@@ -75,7 +75,7 @@
   "annotations": {
     "list": []
   },
-  "description": "Exporter self-health for @@EXPORTER_NAME@@: target up/down, per-collector success/failure, scrape duration, and Go build info. Generic across every flavor this exporter was scaffolded from — self-instrumentation is identical, only $job and the namespace vary.",
+  "description": "Exporter self-health for @@EXPORTER_NAME@@: target up/down, per-collector success/failure, scrape duration, and Go build info. Generic across every flavor this exporter was scaffolded from. Self-instrumentation is identical, only $job and the namespace vary.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -258,7 +258,7 @@
       "type": "stat",
       "id": 10,
       "title": "Collector Status (OK / FAIL)",
-      "description": "Current pass/fail status of each collector. Green=OK, Red=FAIL — any red means that collector's last Collect() call errored, panicked, or emitted zero metrics.",
+      "description": "Current pass/fail status of each collector. Green=OK, Red=FAIL: any red means that collector's last Collect() call errored, panicked, or emitted zero metrics.",
       "gridPos": { "h": 6, "w": 24, "x": 0, "y": 6 },
       "options": {
         "colorMode": "background",
@@ -311,7 +311,7 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "type": "state-timeline",
       "id": 20,
-      "title": "Collector Health — State Timeline",
+      "title": "Collector Health - State Timeline",
       "description": "OK/FAIL state of each collector over the selected time range. Green=OK, Red=FAIL.",
       "gridPos": { "h": 6, "w": 24, "x": 0, "y": 13 },
       "options": {
@@ -366,7 +366,7 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "type": "status-history",
       "id": 30,
-      "title": "Collector Scrape Duration — Status History",
+      "title": "Collector Scrape Duration - Status History",
       "description": "Colored by duration thresholds: green <1s, yellow 1-5s, red >5s. Indicates how long each collector's underlying I/O is taking.",
       "gridPos": { "h": 6, "w": 24, "x": 0, "y": 20 },
       "options": {
@@ -491,7 +491,7 @@
       "type": "table",
       "id": 40,
       "title": "Go Build Info",
-      "description": "Build info for the exporter's main Go module (path, module version, checksum), from client_golang's standard build-info collector. Not the same as the exporter's own release tag — a locally-run `go build` typically reports version \"(devel)\".",
+      "description": "Build info for the exporter's main Go module (path, module version, checksum), from client_golang's standard build-info collector. Not the same as the exporter's own release tag: a locally-run `go build` typically reports version \"(devel)\".",
       "gridPos": { "h": 6, "w": 24, "x": 0, "y": 34 },
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "options": {

@@ -19,13 +19,13 @@ import (
 //
 // Deliberately built with plain prometheus.NewHistogramVec, not
 // promauto.NewHistogramVec: promauto's factories auto-register into
-// prometheus.DefaultRegisterer, the process-wide global registry — but
+// prometheus.DefaultRegisterer, the process-wide global registry, but
 // main.go builds its own prometheus.NewRegistry() instead of using that
 // global one (see main.go's own comment on that line), and only collectors
 // reachable via register()/tracker.Add(...) ever reach /metrics. A
 // *prometheus.HistogramVec already implements prometheus.Collector, so
 // registry.frag registers this var the exact same way it registers every
-// other collector — no promauto, no second registry to thread through.
+// other collector: no promauto, no second registry to thread through.
 //
 // Single process-wide histogram, labeled only by outcome: if /add-collector
 // later wires a second CLI-flavor collector that runs a different command,
@@ -42,11 +42,11 @@ var CommandDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 // instead of shelling out via os/exec directly. It is a package-level var,
 // not a plain function, specifically so tests can swap it for a stub that
 // returns fixture bytes (see collector_test.go's TestExampleCollector_Collect
-// and TestExampleCollector_ErrorHandling) — there is no live binary to run in
+// and TestExampleCollector_ErrorHandling): there is no live binary to run in
 // CI, and this indirection is what makes a collector testable without one.
 //
 // Cancellation and per-command timeouts are entirely the caller's
-// responsibility via ctx — see NewExampleCollector's timeout field and
+// responsibility via ctx: see NewExampleCollector's timeout field and
 // exampleData's use of context.WithTimeout for this flavor's convention.
 // Threading the timeout through ctx like this, rather than Execute owning a
 // package-level timeout variable internally, is more idiomatic Go (the

@@ -35,7 +35,7 @@ linters:
     gocritic:
       enabled-checks:
         # captLocal, commentFormatting, singleCaseSwitch, appendAssign are already
-        # enabled by default — only list non-default checks here.
+        # enabled by default, only list non-default checks here.
         - rangeValCopy
 
     staticcheck:

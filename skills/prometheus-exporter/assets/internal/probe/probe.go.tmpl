@@ -7,10 +7,14 @@
 package probe
 
 import (
+	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -27,34 +31,167 @@ import (
 // second scrape of the target.
 const collectorSuccessMetric = "@@NAMESPACE@@_exporter_collector_success"
 
-// Factory builds the collector scoped to one probe target. The multi main.go
-// fills a factory at its // @@PROBE_FACTORIES@@ marker. Handler holds exactly
-// one Factory today (this scaffold's multi-target starting point is a single
-// probed collector); adding a second collector means widening Handler to hold
-// and gather more than one Factory, which is why multi-target /add-collector
-// is documented follow-up rather than a one-line change (see the scaffold's
-// docs and ROADMAP).
-type Factory func(target string, timeout time.Duration) prometheus.Collector
+// Factory builds one collector scoped to one probe target, bounded by the
+// probe's deadline. ctx is what makes that deadline real: prometheus.Collector's
+// Collect(ch) takes no context, so the collector receives it at construction
+// (see the collector template's ctx field). The multi main.go appends one
+// NamedFactory per collector at its // @@PROBE_FACTORIES@@ marker, and
+// /add-collector appends another every time it adds a collector.
+type Factory func(ctx context.Context, target string, timeout time.Duration) prometheus.Collector
+
+// NamedFactory pairs a Factory with the collector name that the StatusTracker
+// keys its health metric on. Handler holds these in an ordered slice, not a
+// map: Go randomizes map iteration, which would make collector ordering and
+// error messages nondeterministic for no benefit.
+type NamedFactory struct {
+	Name string
+	New  Factory
+}
 
 // Handler serves /probe?target=… .
 type Handler struct {
-	log        *logger.Logger
-	factory    Factory
-	allowlist  []string      // empty => allow-any (ecosystem default; see SECURITY.md)
-	maxTimeout time.Duration // upper bound on each probe's per-request timeout
+	log           *logger.Logger
+	factories     []NamedFactory
+	allowlist     []string      // empty => allow-any (ecosystem default; see SECURITY.md)
+	maxTimeout    time.Duration // --probe.timeout: ceiling on each probe's deadline
+	timeoutOffset time.Duration // --probe.timeout-offset: answer before Prometheus gives up
+	modules       map[string][]string
 }
 
 // NewHandler builds a /probe handler. An empty allowlist accepts any target
 // that clears the http/https floor (the Blackbox/SNMP default).
-func NewHandler(log *logger.Logger, factory Factory, allowlist []string, maxTimeout time.Duration) *Handler {
-	return &Handler{log: log, factory: factory, allowlist: allowlist, maxTimeout: maxTimeout}
+func NewHandler(log *logger.Logger, factories []NamedFactory, allowlist []string, maxTimeout, timeoutOffset time.Duration, modules map[string][]string) *Handler {
+	return &Handler{
+		log:           log,
+		factories:     factories,
+		allowlist:     allowlist,
+		maxTimeout:    maxTimeout,
+		timeoutOffset: timeoutOffset,
+		modules:       modules,
+	}
+}
+
+// ParseModules turns repeatable --probe.module=<name>:<collector>[,<collector>…]
+// flag values into a module map. Collector names are Go identifiers, so they can
+// never contain the ':' or ',' separators and the split is unambiguous.
+//
+// A module is a scrape profile: it selects among collectors that are already
+// compiled in. It does not define probe behavior the way a Blackbox YAML module
+// does, because here the collectors are Go code, not configuration.
+func ParseModules(vals []string) (map[string][]string, error) {
+	modules := make(map[string][]string, len(vals))
+	for _, v := range vals {
+		name, list, ok := strings.Cut(v, ":")
+		if !ok {
+			return nil, fmt.Errorf("malformed --probe.module %q: want <module>:<collector>[,<collector>...]", v)
+		}
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return nil, fmt.Errorf("malformed --probe.module %q: empty module name", v)
+		}
+		if _, dup := modules[name]; dup {
+			// Silently keeping one of two conflicting definitions would hide an
+			// operator mistake.
+			return nil, fmt.Errorf("module %q declared twice", name)
+		}
+		var cols []string
+		for _, c := range strings.Split(list, ",") {
+			if c = strings.TrimSpace(c); c != "" {
+				cols = append(cols, c)
+			}
+		}
+		if len(cols) == 0 {
+			// A module that runs nothing is always a typo, never an intent.
+			return nil, fmt.Errorf("module %q declares no collectors", name)
+		}
+		modules[name] = cols
+	}
+	return modules, nil
+}
+
+// moduleNames flattens the module parameter, which is both repeatable and
+// comma-separated: ?module=a&module=b,c selects a, b and c. This is SNMP's
+// grammar, and a scrape config should not have to care which spelling it used.
+func moduleNames(vals []string) []string {
+	var out []string
+	for _, v := range vals {
+		for _, part := range strings.Split(v, ",") {
+			if part = strings.TrimSpace(part); part != "" {
+				out = append(out, part)
+			}
+		}
+	}
+	return out
+}
+
+// selectFactories resolves a request's module parameter to the collectors that
+// will run. Named modules COMBINE: the result is the union of their collectors,
+// deduplicated, emitted in the handler's declared factory order rather than the
+// order the modules were listed, so a probe's output is stable regardless of how
+// the scrape config spells its module list.
+//
+// An absent module runs every registered collector. That is what makes this
+// additive: a scrape config that only sets target keeps working untouched.
+func (h *Handler) selectFactories(vals []string) ([]NamedFactory, error) {
+	names := moduleNames(vals)
+	if len(names) == 0 {
+		return h.factories, nil
+	}
+
+	wanted := make(map[string]bool)
+	for _, name := range names {
+		cols, ok := h.modules[name]
+		if !ok {
+			return nil, fmt.Errorf("unknown module %q", name)
+		}
+		for _, c := range cols {
+			wanted[c] = true
+		}
+	}
+
+	// Declared order, and deduplicated by construction: each factory is
+	// considered exactly once, however many selected modules named it.
+	var out []NamedFactory
+	for _, nf := range h.factories {
+		if wanted[nf.Name] {
+			out = append(out, nf)
+		}
+	}
+	return out, nil
+}
+
+// ValidateModules checks every module against the registered collectors. Call it
+// at startup and fail the boot on error: discovering a typo when the process
+// starts is strictly better than discovering it on a probe at 3am.
+func ValidateModules(factories []NamedFactory, modules map[string][]string) error {
+	known := make(map[string]bool, len(factories))
+	for _, nf := range factories {
+		known[nf.Name] = true
+	}
+
+	// Sorted, so the boot fails on the same module every time regardless of map
+	// iteration order.
+	names := make([]string, 0, len(modules))
+	for name := range modules {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		for _, c := range modules[name] {
+			if !known[c] {
+				return fmt.Errorf("module %q names unknown collector %q", name, c)
+			}
+		}
+	}
+	return nil
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	target := r.URL.Query().Get("target")
 
 	// Non-negotiable floor: must parse as an http/https URL. Always on, even
-	// in allow-any mode — bounds the SSRF surface to HTTP.
+	// in allow-any mode, bounds the SSRF surface to HTTP.
 	if err := validateTargetFloor(target); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -64,12 +201,27 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	factories, err := h.selectFactories(r.URL.Query()["module"])
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	timeout := h.clampTimeout(r)
+
+	// The probe's deadline, and the reason the ctx plumbed through every
+	// collector is not decorative. StatusTracker collects sequentially, so N
+	// collectors cost the SUM of their scrapes; without a shared deadline a
+	// probe could run for N x timeout, long after Prometheus abandoned it.
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
+	defer cancel()
 
 	// Fresh registry + collectors, scoped to THIS target, for THIS request.
 	reg := prometheus.NewRegistry()
 	tracker := collector.NewStatusTracker(h.log)
-	tracker.Add("example", h.factory(target, timeout))
+	for _, nf := range factories {
+		tracker.Add(nf.Name, nf.New(ctx, target, timeout))
+	}
 	reg.MustRegister(tracker)
 
 	// probe_success / probe_duration_seconds live in a separate registry so we
@@ -84,14 +236,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Name: "probe_duration_seconds",
 		Help: "Returns how long the probe took to complete in seconds.",
 	})
-	meta.MustRegister(probeSuccess, probeDuration)
+	probeTimeout := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "probe_timeout_seconds",
+		Help: "Returns the deadline this probe ran under, in seconds.",
+	})
+	meta.MustRegister(probeSuccess, probeDuration, probeTimeout)
+	probeTimeout.Set(timeout.Seconds())
 
 	start := time.Now()
-	mfs, err := reg.Gather() // the ONE scrape of the target's collectors
+	mfs, gatherErr := reg.Gather() // the ONE scrape of the target's collectors
 	probeDuration.Set(time.Since(start).Seconds())
 	switch {
-	case err != nil:
-		h.log.Warn("probe gather reported an error", "target", target, "err", err)
+	case gatherErr != nil:
+		h.log.Warn("probe gather reported an error", "target", target, "err", gatherErr)
 	case collectorsHealthy(mfs):
 		probeSuccess.Set(1)
 	}
@@ -150,19 +307,44 @@ func (h *Handler) targetAllowed(target string) bool {
 	return false
 }
 
-// clampTimeout uses min(--collector.example.timeout, Prometheus's own scrape
-// timeout header), so a probe never outruns Prometheus's deadline or the
-// operator's configured ceiling.
+// clampTimeout computes this probe's deadline, following Blackbox's model:
+//
+//	min(--probe.timeout, scrape_timeout - --probe.timeout-offset)
+//
+// The offset is subtracted from Prometheus's own scrape timeout so the exporter
+// answers BEFORE Prometheus abandons the scrape. Without it, a probe that uses
+// its full budget is always a wasted scrape: the result arrives after nobody is
+// listening.
 func (h *Handler) clampTimeout(r *http.Request) time.Duration {
-	t := h.maxTimeout
-	if v := r.Header.Get("X-Prometheus-Scrape-Timeout-Seconds"); v != "" {
-		if secs, err := strconv.ParseFloat(v, 64); err == nil && secs > 0 {
-			if d := time.Duration(secs * float64(time.Second)); d < t {
-				t = d
-			}
-		}
+	v := r.Header.Get("X-Prometheus-Scrape-Timeout-Seconds")
+	if v == "" {
+		return h.maxTimeout // scraped by something that is not Prometheus
 	}
-	return t
+	secs, err := strconv.ParseFloat(v, 64)
+	if err != nil || math.IsNaN(secs) || math.IsInf(secs, 0) || secs <= 0 {
+		return h.maxTimeout
+	}
+
+	budgetSecs := secs - h.timeoutOffset.Seconds()
+	if budgetSecs <= 0 {
+		// The offset swallows Prometheus's entire scrape timeout: one of the two
+		// is misconfigured. Warn and ignore the offset, rather than handing every
+		// probe an already-expired context and failing every scrape silently.
+		h.log.Warn("probe timeout offset exceeds Prometheus's scrape timeout; ignoring the offset",
+			"scrape_timeout_seconds", v, "timeout_offset", h.timeoutOffset)
+		budgetSecs = secs
+	}
+
+	// Compare in the float-seconds domain, BEFORE converting to time.Duration:
+	// an astronomically large but finite header (e.g. "1e300") would overflow
+	// budgetSecs*float64(time.Second) to +Inf, and time.Duration(+Inf) yields
+	// the "integer indefinite" bit pattern, a huge negative duration. Clamping
+	// here means that overflow-prone conversion never runs on an out-of-range
+	// value: min(maxTimeout, huge) == maxTimeout is the correct answer anyway.
+	if budgetSecs >= h.maxTimeout.Seconds() {
+		return h.maxTimeout
+	}
+	return time.Duration(budgetSecs * float64(time.Second))
 }
 
 // collectorsHealthy reports whether every collector scoped to this probe

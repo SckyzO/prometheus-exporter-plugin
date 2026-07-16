@@ -134,7 +134,7 @@ exampleTarget := kingpin.Flag("collector.example.target", "...").Default("@@DATA
 exampleTimeout := kingpin.Flag("collector.example.timeout", "...").Default("5s").Duration()
 ...
 register("example", func() prometheus.Collector {
-	return collector.NewExampleCollector(log, collector.NewClient(*exampleTarget, *exampleTimeout))
+	return collector.NewExampleCollector(context.Background(), log, collector.NewClient(*exampleTarget, *exampleTimeout))
 }, true)
 ```
 

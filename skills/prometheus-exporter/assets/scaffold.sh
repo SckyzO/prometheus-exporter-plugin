@@ -1,5 +1,5 @@
 #!/bin/sh
-# scaffold.sh — dependency-free @@VAR@@ templating engine.
+# scaffold.sh: dependency-free @@VAR@@ templating engine.
 #
 # Materializes a template tree (as used under skills/prometheus-exporter/assets/)
 # into a target directory: selects one code/<flavor>/ subtree, selects one
@@ -10,9 +10,9 @@
 # POSIX sh + sed + grep, plus the common core Unix utilities cp, mv, rm,
 # rmdir, mkdir, find, tr, wc, basename, and mktemp. All ship on any Unix-like
 # system in practice, but note mktemp specifically is NOT in the POSIX base
-# spec (no --dry-run substitute exists in base sh) — this script is "POSIX sh
+# spec (no --dry-run substitute exists in base sh). This script is "POSIX sh
 # scripting style", not "zero-dependency beyond POSIX base utilities". Do not
-# add a dependency on bash, Python, Go, or any template engine here — see
+# add a dependency on bash, Python, Go, or any template engine here: see
 # docs/design/2026-07-02-prometheus-exporter-plugin-design.md §5bis.
 #
 # Usage:
@@ -24,7 +24,7 @@
 # --target-model defaults to "single" (today's runtime, unchanged). "multi"
 # requires --flavor http (there is no cli multi-target) and ships a
 # /probe?target=… handler (internal/probe/) instead of a fixed-target
-# collector registry — see mains/single/ and mains/multi/.
+# collector registry. See mains/single/ and mains/multi/.
 #
 # Behavior:
 #   - Copies --src to --dst, then strips the copy's own scaffold.sh (plugin
@@ -35,7 +35,7 @@
 #     sit at its final repo-relative path directly: multiple flavors (http/,
 #     cli/, ...) all resolve to the same destination, internal/collector/, so
 #     the source tree needs a directory per flavor to choose between before
-#     any of them reaches it. Common templates need no such staging — they
+#     any of them reaches it. Common templates need no such staging: they
 #     already sit at their final repo-relative path under assets/ (e.g.
 #     go.mod.tmpl, cmd/<name>/main.go.tmpl, internal/logger/logger.go.tmpl)
 #     and are copied straight through by the cp -R above.
@@ -49,9 +49,9 @@
 #   - Selects mains/<target-model>/main.go.tmpl as the one cmd/<name>/main.go,
 #     then removes the whole mains/ staging tree; drops internal/probe/ for
 #     --target-model single (it is multi-only).
-#   - Fills main.go's structural markers — // @@CLIENT_INIT@@ and
+#   - Fills main.go's structural markers: // @@CLIENT_INIT@@ and
 #     // @@COLLECTOR_REGISTRY@@ (single-target), // @@PROBE_FACTORIES@@
-#     (multi-target) — from the selected flavor's internal/collector/wiring/
+#     (multi-target), from the selected flavor's internal/collector/wiring/
 #     {client_init.frag,registry.frag,probe_factory.frag}, whichever the
 #     chosen main model actually carries a marker for, then removes that
 #     staging directory. The marker comments themselves survive the fill
@@ -61,7 +61,7 @@
 #     discards the unused alternatives.
 #   - Fails loudly (exit 3) if any @@...@@ sentinel survives, EXCEPT the
 #     named structural markers in main.go (@@CLIENT_INIT@@,
-#     @@COLLECTOR_REGISTRY@@, @@PROBE_FACTORIES@@) — those are not --var data
+#     @@COLLECTOR_REGISTRY@@, @@PROBE_FACTORIES@@): those are not --var data
 #     placeholders, and the wiring-marker fill above deliberately preserves
 #     them, so their survival to this point is expected, not a forgotten
 #     substitution.
@@ -91,7 +91,7 @@ license_choice=""
 
 # Temp files used to build the substitution script and to materialize `find`
 # results before mutating the tree (never mutate while a `find` traversal of
-# the same tree could still be in flight — see self-review notes in the task
+# the same tree could still be in flight: see self-review notes in the task
 # report for why this matters).
 sedscript=$(mktemp)
 pathlist=$(mktemp)
@@ -198,7 +198,7 @@ fi
 # subtree entirely: if some sibling directory happens to exist at that
 # resolved location, the flavor gets accepted as "valid", and the later
 # move step then mv's that directory's contents into $dst/internal/collector/
-# and rm -rf's the code/ tree afterward — i.e. arbitrary-directory
+# and rm -rf's the code/ tree afterward, i.e. arbitrary-directory
 # exfiltration into the generated output plus arbitrary-directory deletion,
 # both outside the --dst sandbox. A single path component can never do that.
 case "$flavor" in
@@ -238,13 +238,13 @@ cp -R "$src/." "$dst/"
 
 # scaffold.sh itself ships alongside the templates under --src (so it can be
 # invoked as skills/prometheus-exporter/assets/scaffold.sh) but is a
-# plugin-tooling file, not part of any generated exporter's repo — strip the
+# plugin-tooling file, not part of any generated exporter's repo. Strip the
 # copy the cp -R above just made. rm -f on a path that doesn't exist (e.g. a
 # test fixture --src with no scaffold.sh of its own) is a silent no-op.
 rm -f "$dst/scaffold.sh"
 
 # Flavor selection: move the chosen flavor's files into internal/collector/
-# (their real destination), then drop the whole code/ staging tree — this
+# (their real destination), then drop the whole code/ staging tree: this
 # removes every non-selected flavor in the same step, along with the
 # selected flavor's own, now-emptied directory. Guarded on the selected
 # flavor actually existing in $src (e.g. no code/ at all yet, or a flavor
@@ -286,7 +286,7 @@ fi
 # but nothing under a single-target tree does (client_golang itself needs it
 # only transitively). go.mod.tmpl therefore ships client_model in the
 # INDIRECT require() block unconditionally, and this reclassifies it to the
-# direct block here, at scaffold time, ONLY for --target-model multi —
+# direct block here, at scaffold time, ONLY for --target-model multi,
 # deliberately NOT a static go.mod.tmpl edit, which would leave a
 # single-target scaffold's go.mod direct/indirect split permanently out of
 # sync with what `go mod tidy` would produce (verified empirically:
@@ -294,13 +294,13 @@ fi
 # tree, since nothing there imports it directly), a real regression against
 # this plan's own single-target-tree-is-unchanged constraint. Anchored on the
 # module path only (no version pin) for BOTH the client_golang insertion
-# point and the client_model line being deleted — the version spliced into
+# point and the client_model line being deleted: the version spliced into
 # the direct block is READ OFF that deleted indirect line at scaffold time,
 # never hardcoded here, so a future Dependabot bump of client_model's version
 # in go.mod.tmpl can't silently desync the inserted line from the deleted
 # one. (A prior version of this block hardcoded the version on both sides:
 # a go.mod.tmpl bump would then leave the version-pinned delete regex no
-# longer matching the now-bumped indirect line — so it survived — while the
+# longer matching the now-bumped indirect line (so it survived) while the
 # insert still fired with the stale hardcoded version, landing client_model
 # TWICE with two conflicting versions and breaking `go build`/`go mod tidy`
 # for multi-target scaffolds only.)
@@ -308,7 +308,7 @@ if [ "$target_model" = multi ] && [ -f "$dst/go.mod.tmpl" ]; then
   # [[:blank:]]* here, not a literal tab: unlike the sed addresses below (GNU
   # sed treats \t as tab, verified empirically), GNU grep's default (non -P)
   # mode does NOT expand \t to a tab in the pattern, so a \t-anchored grep
-  # silently matches nothing here — caught empirically while implementing
+  # silently matches nothing here, caught empirically while implementing
   # this fix. Mirrors this same script's own marker-matching grep further
   # down ("^[[:blank:]]*// $marker[[:blank:]]*\$").
   clientmodelline=$(grep '^[[:blank:]]*github\.com/prometheus/client_model[[:blank:]]' "$dst/go.mod.tmpl" | head -n 1)
@@ -325,8 +325,8 @@ if [ "$target_model" = multi ] && [ -f "$dst/go.mod.tmpl" ]; then
   rm -f "$clientmodelfrag"
 fi
 
-# variants/ (the background_collector.go.tmpl + test that /add-collector adds
-# — see code/<flavor>/variants/) is /add-collector's own staging ground: it
+# variants/ (the background_collector.go.tmpl + test that /add-collector adds,
+# see code/<flavor>/variants/) is /add-collector's own staging ground: it
 # reads those templates directly from the PLUGIN tree (exactly as it reads
 # code/<flavor>/collector.go.tmpl today), never through scaffold.sh. Landed
 # at internal/collector/variants/ by the flavor-selection move above like any
@@ -334,7 +334,7 @@ fi
 # @@VAR@@-substituted, .tmpl-stripped background_collector.go would sit in its
 # own internal/collector/variants PACKAGE (a subdirectory is a distinct
 # package regardless of its package clause), which can never see
-# internal/collector's own Client/logger declarations — go build ./... fails
+# internal/collector's own Client/logger declarations: go build ./... fails
 # on it with "undefined: Client". Mirrors the existing wiring/ staging removal
 # below. rm -rf on a path that doesn't exist is a silent no-op, so this is
 # harmless for a flavor that ships no variants/ at all.
@@ -373,13 +373,13 @@ fi
 # first so every rewrite operates on a snapshot rather than a live traversal.
 # `sed ... > tmp` creates a brand-new inode for tmp (default-permissioned per
 # umask, NOT copying $file's mode), so the `mv` right after silently drops
-# any executable bit $file had — a real regression for shipped helper
+# any executable bit $file had, a real regression for shipped helper
 # scripts like scripts/docker/tools/{goreport.sh,deps-report.sh}, which are
 # invoked as bare paths (relying on the exec bit + shebang) by the Makefile.
 # Recorded before the rewrite and reapplied after, POSIX chmod +x only
 # (never a specific octal mode: that would require a non-POSIX
 # `stat`/`chmod --reference`, whose flag spelling differs between GNU and
-# BSD/macOS — see the header comment's POSIX-utilities constraint).
+# BSD/macOS: see the header comment's POSIX-utilities constraint).
 find "$dst" -type f -print > "$pathlist"
 while IFS= read -r file; do
   if [ -x "$file" ]; then was_exec=yes; else was_exec=no; fi
@@ -392,7 +392,7 @@ done < "$pathlist"
 # directory's contents before the directory itself (post-order), and each
 # rename only ever touches the entry's own basename (never a full multi
 # segment path), so a parent is only renamed once every descendant already
-# has its final name — no rename ever targets a not-yet-existing directory.
+# has its final name: no rename ever targets a not-yet-existing directory.
 find "$dst" -depth -print > "$pathlist"
 while IFS= read -r path; do
   case "$path" in
@@ -414,8 +414,8 @@ while IFS= read -r file; do
 done < "$pathlist"
 
 # Flavor wiring-marker injection: fill main.go's structural markers
-# (// @@CLIENT_INIT@@, // @@COLLECTOR_REGISTRY@@ — single-target markers;
-# // @@PROBE_FACTORIES@@ — multi-target's own marker, see mains/multi/
+# (// @@CLIENT_INIT@@, // @@COLLECTOR_REGISTRY@@, single-target markers;
+# // @@PROBE_FACTORIES@@, multi-target's own marker, see mains/multi/
 # main.go.tmpl) with the selected flavor's wiring snippets, if it shipped any.
 # Flavor snippets stage under code/<flavor>/wiring/{client_init.frag,
 # registry.frag,probe_factory.frag} (mirror-layout, exactly like every other
@@ -430,7 +430,7 @@ done < "$pathlist"
 # a discovered or growing registry, mirroring this same script's own --forge
 # github|none precedent. sed's `r` command inserts the frag file's content
 # immediately AFTER the matched marker line without consuming it, so the
-# marker comment itself survives verbatim in the output — deliberate, so
+# marker comment itself survives verbatim in the output, deliberate, so
 # /add-collector can find and reuse the same marker later to insert
 # additional collectors. That is also why the residual-sentinel guard below
 # still needs (and already has) its CLIENT_INIT/COLLECTOR_REGISTRY/
@@ -453,14 +453,14 @@ if [ -d "$dst/internal/collector/wiring" ]; then
   # `/@@COLLECTOR_REGISTRY@@/` address matches that prose line too and
   # splices executable Go statements into the middle of a comment block,
   # which breaks the build with "non-declaration statement outside function
-  # body" — caught empirically while implementing this, not a hypothetical.
+  # body", caught empirically while implementing this, not a hypothetical.
   # A frag whose marker is absent from the SELECTED main model is skipped, not
   # fatal: each main model (mains/single/, mains/multi/) carries only its own
   # markers now (single has no // @@PROBE_FACTORIES@@; multi has no
   # // @@CLIENT_INIT@@ / // @@COLLECTOR_REGISTRY@@), so a flavor shipping a
   # frag the chosen main doesn't use is the expected, common case, not a
   # broken scaffold. This is still a hardcoded, fixed set of pairs, not a
-  # discovered/growing registry — same precedent as --forge github|none.
+  # discovered/growing registry, same precedent as --forge github|none.
   for pair in \
     "client_init.frag:@@CLIENT_INIT@@" \
     "registry.frag:@@COLLECTOR_REGISTRY@@" \
@@ -473,13 +473,13 @@ if [ -d "$dst/internal/collector/wiring" ]; then
     mv "$mainfile.scaffoldtmp" "$mainfile"
   done
 
-  # wiring/ is scaffold-only staging, like licenses/ below — it must never
+  # wiring/ is scaffold-only staging, like licenses/ below: it must never
   # ship in the generated repo now that its content has been spliced into
   # main.go above.
   rm -rf "$dst/internal/collector/wiring"
 fi
 
-# Place the chosen LICENSE, then discard the unused alternatives — the
+# Place the chosen LICENSE, then discard the unused alternatives: the
 # licenses/ menu is scaffold-only content and never ships in the generated
 # repo, whether or not a license was actually selected. A LICENSE var that
 # doesn't match any available file (typo, e.g. "Apache2.0") must fail loudly:
@@ -507,7 +507,7 @@ fi
 
 # Fail loudly if any @@VAR@@ sentinel survives substitution. grep's exit
 # status is 0 (match found), 1 (no match, clean), or 2+ (the scan itself
-# failed, e.g. a read error) — treating "not 0" as a blanket "clean" (as a
+# failed, e.g. a read error): treating "not 0" as a blanket "clean" (as a
 # plain `if grep ...; then` does) silently turns a failed scan into a false
 # success. Capture the real code and branch on all three cases explicitly.
 grep_rc=0
@@ -517,9 +517,9 @@ case "$grep_rc" in
   *) die "residual-sentinel scan of $dst failed (grep exit $grep_rc)" ;;
 esac
 
-# main.go's structural markers (@@CLIENT_INIT@@, @@COLLECTOR_REGISTRY@@ —
-# single-target; @@PROBE_FACTORIES@@ — multi-target) are deliberately left as
-# literal comments for a later flavor-specific scaffold.sh step to replace —
+# main.go's structural markers (@@CLIENT_INIT@@, @@COLLECTOR_REGISTRY@@,
+# single-target; @@PROBE_FACTORIES@@, multi-target) are deliberately left as
+# literal comments for a later flavor-specific scaffold.sh step to replace:
 # they are not --var data placeholders, so their survival is expected, not a
 # forgotten substitution. Filter exactly these named sentinels out before
 # judging the scan; anything else that matches the broad @@[A-Z_]*@@ shape

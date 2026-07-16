@@ -15,8 +15,8 @@ import (
 	"@@MODULE_PATH@@/internal/logger"
 )
 
-// exampleMetric is one parsed key/value line from the example data source —
-// for example the line "foo 1" parses to {Key: "foo", Value: 1}. This is a
+// exampleMetric is one parsed key/value line from the example data source.
+// For example, the line "foo 1" parses to {Key: "foo", Value: 1}. This is a
 // placeholder shape documenting the pattern, not any real target's real
 // output. Replace it, and parseExample below, with your actual data
 // source's real parsing logic when adapting this collector.
@@ -29,7 +29,7 @@ type exampleMetric struct {
 // and returns its raw output. Kept separate from parsing (parseExample,
 // below) so parsing stays pure and unit-testable without running a real
 // command. The per-command timeout is applied here, around the single
-// Execute call, rather than inside Execute itself — see execute.go's own
+// Execute call, rather than inside Execute itself: see execute.go's own
 // doc comment for why that split is deliberate.
 func (c *ExampleCollector) exampleData(ctx context.Context) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
@@ -39,7 +39,7 @@ func (c *ExampleCollector) exampleData(ctx context.Context) ([]byte, error) {
 
 // parseExample decodes exampleData's raw output into one exampleMetric per
 // non-blank line. Pure: no I/O, no logging, no side effects, so every input
-// maps deterministically to an output — this is what makes it
+// maps deterministically to an output: this is what makes it
 // unit-testable with plain byte fixtures (see the test file's
 // TestParseExample).
 //
@@ -49,17 +49,17 @@ func (c *ExampleCollector) exampleData(ctx context.Context) ([]byte, error) {
 //	foo 1
 //	bar 2
 //
-// Blank lines are skipped. Anything else — a line that isn't exactly two
+// Blank lines are skipped. Anything else (a line that isn't exactly two
 // whitespace-separated fields, whose second field isn't a number, or whose
-// key repeats a key already seen earlier in the same input — is a parse
+// key repeats a key already seen earlier in the same input) is a parse
 // error, for the same duplicate-label-set reason documented in the
 // synchronous flavor's own parseExample (collector.go.tmpl): refresh, below,
 // emits one MustNewConstMetric per entry sharing the same descriptor and
 // labeled only by key, so two entries with the same key would produce two
-// metrics with an identical label set — something Registry.Gather rejects
+// metrics with an identical label set: something Registry.Gather rejects
 // at scrape time. Rejecting the duplicate here, at parse time, keeps that
 // failure inside this collector's own refresh, which fails open (logs and
-// keeps the previous cache — see refresh's own doc comment) instead of
+// keeps the previous cache: see refresh's own doc comment) instead of
 // surfacing downstream as a Gather error that would blank out every OTHER
 // collector's metrics for that scrape too.
 func parseExample(b []byte) ([]exampleMetric, error) {
@@ -172,7 +172,7 @@ func NewExampleCollector(log *logger.Logger, timeout, interval time.Duration) *E
 // Start launches the background refresh goroutine. Call once, after
 // construction. The first refresh runs immediately (so the cache starts
 // filling as soon as the process starts) without Start itself waiting for
-// it — a slow first fetch never blocks process startup. The goroutine exits
+// it: a slow first fetch never blocks process startup. The goroutine exits
 // when ctx is cancelled; Done() can then be used to wait for it to finish.
 func (c *ExampleCollector) Start(ctx context.Context) {
 	go func() {
@@ -202,14 +202,14 @@ func (c *ExampleCollector) Done() <-chan struct{} {
 // refresh performs the one flavor-specific I/O call (exampleGetMetrics, via
 // the package-level Execute) and, on success, atomically replaces the
 // cache. On error it logs and returns, leaving the previous cache and
-// lastRefresh untouched — fail-open: a transient failure serves the
+// lastRefresh untouched. This is fail-open: a transient failure serves the
 // last-known-good data instead of dropping the series, and the freshness
 // gauge (below) is the signal that a refresh is stale, not a dropped
 // scrape.
 func (c *ExampleCollector) refresh(ctx context.Context) {
 	metrics, err := c.exampleGetMetrics(ctx)
 	if err != nil {
-		c.log.Error("Failed to refresh example metrics — keeping previous cache", "err", err)
+		c.log.Error("Failed to refresh example metrics, keeping previous cache", "err", err)
 		return
 	}
 
@@ -234,11 +234,11 @@ func (c *ExampleCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.lastRefreshDesc
 }
 
-// Collect replays the cached metrics from the last successful refresh —
+// Collect replays the cached metrics from the last successful refresh:
 // O(cached size), never runs the command, never blocks on it. It then
 // ALWAYS sends the freshness gauge, even before any refresh has ever
 // completed (value 0 in that case, since a zero time.Time's Unix() is a
-// large negative, not a meaningful "ancient" epoch marker) — see the
+// large negative, not a meaningful "ancient" epoch marker): see the
 // collector-authoring rule in collector.go.tmpl's Collect for why a
 // collector must never emit zero metrics on what it considers a healthy
 // outcome: StatusTracker counts emitted metrics per scrape, and an empty
@@ -246,7 +246,7 @@ func (c *ExampleCollector) Describe(ch chan<- *prometheus.Desc) {
 // a failure. The freshness gauge alone guarantees at least one metric every
 // scrape, so StatusTracker reports this collector as alive; the gauge's own
 // value (0 until the first refresh lands) is the separate, correct signal
-// for staleness — see NewExampleCollector's lastRefreshDesc help text.
+// for staleness: see NewExampleCollector's lastRefreshDesc help text.
 func (c *ExampleCollector) Collect(ch chan<- prometheus.Metric) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

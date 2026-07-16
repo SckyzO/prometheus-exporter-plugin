@@ -16,9 +16,9 @@ C_YELLOW=$'\033[33m'
 C_RED=$'\033[31m'
 C_DIM=$'\033[2m'
 
-# Pull the full state once — direct + indirect + available updates.
+# Pull the full state once: direct + indirect + available updates.
 ALL=$(go list -m -u -mod=mod all 2>/dev/null) || {
-    echo "go list failed — are we inside a Go module?" >&2
+    echo "go list failed: are we inside a Go module?" >&2
     exit 1
 }
 
@@ -78,7 +78,7 @@ emit_row() {
     fi
 }
 
-# Modules to show as "indirect with updates" — only the ones that actually
+# Modules to show as "indirect with updates": only the ones that actually
 # have an upgrade available, otherwise the indirect list is too noisy.
 mapfile -t INDIRECT_WITH_UPDATES < <(
     printf '%s\n' "$ALL" \

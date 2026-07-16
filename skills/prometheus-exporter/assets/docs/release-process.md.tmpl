@@ -7,20 +7,20 @@ This document describes the maintainer workflow for cutting a release of
 
 The goal is to keep releases:
 
-1. **Coherent** — every change in a release fits the release theme (patch = bug fixes only;
+1. **Coherent**: every change in a release fits the release theme (patch = bug fixes only;
    minor = features and non-breaking improvements; major = breaking changes).
-2. **Reviewable** — atomic commits, Conventional Commit messages, breaking changes flagged
+2. **Reviewable**: atomic commits, Conventional Commit messages, breaking changes flagged
    explicitly.
-3. **Trustworthy** — every fix lands with a non-regression test, and every metric in
+3. **Trustworthy**: every fix lands with a non-regression test, and every metric in
    `docs/metrics.md` matches what `/metrics` actually exposes.
-4. **Respectful of contributors** — community PRs are credited via `Co-authored-by`, not
+4. **Respectful of contributors**: community PRs are credited via `Co-authored-by`, not
    silently absorbed.
 
 ---
 
 ## 1. Open the release branch
 
-Always release from a dedicated branch — never commit straight to the default branch.
+Always release from a dedicated branch. Never commit straight to the default branch.
 
 ```bash
 git checkout main && git pull
@@ -48,10 +48,10 @@ gh issue list --repo @@OWNER@@/@@EXPORTER_NAME@@ --state open
 
 For each item, decide:
 
-- **In scope** for this release — note the issue/PR number in your scratchpad.
-- **Out of scope** but actionable — comment with the planned release (e.g. "tracked for
+- **In scope** for this release: note the issue/PR number in your scratchpad.
+- **Out of scope** but actionable: comment with the planned release (e.g. "tracked for
   v1.3").
-- **Stale** — close with a polite explanation.
+- **Stale**: close with a polite explanation.
 
 Aim for a release that ships **one theme** (for example, "silent metric loss in collector X +
 community PR backlog"). Avoid mixing unrelated themes in the same release.
@@ -66,11 +66,11 @@ For each PR you accept, follow the same loop:
 
 For every PR, run a four-step analysis:
 
-1. **What it claims to fix** — read the issue and the PR description.
-2. **What the diff actually changes** — `gh pr diff <N>`.
-3. **Whether it conflicts with the current branch** — does it touch lines you've already
+1. **What it claims to fix**: read the issue and the PR description.
+2. **What the diff actually changes**: `gh pr diff <N>`.
+3. **Whether it conflicts with the current branch**: does it touch lines you've already
    modified in this release?
-4. **Whether it changes a metric's name, type, or labels** — anything visible to an operator.
+4. **Whether it changes a metric's name, type, or labels**: anything visible to an operator.
 
 If any of these aren't clear, comment on the PR for clarification before integrating.
 
@@ -109,7 +109,7 @@ If a PR fixes two distinct bugs, split it into two commits. Each commit must:
 
 Every code change must come with a test that:
 
-- Fails before the fix (verify this briefly — write the test first, run it, watch it fail).
+- Fails before the fix (verify this briefly: write the test first, run it, watch it fail).
 - Passes after the fix.
 - Reuses the project's existing fixtures in `internal/collector/testdata/` when possible.
 
@@ -140,8 +140,8 @@ Defensive fixes ship as separate commits with `(defensive)` in the summary, and 
 
 ## 5. Validate continuously
 
-**Every command below runs inside a containerized toolchain** — a container engine is the
-only requirement on the developer machine, and the result is identical on every host. See
+**Every command below runs inside a containerized toolchain** (a container engine is the
+only requirement on the developer machine), and the result is identical on every host. See
 [`scripts/docker/tools/`](../scripts/docker/tools/) for the pinned tools image.
 
 After every commit, run:
@@ -150,7 +150,7 @@ After every commit, run:
 make check    # vet + lint + test + vuln + actionlint + zizmor + deadcode + docs-check, containerized
 ```
 
-**Before tagging, both of these must be green — release blockers:**
+**Before tagging, both of these must be green (release blockers):**
 
 ```bash
 make check    # exit 0 required
@@ -184,7 +184,7 @@ Run the exporter against a real (or realistic sandbox) instance of `@@DATA_SOURC
 every collector enabled and debug logging on, and make release-specific assertions explicit.
 
 The detailed step-by-step playbook is in
-**[docs/validation-checklist.md](validation-checklist.md)** — a copy-pasteable
+**[docs/validation-checklist.md](validation-checklist.md)**, a copy-pasteable
 command/expected/if-it-fails procedure designed so a human or an AI agent can execute the
 validation end-to-end without prior context.
 
@@ -207,7 +207,7 @@ For every release, explicitly verify:
 
 - The fix actually fires under realistic conditions (feed the fixture that previously
   triggered the bug and confirm the corrected behavior now shows up).
-- A renamed metric uses its new name everywhere — including any dashboard or alert that
+- A renamed metric uses its new name everywhere, including any dashboard or alert that
   referenced the old one.
 - The health dashboard under [`monitoring/`](../monitoring/) still renders.
 
@@ -231,7 +231,7 @@ comm -13 /tmp/doc.txt /tmp/exposed.txt   # exposed but not documented
 Treat "exposed but not documented" entries as bugs to fix in this release (unless they're
 histogram `_bucket`/`_count`/`_sum` suffixes, which are implicit from the parent metric name).
 "Documented but not exposed" entries are usually contextual (a collector needs specific
-conditions on the target to emit anything) — verify each one before declaring the doc clean.
+conditions on the target to emit anything); verify each one before declaring the doc clean.
 
 ---
 
@@ -316,7 +316,7 @@ comment with the planned milestone and any workaround available in the meantime.
 ### Test on a real target before the final tag
 
 A local or CI validation environment catches structural bugs, but it rarely has the full
-variability of a real target — real-world scale, real error conditions, version-specific
+variability of a real target: real-world scale, real error conditions, version-specific
 quirks. **Before tagging the final release, run the binary against an actual target.**
 
 Two approaches depending on risk:
@@ -369,10 +369,10 @@ Watch for the same signals as approach A, for a shorter window, before tagging.
 
 | Change type | Approach |
 |---|---|
-| Breaking change (metric rename/retyped, label change) | **A — RC tag**, staging, full work cycle |
-| New collector / new exposed metric | **A — RC tag**, staging, a few hours |
-| Bug fix to an existing collector | **B — local build**, ~30 min validation |
-| Docs / test-only patch | None required — `make check` is enough |
+| Breaking change (metric rename/retyped, label change) | **A: RC tag**, staging, full work cycle |
+| New collector / new exposed metric | **A: RC tag**, staging, a few hours |
+| Bug fix to an existing collector | **B: local build**, ~30 min validation |
+| Docs / test-only patch | None required, `make check` is enough |
 
 ### Tag the final release
 
@@ -384,14 +384,14 @@ git push origin vX.Y.Z
 ```
 
 If you use the GitHub layer, CI's release workflow picks up the tag, re-verifies the build
-(`make check`), then runs GoReleaser — which cross-compiles, signs, SBOMs, and publishes the
+(`make check`), then runs GoReleaser, which cross-compiles, signs, SBOMs, and publishes the
 binaries and container images (see [Security & supply chain](../README.md#security--supply-chain)).
 Without a forge, run the equivalent locally: `goreleaser release --clean` (or
 `--snapshot` to build without publishing).
 
 GoReleaser's own SBOM step only ever covers the release **archives** (CycloneDX, via its
 `sboms:` block) plus an automatic, registry-embedded **SPDX** attestation on each container
-image (`dockers_v2 … sbom: "true"`) — it cannot generate a CycloneDX SBOM for an image it
+image (`dockers_v2 … sbom: "true"`), it cannot generate a CycloneDX SBOM for an image it
 builds. For the container image's own canonical CycloneDX SBOM, run `make sbom-image` (needs
 `syft` on `PATH`, the same tool GoReleaser uses for the archives) against the tag you just
 published, e.g.:
@@ -410,12 +410,12 @@ rotting.
 
 Comment on the PR with:
 
-1. **What's good** — what the PR gets right.
-2. **What blocks merging today** — concrete blockers with reasons, not opinions.
-3. **What the plan is** — which release you'll integrate it in, and what you'll adapt or add
+1. **What's good**: what the PR gets right.
+2. **What blocks merging today**: concrete blockers with reasons, not opinions.
+3. **What the plan is**: which release you'll integrate it in, and what you'll adapt or add
    (tests, flags, a dashboard panel).
-4. **A concrete signal of intent** — for example, "I'll adapt and ship this in vX.Y this
+4. **A concrete signal of intent**: for example, "I'll adapt and ship this in vX.Y this
    month. You'll be credited via Co-authored-by."
 
-Close with a variant of: *"I'm not closing the PR — keeping it open as the reference
+Close with a variant of: *"I'm not closing the PR, keeping it open as the reference
 discussion while I adapt. Thanks again for the contribution."*

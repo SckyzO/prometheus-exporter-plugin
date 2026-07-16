@@ -95,20 +95,35 @@ only).** If your target is one of many identical instances Prometheus should
 poll on demand (a fleet of identical network devices, a protocol prober,
 anything shaped like the Blackbox exporter), `/new-prometheus-exporter
 --target-model multi` produces a `/probe?target=…` handler
-(`internal/probe/`) that builds a fresh, per-request collector set scoped to
-the target, instead of the fixed registry the default `single` model builds
-once at startup. `multi` requires `--flavor http`: there is no `cli`
-multi-target, since the `cli` flavor has no network target to vary. Two
-things remain genuine follow-up work, not shipped today: `/add-collector`
-against a multi-target scaffold (it refuses cleanly and points at the manual
-procedure; see `project-scaffold.md`) and a Blackbox/SNMP-style `module`
-query parameter (see the plugin's `ROADMAP.md`). Decide the model now,
-because retrofitting it onto an already-scaffolded single-target `main.go`
-later touches the entry point, the registry, and every collector's
-constructor signature at once.
+(`internal/probe/`) holding an ordered slice of named factories, one per
+collector, instead of the fixed registry the default `single` model builds
+once at startup. On every request the handler builds a fresh registry scoped
+to that one target and gathers whichever factories the request selects.
+`multi` requires `--flavor http`: there is no `cli` multi-target, since the
+`cli` flavor has no network target to vary.
 
-Multi-target's own two self-metrics, `probe_success` and
-`probe_duration_seconds`, are a deliberate, documented exception to this
+Each probe runs under a real deadline,
+`min(--probe.timeout, X-Prometheus-Scrape-Timeout-Seconds - --probe.timeout-offset)`
+(`--probe.timeout` defaults to `5s`, `--probe.timeout-offset` to `0.5s`),
+which reaches every scoped collector through its own constructor, because
+`prometheus.Collector.Collect(ch)` takes no context at all: the constructor
+is the only channel available to hand one in. The shared `StatusTracker`
+collects every scoped collector sequentially, so a probe costs the SUM of
+its collectors' durations, not the slowest one alone; the deadline above is
+what keeps that sum bounded instead of letting a probe run long after
+Prometheus gave up on it. `--probe.module` selects a subset of collectors
+per probe (`/probe?target=…&module=…`, repeatable and comma-separated,
+named modules combine); an absent `module` runs every registered collector,
+so an existing scrape config that only sets `target` keeps working
+untouched. `/add-collector` understands both models: it appends a
+`probe.NamedFactory` at the multi-target scaffold's own marker the same way
+it appends a `register(...)` call at the single-target one (see
+`project-scaffold.md`). Decide the model now, because retrofitting it onto
+an already-scaffolded single-target `main.go` later touches the entry point,
+the registry, and every collector's constructor signature at once.
+
+Multi-target's own self-metrics, `probe_success`, `probe_duration_seconds`,
+and `probe_timeout_seconds`, are a deliberate, documented exception to this
 scaffold's usual `namespace_subsystem_name` metric-naming rule. See
 `prometheus-principles.md`'s naming-exception note.
 

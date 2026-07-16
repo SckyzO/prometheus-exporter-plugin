@@ -6,8 +6,8 @@ import (
 	"@@MODULE_PATH@@/internal/logger"
 )
 
-// isLoopbackHost reports whether host — the address part of a
-// --web.listen-address value, port already stripped — only reaches this
+// isLoopbackHost reports whether host (the address part of a
+// --web.listen-address value, port already stripped) only reaches this
 // machine. An empty host (from a bare ":9999") binds every interface, so it
 // is deliberately NOT loopback despite also covering localhost traffic.
 func isLoopbackHost(host string) bool {
@@ -27,7 +27,7 @@ func isLoopbackHost(host string) bool {
 // Rule 3: log one visible, non-fatal warning at startup if any listenAddress
 // is reachable from outside this host AND no --web.config.file is set to
 // enable TLS/Basic Auth. It never blocks startup or alters a default
-// (Rule 2) — it only makes an already-exposed posture visible.
+// (Rule 2). It only makes an already-exposed posture visible.
 func warnIfExposedAndUnauthenticated(log *logger.Logger, listenAddresses []string, webConfigFile string) {
 	if webConfigFile != "" {
 		return // TLS/Basic Auth already configured

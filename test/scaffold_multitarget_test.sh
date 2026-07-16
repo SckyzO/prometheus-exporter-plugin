@@ -50,6 +50,12 @@ mainfile=$(find "$work/multi/cmd" -maxdepth 2 -name main.go)
 grep -q '/probe' "$mainfile" || fail "multi scaffold's main.go does not register the /probe route"
 grep -q 'probe.NewHandler' "$mainfile" || fail "multi scaffold's main.go does not call probe.NewHandler"
 
+grep -q 'var factories \[\]probe.NamedFactory' "$mainfile" || fail "multi scaffold's main.go does not declare the factories slice"
+grep -q '// @@PROBE_FACTORIES@@' "$mainfile" || fail "multi scaffold's main.go lost the // @@PROBE_FACTORIES@@ marker (/add-collector appends there)"
+
+probefile="$work/multi/internal/probe/probe.go"
+grep -q 'factories \[\]NamedFactory' "$probefile" || fail "multi scaffold's probe.go does not hold N named factories"
+
 # The multi main model carries only its own marker (// @@PROBE_FACTORIES@@);
 # it must never retain the single-target markers verbatim as dead comments.
 grep -q '// @@CLIENT_INIT@@' "$mainfile" && fail "multi scaffold's main.go still has a // @@CLIENT_INIT@@ marker (single-only)"

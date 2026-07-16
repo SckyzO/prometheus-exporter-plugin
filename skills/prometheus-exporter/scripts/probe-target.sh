@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# probe-target.sh — deterministic live-target probe backbone (discovery rung 4).
+# probe-target.sh: deterministic live-target probe backbone (discovery rung 4).
 #
 # Fetches (HTTP GET) or executes (CLI) a RUNNING target's description surface,
 # truncates the capture, and REDACTS common secrets before emitting to stdout.
@@ -99,11 +99,11 @@ fi
 # Rule ORDER matters: the structured rules (PEM blocks, Bearer/Basic auth
 # headers, ://user:pass@ URL credentials) all run BEFORE the broad key/flag
 # rules, so a key-named field holding a PEM block, a bearer token, or a URL
-# credential is redacted whole — not stranded by the broad pair rule eating
+# credential is redacted whole, not stranded by the broad pair rule eating
 # its leading marker (e.g. a "tls_key": "-----BEGIN …" field, a value that is
 # itself "Bearer <tok>", or a "secret_url": "https://user:pass@…" field whose
 # userinfo the pair rule would otherwise split at a comma).
-# \x27 is a literal single quote — avoids embedding one in the bash-quoted -pe.
+# \x27 is a literal single quote: it avoids embedding one in the bash-quoted -pe.
 redacted=$(printf '%s' "$raw" | perl -0777 -pe '
 	s/-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----/<redacted PEM private key>/gs;
 	s/-----BEGIN [A-Z ]*PRIVATE KEY-----.*\z/<redacted truncated PEM key>/gs;

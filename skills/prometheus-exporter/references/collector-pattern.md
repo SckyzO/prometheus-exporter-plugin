@@ -95,9 +95,14 @@ identical in shape whether they sit on top of an HTTP client or a CLI
    (never a raw metric value), a `*logger.Logger`, and whatever the flavor
    needs (`client *Client` for HTTP, `timeout time.Duration` for CLI).
 5. **`New<Name>Collector(...)`**: the constructor. HTTP:
-   `NewExampleCollector(log *logger.Logger, client *Client)`. CLI:
-   `NewExampleCollector(log *logger.Logger, timeout time.Duration)`. Builds
-   every `*prometheus.Desc` once, here, not per scrape.
+   `NewExampleCollector(ctx context.Context, log *logger.Logger, client *Client)`.
+   CLI: `NewExampleCollector(ctx context.Context, log *logger.Logger, timeout
+   time.Duration)`. `ctx` arrives here, not at `Collect`, because
+   `prometheus.Collector.Collect(ch)` takes no context at all: the
+   constructor is the only channel available to hand one in. In a
+   single-target exporter that context is `context.Background()` (no
+   deadline, exactly as before); in a multi-target probe it is the probe's
+   own deadline. Builds every `*prometheus.Desc` once, here, not per scrape.
 
 ### Describe and Collect
 

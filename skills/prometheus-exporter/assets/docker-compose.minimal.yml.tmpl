@@ -1,4 +1,4 @@
-# @@EXPORTER_NAME@@ — example compose file for the minimal image (Dockerfile.minimal).
+# @@EXPORTER_NAME@@: example compose file for the minimal image (Dockerfile.minimal).
 #
 # Same hardening as docker-compose.yml (no-new-privileges, all capabilities
 # dropped, read-only root filesystem, tmpfs /tmp). The minimal image adds to
@@ -6,7 +6,7 @@
 # nonroot user regardless of anything set here.
 #
 # container_name below has a "-minimal" suffix so this stack never collides
-# with docker-compose.yml's — the two CAN run at the same time. They still
+# with docker-compose.yml's. The two CAN run at the same time. They still
 # default to the SAME host port (@@DEFAULT_PORT@@) though, so to run this
 # ALONGSIDE the standard stack (e.g. `make docker-run` followed by
 # `make docker-run-minimal`), give this one a free port first:

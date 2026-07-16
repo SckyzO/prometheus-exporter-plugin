@@ -15,7 +15,7 @@ requests. This keeps the project reviewable by the widest possible set of contri
 
 ### Prerequisites
 
-- A container engine (Docker or Podman) — every quality-gate `make` target runs inside a
+- A container engine (Docker or Podman): every quality-gate `make` target runs inside a
   pinned tools image, so this is the only hard requirement.
 - Go 1.26+ if you want to run targets on the host instead (`NATIVE=1 make <target>`), or just
   to get editor/language-server support.
@@ -55,7 +55,7 @@ This applies equally to external contributions and to work by a regular maintain
 4. make docs-check
    -> docs/metrics.md matches what the code actually emits: no metric or label documented
       there that the code doesn't produce (undocumented code metrics are a warning, not a
-      failure — but should still get added before you ship).
+      failure, but should still get added before you ship).
 
 5. Run against a real target
    -> Start the built binary against an actual instance of your data source (or the closest
@@ -81,13 +81,13 @@ This applies equally to external contributions and to work by a regular maintain
 ### Shortcut for small changes
 
 For docs-only or comment-only changes, `make check` (plus `make docs-check` if you touched a
-metric name or a doc file) is enough — skip the live-target run.
+metric name or a doc file) is enough: skip the live-target run.
 
 Steps 5-8 are required for any change to collector code (`internal/collector/`) or the main
 entrypoint (`cmd/@@EXPORTER_NAME@@/`).
 
 If your fork uses the GitHub Actions layer, `act push` can simulate CI locally before you
-open a PR — see [docs/development.md](docs/development.md).
+open a PR: see [docs/development.md](docs/development.md).
 
 ---
 
@@ -96,9 +96,9 @@ open a PR — see [docs/development.md](docs/development.md).
 ### Naming (Go idioms)
 
 - **Initialisms stay all-caps**: `HTTP`, `URL`, `ID`, `API`, `CPU`, `JSON`.
-- **Unexported**: camelCase — `parseExample`, `numWorkers`.
-- **Exported**: PascalCase with the initialism fully capitalized — `NewExampleCollector`,
-  `ParseHTTPResponse`.
+- **Unexported**: camelCase (`parseExample`, `numWorkers`).
+- **Exported**: PascalCase with the initialism fully capitalized (`NewExampleCollector`,
+  `ParseHTTPResponse`).
 - **Avoid a plural on an initialism**: `NewIDCollector`, not `NewIDsCollector`.
 
 ### Adding a new collector
@@ -107,11 +107,11 @@ open a PR — see [docs/development.md](docs/development.md).
 pieces and the test triad below for you and wires the registration automatically. Doing it by
 hand, every new collector needs:
 
-1. A `<name>Data(ctx)` method — the collector's only I/O (HTTP fetch, command execution,
+1. A `<name>Data(ctx)` method: the collector's only I/O (HTTP fetch, command execution,
    query, ...). This is the one piece that varies by flavor; the other four don't.
-2. A `parse<Name>(b []byte)` function — pure logic, no I/O, no logging, so it's unit-testable
+2. A `parse<Name>(b []byte)` function: pure logic, no I/O, no logging, so it's unit-testable
    with a plain byte fixture.
-3. A `<name>GetMetrics(ctx)` method — the glue between the two pieces above.
+3. A `<name>GetMetrics(ctx)` method: the glue between the two pieces above.
 4. A `<Name>Collector` struct holding its `*prometheus.Desc` fields, implementing
    `Describe`/`Collect`.
 5. A `New<Name>Collector(...)` constructor.
@@ -124,18 +124,18 @@ Plus:
   a `_Describe` test (pins the exact descriptor count), and an `_ErrorHandling` test (I/O
   failure -> zero metrics, no panic).
 - Metric names and label **keys** must be static: a plain string literal, or
-  `prometheus.BuildFQName(ns, sub, name)` with string-literal arguments — never a
+  `prometheus.BuildFQName(ns, sub, name)` with string-literal arguments, never a
   computed/variable name or label key. This isn't just style: dynamic metric names and label
   keys are a Prometheus anti-pattern on their own, and `make docs-check`
   (`internal/collector/docs_check_test.go`) statically extracts every metric from source at
-  exactly this precision — anything it can't resolve this way is reported as an unverifiable
+  exactly this precision: anything it can't resolve this way is reported as an unverifiable
   warning, not silently skipped.
 - Registration in `cmd/@@EXPORTER_NAME@@/main.go`'s registry at the
   `// @@COLLECTOR_REGISTRY@@` marker, with its own `--[no-]collector.<name>` flag (see
   `register()` in that file).
 
-**Collector-authoring rule:** on a successful scrape, always emit your metrics — with zero
-*values* when there's nothing to report — never zero metrics. Emitting nothing is exactly what
+**Collector-authoring rule:** on a successful scrape, always emit your metrics, with zero
+*values* when there's nothing to report, never zero metrics. Emitting nothing is exactly what
 the shared `StatusTracker` (`internal/collector/status_tracker.go`) treats as a *failed*
 scrape. A collector that wants to report "no data this scrape" as a normal outcome must still
 send a metric (a gauge set to `0`, for example), not a bare `return`.
@@ -176,7 +176,7 @@ Before adding a new collector, or a new request/command inside an existing one, 
 2. **Is it cacheable?** (does the underlying data actually change on every scrape, or far less
    often)
 3. **What's the cardinality?** (a metric with one series per item, on a large fleet, adds up
-   fast — consider a flag to opt out of the highest-cardinality label, documented in
+   fast, consider a flag to opt out of the highest-cardinality label, documented in
    `docs/configuration.md` alongside the rest of this collector's flags)
 4. **Should it be opt-in?** (an expensive call belongs behind a `--collector.<name>` that
    defaults to disabled, not a hope that nobody enables it on a busy target)
@@ -187,8 +187,8 @@ Before adding a new collector, or a new request/command inside an existing one, 
 
 ### Zero metrics is not the same as zero-valued metrics
 
-A collector that returns from `Collect` without sending anything — even on a legitimate "no
-data this scrape" outcome — is indistinguishable, to the shared `StatusTracker`, from one that
+A collector that returns from `Collect` without sending anything (even on a legitimate "no
+data this scrape" outcome) is indistinguishable, to the shared `StatusTracker`, from one that
 just failed. Always send your metrics, with `0`/empty values when there's genuinely nothing to
 report. See the collector-authoring rule above.
 
@@ -196,7 +196,7 @@ report. See the collector-authoring rule above.
 
 `Registry.Gather` rejects a scrape where two `MustNewConstMetric` calls share both a
 descriptor and an identical label set. If your parser can legitimately produce duplicate keys
-from raw input, reject or de-duplicate them in the pure parsing step (fail closed) — don't let
+from raw input, reject or de-duplicate them in the pure parsing step (fail closed). Don't let
 it reach `Collect` and surface as a `Gather` error downstream.
 
 ### Flags read before `kingpin.Parse()` are always zero
@@ -213,15 +213,15 @@ default or the user's override.
 
 When a change doesn't meet the bar above, name the blocking concern, not a judgment on the
 contributor: say what the change gets right, say exactly what blocks merging today, and say
-what happens next. "I'm not closing the PR — I just want to make sure we get this right
+what happens next. "I'm not closing the PR, I just want to make sure we get this right
 together" beats silence or a cold rejection every time.
 
 ---
 
 ## Releasing
 
-Everything before a release tag — branch strategy, integrating contributions with credit,
-validating against a real target — follows the workflow in
+Everything before a release tag (branch strategy, integrating contributions with credit,
+validating against a real target) follows the workflow in
 [docs/release-process.md](docs/release-process.md). The companion
 [docs/validation-checklist.md](docs/validation-checklist.md) is a copy-pasteable,
 command/expected/if-it-fails procedure written so a human or an AI agent can run it without

@@ -568,6 +568,185 @@ if [ "$target_model" = multi ]; then
   echo "confirmed: http-multi live-probe check PASSED ($flavor/$forge)"
 fi
 
+# Second-collector check (multi-target epic): the whole point of widening the
+# probe seam is that a SECOND collector can be appended at the
+# // @@PROBE_FACTORIES@@ marker and still compile. This is the mechanical core
+# of what /add-collector does on a multi-target scaffold. The command itself is
+# an LLM prompt and cannot be run from a shell, so this proves the seam, not the
+# command's judgement — but the seam is what did not hold before.
+#
+# Placed AFTER the http-multi live-probe block's own teardown above (kill /
+# wait / trap - EXIT): no server is running and no trap is installed when this
+# section starts its own.
+if [ "$target_model" = multi ]; then
+  echo "== appending a second collector at // @@PROBE_FACTORIES@@ =="
+
+  # $ns: the --var NAMESPACE= value this cell scaffolded with, read back from
+  # the generated main.go rather than hardcoded here — same trick the
+  # dashboard-backbone sub-check's own $ns already uses further down this
+  # script (search 'could not read namespace').
+  mainfile=$(ls "$work"/cmd/*/main.go)
+  ns=$(command grep -hoE 'const[[:space:]]+namespace[[:space:]]*=[[:space:]]*"[A-Za-z_][A-Za-z0-9_]*"' "$mainfile" | head -n1 | sed -E 's/.*"([A-Za-z_][A-Za-z0-9_]*)".*/\1/')
+  [ -n "$ns" ] || die "second-collector check: could not read namespace from $mainfile"
+
+  # A second collector, derived from the scaffolded one: same five-piece shape,
+  # different type name and different metric names, so a clash would surface as
+  # a duplicate-registration panic rather than passing silently.
+  sed -e 's/ExampleCollector/SecondCollector/g' \
+      -e 's/exampleStats/secondStats/g' \
+      -e 's/exampleData/secondData/g' \
+      -e 's/parseExample/parseSecond/g' \
+      -e 's/exampleGetMetrics/secondGetMetrics/g' \
+      -e 's/NewExampleCollector/NewSecondCollector/g' \
+      -e "s/${ns}_items/${ns}_second_items/g" \
+      -e "s/${ns}_healthy/${ns}_second_healthy/g" \
+      "$work/internal/collector/collector.go" > "$work/internal/collector/collector_second.go"
+
+  # Append its factory at the marker, exactly as /add-collector does. Anchored
+  # on the marker as a STANDALONE `// @@PROBE_FACTORIES@@` line via sed's `r`
+  # (read-file) command — NOT a bare substring search: main.go's own doc
+  # comment sitting right above the real marker also mentions the literal text
+  # "@@PROBE_FACTORIES@@" in prose ("The // @@PROBE_FACTORIES@@ marker below is
+  # where scaffold.sh injects the..."), so an unanchored match would ALSO
+  # splice into that comment, ahead of `var factories`'s own declaration —
+  # confirmed empirically while writing this check (it does not compile: "undefined:
+  # factories"). Same anchored-line discipline, and the same class of bug, the
+  # existing /add-collector sub-check's own splice onto // @@CLIENT_INIT@@ /
+  # // @@COLLECTOR_REGISTRY@@ already guards against further down this script.
+  marker_re='^[[:blank:]]*// @@PROBE_FACTORIES@@[[:blank:]]*$'
+  grep -q "$marker_re" "$mainfile" || die "second-collector check: no standalone // @@PROBE_FACTORIES@@ marker in $mainfile"
+
+  second_factory_frag="$work/internal/collector/.second_factory.frag.tmp"
+  cat > "$second_factory_frag" <<'EOF'
+	factories = append(factories, probe.NamedFactory{
+		Name: "second",
+		New: func(ctx context.Context, target string, timeout time.Duration) prometheus.Collector {
+			return collector.NewSecondCollector(ctx, log, collector.NewClient(target, timeout))
+		},
+	})
+EOF
+  sed -e '\|^[[:blank:]]*// @@PROBE_FACTORIES@@[[:blank:]]*$|r '"$second_factory_frag" "$mainfile" > "$mainfile.new" && mv "$mainfile.new" "$mainfile"
+  rm -f "$second_factory_frag"
+
+  # Regression-lock, mirroring the /add-collector sub-check's own exact-count
+  # guards further down this script: catches either a marker miss (0) or an
+  # unanchored match splicing in more than once (2+, the bug the anchored sed
+  # above avoids in the first place).
+  second_factory_count=$(grep -c 'Name: "second"' "$mainfile")
+  [ "$second_factory_count" -eq 1 ] || die "second-collector check: expected exactly 1 injected second NamedFactory, found $second_factory_count ($flavor/$forge)"
+
+  gofmt -w "$mainfile" "$work/internal/collector/collector_second.go"
+
+  # `make check` alone does NOT rebuild bin/@@EXPORTER_NAME@@ (check's own
+  # prerequisites are vet/lint/test/vuln/actionlint/zizmor/deadcode/docs-check —
+  # no `build` — see Makefile.tmpl's own check target); confirmed empirically
+  # while writing this section. Without an explicit rebuild here, the live
+  # probe below would start the STALE single-collector binary from the
+  # standard `make build` step earlier in this script and never actually
+  # gather the second collector at all. `make build` runs first so a compile
+  # failure is attributed to the right step.
+  echo "== make build (two collectors on the multi-target seam) =="
+  if ! ( cd "$work" && make build ); then
+    die "make build FAILED after appending a second collector — the probe seam does not compile with two collectors"
+  fi
+
+  echo "== make check (two collectors on the multi-target seam) =="
+  if ! ( cd "$work" && make check ); then
+    die "make check FAILED after appending a second collector — the probe seam does not hold N collectors"
+  fi
+  echo "confirmed: make build/check PASSED with two collectors compiled into the probe seam ($flavor/$forge)"
+
+  echo "== two-collector live /probe: starting the rebuilt binary =="
+  bin="$work/bin/demo_exporter"
+  [ -x "$bin" ] || die "two-collector check: $bin missing or not executable after make build ($flavor/$forge)"
+
+  probe_log2="$work/.golden-smoke-server-2col.log"
+  "$bin" --web.listen-address="127.0.0.1:$probe_port" --log.level=info >"$probe_log2" 2>&1 &
+  server_pid=$!
+  trap 'kill "$server_pid" >/dev/null 2>&1 || true' EXIT
+
+  ready=0
+  i=0
+  while [ "$i" -lt 15 ]; do
+    if curl -fsS -o /dev/null "http://127.0.0.1:$probe_port/healthz" 2>/dev/null; then
+      ready=1
+      break
+    fi
+    kill -0 "$server_pid" 2>/dev/null || die "two-collector check: server process exited before becoming ready — see $probe_log2 ($flavor/$forge)"
+    i=$((i + 1))
+    sleep 1
+  done
+  [ "$ready" -eq 1 ] || die "two-collector check: server did not become ready on 127.0.0.1:$probe_port within 15s — see $probe_log2 ($flavor/$forge)"
+  echo "confirmed: two-collector server ready on 127.0.0.1:$probe_port ($flavor/$forge)"
+
+  probe_body="$work/.golden-smoke-probe-2col.txt"
+  if ! curl -fsS "http://127.0.0.1:$probe_port/probe?target=http://127.0.0.1:$probe_port/metrics" -o "$probe_body"; then
+    die "two-collector check: curl /probe?target=... FAILED ($flavor/$forge) — see $probe_log2"
+  fi
+
+  # Assert on the collector HEALTH series, not the business metrics. This
+  # probe targets the exporter's OWN /metrics, so each collector's data fetch
+  # (@@DATA_SOURCE_PATH@@ against that target) fails and emits zero business
+  # metrics — @@NAMESPACE@@_items / @@NAMESPACE@@_second_items will NOT
+  # appear, and probe_success is not asserted to be 1 for the same reason the
+  # http-multi block above never asserts it either. What IS always emitted,
+  # once per registered-and-gathered collector regardless of its own fetch
+  # outcome, is StatusTracker's @@NAMESPACE@@_exporter_collector_success{collector="<name>"}
+  # — that appearing for collector="second" is the reliable proof the second
+  # collector was wired into the seam and gathered.
+  command grep -q "probe_timeout_seconds" "$probe_body" || die "two-collector probe is missing probe_timeout_seconds"
+  for name in example second; do
+    command grep -q "collector_success{collector=\"$name\"}" "$probe_body" \
+      || die "two-collector probe did not gather collector \"$name\" (no collector_success series)"
+  done
+  echo "confirmed: single probe gathered both collector=\"example\" and collector=\"second\" ($flavor/$forge)"
+
+  kill "$server_pid" >/dev/null 2>&1 || true
+  wait "$server_pid" 2>/dev/null || true
+  trap - EXIT
+
+  echo "== module selection on the live exporter =="
+  # Restart with a module that names only the second collector, then probe
+  # with &module=only-second. The example collector must NOT be gathered: its
+  # health series must be absent — the module parameter doing real work end to
+  # end, not just passing a unit test.
+  probe_log3="$work/.golden-smoke-server-module.log"
+  "$bin" --web.listen-address="127.0.0.1:$probe_port" --log.level=info --probe.module=only-second:second >"$probe_log3" 2>&1 &
+  server_pid=$!
+  trap 'kill "$server_pid" >/dev/null 2>&1 || true' EXIT
+
+  ready=0
+  i=0
+  while [ "$i" -lt 15 ]; do
+    if curl -fsS -o /dev/null "http://127.0.0.1:$probe_port/healthz" 2>/dev/null; then
+      ready=1
+      break
+    fi
+    kill -0 "$server_pid" 2>/dev/null || die "module-selection check: server process exited before becoming ready — see $probe_log3 ($flavor/$forge)"
+    i=$((i + 1))
+    sleep 1
+  done
+  [ "$ready" -eq 1 ] || die "module-selection check: server did not become ready on 127.0.0.1:$probe_port within 15s — see $probe_log3 ($flavor/$forge)"
+  echo "confirmed: module-scoped server ready on 127.0.0.1:$probe_port ($flavor/$forge)"
+
+  module_body="$work/.golden-smoke-probe-module.txt"
+  if ! curl -fsS "http://127.0.0.1:$probe_port/probe?target=http://127.0.0.1:$probe_port/metrics&module=only-second" -o "$module_body"; then
+    die "module-selection check: curl /probe?target=...&module=only-second FAILED ($flavor/$forge) — see $probe_log3"
+  fi
+
+  # Do not assert probe_success's value here either — same reasoning as above.
+  command grep -q 'collector_success{collector="second"}' "$module_body" \
+    || die "module probe did not gather the collector it selected"
+  command grep -q 'collector_success{collector="example"}' "$module_body" \
+    && die "module probe gathered a collector the module did not select"
+  echo "confirmed: module-scoped probe gathered only collector=\"second\" ($flavor/$forge)"
+
+  kill "$server_pid" >/dev/null 2>&1 || true
+  wait "$server_pid" 2>/dev/null || true
+  trap - EXIT
+  echo "confirmed: second-collector seam check PASSED ($flavor/$forge)"
+fi
+
 # docs-check lie-injection (Task 11): the whole point of `make docs-check` is
 # that it CANNOT be green while docs/metrics.md documents a metric that does
 # not exist in code. Prove that property empirically rather than trusting it:

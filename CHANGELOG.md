@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking (multi-target only):** `--collector.example.timeout` is renamed
+  `--probe.timeout`. The old name never configured the `example` collector: it
+  bounded every probe. With one collector the two were the same thing, so the lie
+  was invisible. `/add-collector` migrates a v0.3.0 scaffold and shows the diff
+  first.
+
+### Added
+
+- Multi-target exporters hold more than one collector. `/add-collector` now works
+  on a `--target-model multi` scaffold instead of refusing and handing over a
+  manual procedure.
+- `/probe?target=...&module=...` selects a subset of an exporter's collectors. The
+  parameter is repeatable and comma-separated, and named modules combine, as in
+  the SNMP exporter. An absent `module` runs every collector, so an existing
+  scrape config keeps working.
+- `--probe.timeout-offset` (default `0.5s`) is subtracted from Prometheus's
+  scrape timeout so a probe answers before Prometheus abandons the scrape.
+- `probe_timeout_seconds` is exported alongside `probe_success` and
+  `probe_duration_seconds`.
+
+### Fixed
+
+- Collectors now run under a context that can actually be cancelled. `Collect`
+  minted its own `context.Background()`, so the context threaded through the
+  collector's I/O carried no deadline and cancellation was plumbed and then
+  thrown away. In a multi-target probe this meant a hanging target ran until its
+  HTTP client timeout with nothing able to interrupt it. Single-target behavior
+  is unchanged: it passes `context.Background()` explicitly, which is exactly the
+  value `Collect` minted for itself.
+
 ## [0.3.0] - 2026-07-11
 
 ### Added

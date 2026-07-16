@@ -19,7 +19,7 @@ import (
 // fixture, then verifies both the metric count and their exact exposition-
 // format output. Restoring Execute via defer, immediately after saving it,
 // is what keeps this test isolated from every other test in this file that
-// also swaps Execute — see TestExampleCollector_ErrorHandling below for the
+// also swaps Execute: see TestExampleCollector_ErrorHandling below for the
 // same pattern.
 func TestExampleCollector_Collect(t *testing.T) {
 	fixture, err := os.ReadFile("testdata/example.txt")
@@ -34,7 +34,7 @@ func TestExampleCollector_Collect(t *testing.T) {
 	}
 
 	log := logger.NewTextLogger("error")
-	c := NewExampleCollector(log, time.Second)
+	c := NewExampleCollector(context.Background(), log, time.Second)
 
 	reg := prometheus.NewRegistry()
 	if err := reg.Register(c); err != nil {
@@ -69,7 +69,7 @@ func TestExampleCollector_Collect(t *testing.T) {
 // caught here rather than downstream.
 func TestExampleCollector_Describe(t *testing.T) {
 	log := logger.NewTextLogger("error")
-	c := NewExampleCollector(log, time.Second)
+	c := NewExampleCollector(context.Background(), log, time.Second)
 
 	ch := make(chan *prometheus.Desc, 10)
 	c.Describe(ch)
@@ -94,7 +94,7 @@ func TestExampleCollector_ErrorHandling(t *testing.T) {
 	assertZeroMetrics := func(t *testing.T) {
 		t.Helper()
 		log := logger.NewTextLogger("error")
-		c := NewExampleCollector(log, time.Second)
+		c := NewExampleCollector(context.Background(), log, time.Second)
 
 		reg := prometheus.NewRegistry()
 		if err := reg.Register(c); err != nil {
@@ -129,7 +129,7 @@ func TestExampleCollector_ErrorHandling(t *testing.T) {
 	})
 
 	// A duplicate key must not reach two MustNewConstMetric calls on the
-	// same descriptor+label-set — see parseExample's doc comment for why
+	// same descriptor+label-set: see parseExample's doc comment for why
 	// that would break Registry.Gather for the WHOLE scrape, not just this
 	// collector. parseExample's fail-closed guard turns it into an ordinary
 	// parse error instead, so this collector reports zero metrics
@@ -155,11 +155,11 @@ const statusTrackerSuccessMetric = "@@NAMESPACE@@_exporter_collector_success"
 // TestExampleCollector_StatusTrackerSuccessOnEmptyOutput is the reason the
 // entries gauge exists: a data source that runs successfully but has
 // nothing to report (blank output, exit 0) is a legitimate, healthy
-// outcome, not a failure — Collect must still emit something (entries,
+// outcome, not a failure: Collect must still emit something (entries,
 // valued 0) so this case is distinguishable from the error path's zero
 // metrics (see Collect's doc comment on the collector-authoring rule).
-// Wrapping the collector in a real StatusTracker — not just GatherAndCount
-// against a plain registry — proves that distinction actually reaches the
+// Wrapping the collector in a real StatusTracker (not just GatherAndCount
+// against a plain registry) proves that distinction actually reaches the
 // success signal operators alert on, the same way HTTP's
 // TestExampleCollector_StatusTrackerSuccess proves it for a healthy
 // non-empty target.
@@ -171,7 +171,7 @@ func TestExampleCollector_StatusTrackerSuccessOnEmptyOutput(t *testing.T) {
 	}
 
 	log := logger.NewTextLogger("error")
-	c := NewExampleCollector(log, time.Second)
+	c := NewExampleCollector(context.Background(), log, time.Second)
 
 	reg := prometheus.NewRegistry()
 	if err := reg.Register(c); err != nil {
@@ -183,7 +183,7 @@ func TestExampleCollector_StatusTrackerSuccessOnEmptyOutput(t *testing.T) {
 		t.Fatalf("GatherAndCount: %v", err)
 	}
 	if count != 1 {
-		t.Fatalf("GatherAndCount = %d, want 1 (the entries gauge, valued 0 — never zero metrics on a successful scrape)", count)
+		t.Fatalf("GatherAndCount = %d, want 1 (the entries gauge, valued 0, never zero metrics on a successful scrape)", count)
 	}
 
 	expected := `
@@ -208,7 +208,7 @@ func TestExampleCollector_StatusTrackerSuccessOnEmptyOutput(t *testing.T) {
 	}
 }
 
-// TestExecute_Success exercises the real Execute var — not a swapped stub —
+// TestExecute_Success exercises the real Execute var (not a swapped stub)
 // covering the exec.CommandContext + CombinedOutput wiring that every other
 // test in this file deliberately bypasses by swapping Execute out (so
 // collector and parsing logic can be tested without a live command). "echo"
@@ -240,8 +240,8 @@ func TestExecute_CommandNotFound(t *testing.T) {
 // TestCommandDuration_CustomRegistryReachable locks the same Critical-bug
 // shape the HTTP flavor's RequestDuration test guards against: CommandDuration
 // must be a plain, exported *prometheus.HistogramVec that this exporter's own
-// custom registry can register directly — the same way registry.frag's
-// injected register("command_exec", ...) call does in main.go — not a
+// custom registry can register directly (the same way registry.frag's
+// injected register("command_exec", ...) call does in main.go), not a
 // promauto value reachable only from prometheus.DefaultRegisterer. A
 // promauto.NewHistogramVec would self-register into that process-wide
 // default registerer as a side effect of package init: reachable from

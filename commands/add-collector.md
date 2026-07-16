@@ -31,40 +31,117 @@ ask the user something you can check yourself:
 Everything below has two columns, **http** and **cli**, for exactly these two
 v0.1 flavors.
 
-### Refuse cleanly on a multi-target scaffold
+## Multi-target scaffolds
 
-Before going any further, check whether this repository was scaffolded with
-`--target-model multi`:
+Detect the target model from what is on disk. Never ask what you can check:
 
 ```sh
-[ -d internal/probe ] || grep -q '/probe' cmd/*/main.go
+[ -d internal/probe ] && echo multi || echo single
 ```
 
-If either is true, **stop and refuse**. This command only knows how to insert
-a `register(...)` call at the single-target model's two seam markers
-(`// @@CLIENT_INIT@@` / `// @@COLLECTOR_REGISTRY@@`, see `project-scaffold.md`).
-A multi-target `main.go` has neither; it builds its per-target collector
-set from a `factory` function at a different marker,
-`// @@PROBE_FACTORIES@@` in `cmd/*/main.go` (the per-target collectors it
-constructs live in `internal/probe`'s handler). Tell the user:
+For a **multi-target** repository, check the seam's shape before touching
+anything:
 
-- `/add-collector` does not support multi-target scaffolds yet: this is
-  documented follow-up work (see the plugin's `ROADMAP.md`), not a bug.
-- The manual procedure: add a factory line for the new collector at
-  `// @@PROBE_FACTORIES@@` in `cmd/*/main.go`, following the same shape the
-  bundled `example` factory there already demonstrates
-  (`collector.New<Name>Collector(log, collector.NewClient(target, timeout))`),
-  after materializing the collector file itself the same way step 3 below
-  would (the five-piece shape, test triad, and `docs/metrics.md` update all
-  still apply). Note the current `probe.Handler`/`probe.NewHandler` seam takes
-  exactly one `Factory`, so adding a *second* collector to a multi-target
-  exporter also needs `internal/probe` widened to hold and gather more than one
-  factory: this is precisely why multi-target `/add-collector` is deferred,
-  not just a wiring change.
+```sh
+grep -q 'factories \[\]NamedFactory' internal/probe/probe.go && echo current || echo v0.3.0
+```
 
-Do not attempt to insert a `register(...)` call into a multi-target
-`main.go`: it has no registry to insert into, and doing so would not
-compile.
+**If the shape is `v0.3.0`** (the seam holds exactly one `factory Factory`
+field; the `NamedFactory` type does not exist in the file at all), this
+repository predates the N-collector seam and cannot hold a second collector
+yet. Migrate it first, then proceed. Exactly three files are in scope:
+
+- `internal/probe/probe.go` — rewrite wholesale from
+  `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/assets/internal/probe/probe.go.tmpl`,
+  substituting the repository's real `@@NAMESPACE@@` and `@@MODULE_PATH@@`.
+  This file is generic, shipped plumbing: the scaffold writes it verbatim and
+  a user has no reason to have hand-edited it.
+- `internal/probe/probe_test.go` — same treatment, from
+  `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/assets/internal/probe/probe_test.go.tmpl`
+  (substituting only `@@MODULE_PATH@@`; this file has no `@@NAMESPACE@@`).
+  Skipping it leaves a test still calling the old 4-argument
+  `NewHandler(log, factory, allowlist, maxTimeout)`, which no longer compiles
+  against a migrated `probe.go` — `make test` is where that surfaces.
+- `cmd/*/main.go`'s probe-wiring block only, **not the whole file**: unlike
+  `probe.go`, this file already carries the repository's real substituted
+  `@@NAMESPACE@@`/`@@EXPORTER_NAME@@`/`@@DEFAULT_PORT@@` (and possibly other
+  hand-added flags), so only the probe-specific block changes shape, matching
+  `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/assets/mains/multi/main.go.tmpl`:
+  - the single `exampleTimeout := kingpin.Flag("collector.example.timeout",
+    ...)` flag (or whatever it was renamed to) becomes three flags:
+    `probeTimeout` (`--probe.timeout`), `probeTimeoutOffset`
+    (`--probe.timeout-offset`), and `probeModules` (`--probe.module`,
+    repeatable) — copy their `Default`/help text from the template verbatim;
+  - `var factories []probe.NamedFactory` is declared right before the
+    `// @@PROBE_FACTORIES@@` marker;
+  - after the marker, `probe.ParseModules`/`probe.ValidateModules` run
+    (both fail fast to `os.Exit(1)` on error, exactly like the template)
+    before the handler is built;
+  - `probeHandler := probe.NewHandler(log, factory, *probeTargetAllowlist,
+    *exampleTimeout)` becomes `probe.NewHandler(log, factories,
+    *probeTargetAllowlist, *probeTimeout, *probeTimeoutOffset, modules)`.
+
+**Do not let the existing collector disappear.** Right after the marker, the
+pre-migration file has a `factory := func(target string, timeout
+time.Duration) prometheus.Collector { return
+collector.New<ExistingName>Collector(...) }` block — that is the
+repository's real, already-running collector, not scaffold boilerplate.
+Convert it into the first `factories = append(...)` call (same shape as the
+one below), keyed on whatever that collector is actually named — read the
+name from its registration/file, never assume `"example"`. Only then append
+the new collector's own block. Deleting it instead of converting it would
+still compile, and would silently stop serving that collector's metrics on
+every future `/probe`: a regression this migration must not introduce.
+
+The pre-existing collector's own constructor may still predate the
+`ctx`-first shape current collector templates use (see
+`${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/assets/code/http/collector.go.tmpl`'s
+`NewExampleCollector(ctx context.Context, log *logger.Logger, client
+*Client)`): a v0.3.0 scaffold's starter collector was built before that
+signature existed. Match the call to what that constructor **actually**
+declares — passing `ctx` to a constructor that never declared it is a
+compile error, not a style choice. Leave that one call exactly as it already
+was if its constructor has no `ctx` parameter: it keeps compiling and
+behaving exactly as before, it simply does not gain the new per-probe
+deadline. Any collector you add fresh in this same pass uses the current
+templates, which do declare `ctx`, and gets that deadline for free.
+
+1. **Show the diff before writing any of it.** The migration renames
+   `--collector.example.timeout` to `--probe.timeout` (and adds
+   `--probe.timeout-offset`/`--probe.module`), a breaking flag change for
+   anyone already running that exporter. Say so plainly.
+2. If the user declines, stop and hand them the diff. Do not add the new
+   collector to a seam that cannot hold it.
+3. If the user accepts, apply it, then proceed.
+
+**If the shape is `current`**, proceed directly.
+
+Then materialize the collector exactly as for single-target (the five-piece
+shape, the test triad, the `docs/metrics.md` entry, the proposed business
+alert), and append **one** `probe.NamedFactory` block at the
+`// @@PROBE_FACTORIES@@` marker in `cmd/*/main.go`:
+
+```go
+	factories = append(factories, probe.NamedFactory{
+		Name: "<name>",
+		New: func(ctx context.Context, target string, timeout time.Duration) prometheus.Collector {
+			return collector.New<Name>Collector(ctx, log, collector.NewClient(target, timeout))
+		},
+	})
+```
+
+Append, never replace: the marker stays in place for the next collector.
+
+**Never touch modules.** `--probe.module` values are runtime flags that
+reference collector names. Adding a collector cannot invalidate an existing
+module, and composing scrape profiles is an operator decision, not yours.
+
+**Refuse `--variant background` on a multi-target scaffold.** A background
+collector refreshes a cache from a goroutine on a fixed interval. In multi,
+collectors are built fresh per request and discarded when the probe returns:
+a goroutine per probe is an unbounded leak, and the cache it fills would
+never be read twice. Say exactly that, and offer the standard variant
+instead.
 
 ## 1. Read this repo's real values
 
@@ -326,7 +403,7 @@ then after the last existing `register(...)` call under
 
 ```go
 register("<name>", func() prometheus.Collector {
-	return collector.New<Name>Collector(log, collector.NewClient(*<name>Target, *<name>Timeout))
+	return collector.New<Name>Collector(context.Background(), log, collector.NewClient(*<name>Target, *<name>Timeout))
 }, true)
 ```
 
@@ -342,7 +419,7 @@ then after the last existing `register(...)` call under
 
 ```go
 register("<name>", func() prometheus.Collector {
-	return collector.New<Name>Collector(log, *<name>Timeout)
+	return collector.New<Name>Collector(context.Background(), log, *<name>Timeout)
 }, true)
 ```
 

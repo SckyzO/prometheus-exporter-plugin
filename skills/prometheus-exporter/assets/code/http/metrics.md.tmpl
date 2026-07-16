@@ -6,7 +6,7 @@ Every metric `@@EXPORTER_NAME@@` can emit, grouped by collector. This file is ke
 truthful by `make docs-check` (part of `make check`, see
 [CONTRIBUTING.md](../CONTRIBUTING.md)'s Definition of Done): any metric or label
 listed below that the code cannot actually produce fails the build. A metric the
-code emits but this file doesn't document is only a warning — see
+code emits but this file doesn't document is only a warning: see
 `internal/collector/docs_check_test.go`.
 
 <!--
@@ -17,15 +17,15 @@ row, in this exact 4-cell shape:
 
 - Metric name: backtick-quoted, matching the fqName passed to
   prometheus.NewDesc / HistogramOpts.Name in internal/collector/*.go.
-- Type: Gauge, Counter, Histogram, or Summary — informational only, not
-  itself verified by docs-check.
+- Type: Gauge, Counter, Histogram, or Summary (informational only, not
+  itself verified by docs-check).
 - Labels: each backtick-quoted, comma-separated; a literal `-` when the
   metric has none.
 - Description: free text. Avoid a literal `|` character in this cell (it
   breaks table parsing).
 
 Do not add a separate row for a Histogram's implicit `_bucket`/`_count`/`_sum`
-series — they are derived from the parent row, not separate metrics as far
+series: they are derived from the parent row, not separate metrics as far
 as docs-check (or PromQL) is concerned.
 
 Standard Go runtime, process, and build-info metrics (from
@@ -47,7 +47,7 @@ you adapt `ExampleCollector` into your real collector.
 
 ## Self-instrumentation
 
-Emitted regardless of which `--collector.*` flags are set — see
+Emitted regardless of which `--collector.*` flags are set: see
 [docs/configuration.md](configuration.md).
 
 | Metric | Type | Labels | Description |
@@ -59,22 +59,22 @@ Emitted regardless of which `--collector.*` flags are set — see
 ## Multi-target `/probe` metrics (opt-in builds only)
 
 Multi-target builds (scaffolded with `--target-model multi`) additionally
-expose two gauges on `/probe?target=…`, defined in `internal/probe/probe.go`
-— a sibling package to `internal/collector/`, which does not exist at all in
+expose two gauges on `/probe?target=…`, defined in `internal/probe/probe.go`,
+a sibling package to `internal/collector/`, which does not exist at all in
 a single-target build. They are listed here as prose rather than a
 `docs-check`-parsed table row above on purpose: `make docs-check` (see this
 file's own header comment) only scans `internal/collector/*.go`, so it can
-never see `internal/probe`'s metrics either way — documenting them as a
+never see `internal/probe`'s metrics either way: documenting them as a
 regular table row would make `docs-check` report them as a lie for every
 build, single and multi alike.
 
-- `probe_success` (Gauge, no labels) — `1` if every collector scoped to this
+- `probe_success` (Gauge, no labels): `1` if every collector scoped to this
   probe reported a successful scrape, `0` otherwise.
-- `probe_duration_seconds` (Gauge, no labels) — wall-clock duration of the
+- `probe_duration_seconds` (Gauge, no labels): wall-clock duration of the
   whole probe.
 
 Both are deliberately **un-namespaced** (no `@@NAMESPACE@@_` prefix): every
 multi-target exporter in the Prometheus ecosystem (Blackbox, SNMP) emits
 these two exact names, and every multi-target dashboard/alert in the wild
-queries them as-is — this scaffold matches that convention here instead of
+queries them as-is. This scaffold matches that convention here instead of
 the `namespace_subsystem_name` rule the rest of this file's metrics follow.

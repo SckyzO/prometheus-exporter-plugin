@@ -18,17 +18,28 @@ type recordingFactory struct {
 	calls   int
 	target  string
 	timeout time.Duration
-	panics  bool // when true, the returned collector panics on Collect
+	panics  bool   // when true, the returned collector panics on Collect
+	metric  string // the stub series this factory's collector emits
 }
 
-func (f *recordingFactory) make(target string, timeout time.Duration) prometheus.Collector {
+func (f *recordingFactory) make(ctx context.Context, target string, timeout time.Duration) prometheus.Collector {
 	f.calls++
 	f.target = target
 	f.timeout = timeout
 	if f.panics {
 		return panicCollector{}
 	}
-	return &stubCollector{desc: prometheus.NewDesc("stub_up", "stub", nil, nil)}
+	metric := f.metric
+	if metric == "" {
+		metric = "stub_up"
+	}
+	return &stubCollector{desc: prometheus.NewDesc(metric, "stub", nil, nil)}
+}
+
+// named wraps this factory under a collector name, the way main.go's
+// // @@PROBE_FACTORIES@@ block does.
+func (f *recordingFactory) named(name string) NamedFactory {
+	return NamedFactory{Name: name, New: f.make}
 }
 
 type stubCollector struct{ desc *prometheus.Desc }
@@ -43,6 +54,25 @@ type panicCollector struct{}
 func (panicCollector) Describe(chan<- *prometheus.Desc) {}
 func (panicCollector) Collect(chan<- prometheus.Metric) { panic("collector boom") }
 
+// blockingCollector models a target that never answers. Its Collect returns
+// only when its context is cancelled, or after a delay far longer than any
+// test would wait.
+type blockingCollector struct {
+	ctx  context.Context
+	desc *prometheus.Desc
+}
+
+func (b *blockingCollector) Describe(ch chan<- *prometheus.Desc) { ch <- b.desc }
+func (b *blockingCollector) Collect(ch chan<- prometheus.Metric) {
+	select {
+	case <-b.ctx.Done():
+		// The probe's deadline fired. Emit nothing: StatusTracker reads zero
+		// metrics as a failed scrape, which is exactly what this was.
+	case <-time.After(30 * time.Second):
+		ch <- prometheus.MustNewConstMetric(b.desc, prometheus.GaugeValue, 1)
+	}
+}
+
 func serve(h *Handler, rawurl string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, rawurl, nil)
@@ -51,7 +81,7 @@ func serve(h *Handler, rawurl string) *httptest.ResponseRecorder {
 }
 
 func newTestHandler(f *recordingFactory, allowlist []string) *Handler {
-	return NewHandler(logger.NewTextLogger("error"), f.make, allowlist, 5*time.Second)
+	return NewHandler(logger.NewTextLogger("error"), []NamedFactory{f.named("example")}, allowlist, 5*time.Second, 0, nil)
 }
 
 func TestFloorRejectsNonHTTPScheme(t *testing.T) {
@@ -136,22 +166,266 @@ func TestProbeSuccessFalseWhenCollectorPanics(t *testing.T) {
 	}
 }
 
-func TestClampTimeoutHonoursHeaderAndCeiling(t *testing.T) {
-	h := NewHandler(logger.NewTextLogger("error"), (&recordingFactory{}).make, nil, 5*time.Second)
+// TestAllFactoriesAreGathered is the whole point of the multi-collector seam:
+// a probe must gather every registered factory, under its own tracker name,
+// not just the first one.
+func TestAllFactoriesAreGathered(t *testing.T) {
+	a := &recordingFactory{metric: "stub_a"}
+	b := &recordingFactory{metric: "stub_b"}
+	h := NewHandler(logger.NewTextLogger("error"),
+		[]NamedFactory{a.named("alpha"), b.named("beta")}, nil, 5*time.Second, 0, nil)
+
+	rec := serve(h, "/probe?target=http://node1:9100")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200", rec.Code)
+	}
+	if a.calls != 1 || b.calls != 1 {
+		t.Fatalf("factory calls: alpha=%d beta=%d, want 1 and 1", a.calls, b.calls)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"stub_a", "stub_b", "probe_success 1"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body is missing %q:\n%s", want, body)
+		}
+	}
+}
+
+// TestProbeDeadlineAbortsHangingCollector is the regression test for the inert
+// context. Before the deadline was injected into the collector's constructor,
+// Collect minted its own context.Background(), so a hanging target ran until
+// the HTTP client's own timeout with nothing able to interrupt it. A probe that
+// has run out of time must stop, not grind on for a response nobody will read.
+func TestProbeDeadlineAbortsHangingCollector(t *testing.T) {
+	hang := NamedFactory{
+		Name: "hang",
+		New: func(ctx context.Context, target string, timeout time.Duration) prometheus.Collector {
+			return &blockingCollector{ctx: ctx, desc: prometheus.NewDesc("stub_hang", "stub", nil, nil)}
+		},
+	}
+	h := NewHandler(logger.NewTextLogger("error"), []NamedFactory{hang}, nil, 100*time.Millisecond, 0, nil)
+
+	start := time.Now()
+	rec := serve(h, "/probe?target=http://hangs.internal:9100")
+	elapsed := time.Since(start)
+
+	if elapsed > 5*time.Second {
+		t.Fatalf("probe took %v: the deadline did not reach the collector", elapsed)
+	}
+	if !strings.Contains(rec.Body.String(), "probe_success 0") {
+		t.Errorf("expected probe_success 0 for a timed-out probe, body:\n%s", rec.Body.String())
+	}
+}
+
+func TestClampTimeoutHonoursHeaderCeilingAndOffset(t *testing.T) {
+	h := NewHandler(logger.NewTextLogger("error"),
+		[]NamedFactory{(&recordingFactory{}).named("example")}, nil, 5*time.Second, 500*time.Millisecond, nil)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/probe?target=http://x:9100", nil)
+
+	// Header far above the ceiling: the ceiling wins.
 	req.Header.Set("X-Prometheus-Scrape-Timeout-Seconds", "30")
 	if got := h.clampTimeout(req); got != 5*time.Second {
 		t.Errorf("header above ceiling: got %v, want 5s", got)
 	}
 
+	// Header below the ceiling: the header wins, minus the offset.
 	req.Header.Set("X-Prometheus-Scrape-Timeout-Seconds", "2")
-	if got := h.clampTimeout(req); got != 2*time.Second {
-		t.Errorf("header below ceiling: got %v, want 2s", got)
+	if got := h.clampTimeout(req); got != 1500*time.Millisecond {
+		t.Errorf("header below ceiling: got %v, want 1.5s (2s - 0.5s offset)", got)
 	}
 
+	// No header at all (not scraped by Prometheus): the ceiling stands.
 	req.Header.Del("X-Prometheus-Scrape-Timeout-Seconds")
 	if got := h.clampTimeout(req); got != 5*time.Second {
 		t.Errorf("no header: got %v, want 5s", got)
+	}
+
+	// Offset larger than the scrape timeout: ignore the offset rather than
+	// handing the probe an already-expired context.
+	req.Header.Set("X-Prometheus-Scrape-Timeout-Seconds", "0.2")
+	if got := h.clampTimeout(req); got != 200*time.Millisecond {
+		t.Errorf("offset exceeds scrape timeout: got %v, want 200ms", got)
+	}
+}
+
+// TestClampTimeoutRejectsNonFiniteAndOverflowingHeaders covers header values
+// that a naive "secs <= 0" guard lets through: NaN and +/-Inf compare false
+// against <= 0, and a finite-but-astronomical value like 1e300 passes the
+// guard but overflows time.Duration's conversion into a negative garbage
+// value. Every one of these must fall back to h.maxTimeout, exactly like the
+// empty-header and parse-error paths.
+func TestClampTimeoutRejectsNonFiniteAndOverflowingHeaders(t *testing.T) {
+	h := NewHandler(logger.NewTextLogger("error"),
+		[]NamedFactory{(&recordingFactory{}).named("example")}, nil, 5*time.Second, 500*time.Millisecond, nil)
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/probe?target=http://x:9100", nil)
+
+	for _, header := range []string{"NaN", "Inf", "+Inf", "-Inf", "1e300"} {
+		req.Header.Set("X-Prometheus-Scrape-Timeout-Seconds", header)
+		got := h.clampTimeout(req)
+		if got != 5*time.Second {
+			t.Errorf("header %q: got %v, want 5s (h.maxTimeout fallback)", header, got)
+		}
+		if got <= 0 {
+			t.Errorf("header %q: got non-positive duration %v", header, got)
+		}
+	}
+}
+
+func TestParseModules(t *testing.T) {
+	mods, err := ParseModules([]string{"basic:disks,pools", "full:disks,pools,perf"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := mods["basic"]; len(got) != 2 || got[0] != "disks" || got[1] != "pools" {
+		t.Errorf("basic = %v, want [disks pools]", got)
+	}
+	if got := mods["full"]; len(got) != 3 {
+		t.Errorf("full = %v, want 3 collectors", got)
+	}
+}
+
+func TestParseModulesRejectsMalformed(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   []string
+	}{
+		{"no colon", []string{"basic"}},
+		{"empty module name", []string{":disks"}},
+		{"empty collector list", []string{"basic:"}},
+		{"duplicate module", []string{"basic:disks", "basic:pools"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := ParseModules(tc.in); err == nil {
+				t.Fatalf("ParseModules(%v) accepted a malformed module, want an error", tc.in)
+			}
+		})
+	}
+}
+
+func TestValidateModulesRejectsUnknownCollector(t *testing.T) {
+	factories := []NamedFactory{(&recordingFactory{}).named("disks")}
+
+	if err := ValidateModules(factories, map[string][]string{"basic": {"disks"}}); err != nil {
+		t.Fatalf("a module naming a registered collector was rejected: %v", err)
+	}
+
+	err := ValidateModules(factories, map[string][]string{"basic": {"disks", "typo"}})
+	if err == nil {
+		t.Fatal("a module naming an unregistered collector was accepted, want an error")
+	}
+	if !strings.Contains(err.Error(), "typo") {
+		t.Errorf("error does not name the offending collector: %v", err)
+	}
+}
+
+// threeFactoryHandler registers alpha, beta and gamma, with two modules over
+// them, and hands back the factories so a test can assert which ones ran.
+func threeFactoryHandler(t *testing.T) (*Handler, map[string]*recordingFactory) {
+	t.Helper()
+	fs := map[string]*recordingFactory{
+		"alpha": {metric: "stub_alpha"},
+		"beta":  {metric: "stub_beta"},
+		"gamma": {metric: "stub_gamma"},
+	}
+	factories := []NamedFactory{
+		fs["alpha"].named("alpha"),
+		fs["beta"].named("beta"),
+		fs["gamma"].named("gamma"),
+	}
+	modules := map[string][]string{
+		"ab": {"alpha", "beta"},
+		"bc": {"beta", "gamma"},
+	}
+	h := NewHandler(logger.NewTextLogger("error"), factories, nil, 5*time.Second, 0, modules)
+	return h, fs
+}
+
+func TestModuleAbsentRunsEveryCollector(t *testing.T) {
+	h, fs := threeFactoryHandler(t)
+	rec := serve(h, "/probe?target=http://n:9100")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200", rec.Code)
+	}
+	for name, f := range fs {
+		if f.calls != 1 {
+			t.Errorf("collector %q ran %d times, want 1: an absent module must run everything", name, f.calls)
+		}
+	}
+}
+
+func TestModuleSelectsOnlyItsMembers(t *testing.T) {
+	h, fs := threeFactoryHandler(t)
+	rec := serve(h, "/probe?target=http://n:9100&module=ab")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200", rec.Code)
+	}
+	if fs["alpha"].calls != 1 || fs["beta"].calls != 1 {
+		t.Errorf("module ab did not run its members: alpha=%d beta=%d", fs["alpha"].calls, fs["beta"].calls)
+	}
+	if fs["gamma"].calls != 0 {
+		t.Errorf("module ab ran gamma %d times, want 0", fs["gamma"].calls)
+	}
+	if strings.Contains(rec.Body.String(), "stub_gamma") {
+		t.Errorf("body carries a series from a collector the module did not select:\n%s", rec.Body.String())
+	}
+}
+
+func TestModulesCombineAsDeduplicatedUnion(t *testing.T) {
+	// ab and bc overlap on beta: it must run ONCE, not twice. The reversed
+	// spellings (bc before ab) prove the union does not just happen to match
+	// declared order by accident of how this table lists ab and bc.
+	for _, rawurl := range []string{
+		"/probe?target=http://n:9100&module=ab&module=bc", // repeated
+		"/probe?target=http://n:9100&module=ab,bc",        // comma-separated
+		"/probe?target=http://n:9100&module=bc&module=ab", // reversed, repeated
+		"/probe?target=http://n:9100&module=bc,ab",        // reversed, comma-separated
+	} {
+		t.Run(rawurl, func(t *testing.T) {
+			h, fs := threeFactoryHandler(t)
+			rec := serve(h, rawurl)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("got %d, want 200", rec.Code)
+			}
+			for _, name := range []string{"alpha", "beta", "gamma"} {
+				if fs[name].calls != 1 {
+					t.Errorf("collector %q ran %d times, want exactly 1", name, fs[name].calls)
+				}
+			}
+
+			// Output order must match the handler's DECLARED factory order
+			// (alpha, beta, gamma), regardless of how the module list was
+			// spelled. A regression that emitted collectors in
+			// module-listed order instead would flip this for the reversed
+			// cases above.
+			body := rec.Body.String()
+			idxAlpha := strings.Index(body, "stub_alpha")
+			idxBeta := strings.Index(body, "stub_beta")
+			idxGamma := strings.Index(body, "stub_gamma")
+			if idxAlpha < 0 || idxBeta < 0 || idxGamma < 0 {
+				t.Fatalf("body is missing a series: alpha=%d beta=%d gamma=%d\n%s", idxAlpha, idxBeta, idxGamma, body)
+			}
+			if idxAlpha >= idxBeta || idxBeta >= idxGamma {
+				t.Errorf("series not in declared factory order alpha, beta, gamma: got offsets alpha=%d beta=%d gamma=%d\n%s", idxAlpha, idxBeta, idxGamma, body)
+			}
+		})
+	}
+}
+
+func TestUnknownModuleRejected(t *testing.T) {
+	h, fs := threeFactoryHandler(t)
+	rec := serve(h, "/probe?target=http://n:9100&module=nope")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("unknown module: got %d, want 400", rec.Code)
+	}
+	for name, f := range fs {
+		if f.calls != 0 {
+			t.Errorf("collector %q ran for a rejected module, want 0 calls", name)
+		}
 	}
 }

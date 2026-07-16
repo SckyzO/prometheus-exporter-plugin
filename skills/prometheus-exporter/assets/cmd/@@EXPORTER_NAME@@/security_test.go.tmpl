@@ -7,7 +7,7 @@ func TestIsLoopbackHost(t *testing.T) {
 		host string
 		want bool
 	}{
-		{"", false}, // bare ":9999" binds every interface — NOT loopback
+		{"", false}, // bare ":9999" binds every interface, NOT loopback
 		{"localhost", true},
 		{"127.0.0.1", true},
 		{"127.0.0.5", true}, // whole 127.0.0.0/8

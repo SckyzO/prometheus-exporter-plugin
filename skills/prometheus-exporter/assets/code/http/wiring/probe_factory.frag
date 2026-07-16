@@ -1,3 +1,6 @@
-	factory := func(target string, timeout time.Duration) prometheus.Collector {
-		return collector.NewExampleCollector(log, collector.NewClient(target, timeout))
-	}
+	factories = append(factories, probe.NamedFactory{
+		Name: "example",
+		New: func(ctx context.Context, target string, timeout time.Duration) prometheus.Collector {
+			return collector.NewExampleCollector(ctx, log, collector.NewClient(target, timeout))
+		},
+	})

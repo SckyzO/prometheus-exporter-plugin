@@ -40,7 +40,7 @@ var (
 	).Default("false").Bool()
 
 	// probeTargetAllowlist restricts which targets /probe will scrape. Empty
-	// (the default) accepts any http/https target — the Blackbox/SNMP
+	// (the default) accepts any http/https target, the Blackbox/SNMP
 	// ecosystem default. See SECURITY.md and the startup warning.
 	probeTargetAllowlist = kingpin.Flag(
 		"probe.target-allowlist",
@@ -64,14 +64,28 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
 
-	// Upper bound for each /probe request's timeout. Named to match the
-	// single-target flavor's collector.example.timeout so the knob is
-	// consistent across models; the probe handler clamps it further by
-	// Prometheus's own X-Prometheus-Scrape-Timeout-Seconds header.
-	exampleTimeout := kingpin.Flag(
-		"collector.example.timeout",
-		"Upper bound for each /probe request's timeout.",
+	// The ceiling on each /probe request's deadline. The handler clamps it
+	// further by Prometheus's own X-Prometheus-Scrape-Timeout-Seconds header,
+	// minus the offset below.
+	probeTimeout := kingpin.Flag(
+		"probe.timeout",
+		"Ceiling on each /probe request's deadline.",
 	).Default("5s").Duration()
+
+	// Subtracted from Prometheus's scrape timeout so the exporter answers
+	// BEFORE Prometheus abandons the scrape. A probe that uses its full budget
+	// and replies a moment too late is a wasted scrape.
+	probeTimeoutOffset := kingpin.Flag(
+		"probe.timeout-offset",
+		"Subtracted from Prometheus's scrape timeout when computing a probe's deadline.",
+	).Default("0.5s").Duration()
+
+	// Modules are scrape profiles: named subsets of this exporter's collectors,
+	// selected per request with /probe?target=…&module=…. Repeatable.
+	probeModules := kingpin.Flag(
+		"probe.module",
+		"Declare a module: <name>:<collector>[,<collector>...] (repeatable).",
+	).Strings()
 
 	kingpin.Version(version.Print("@@EXPORTER_NAME@@"))
 	kingpin.HelpFlag.Short('h')
@@ -86,12 +100,30 @@ func main() {
 	warnIfExposedAndUnauthenticated(log, *toolkitFlags.WebListenAddresses, *toolkitFlags.WebConfigFile)
 	warnIfProbeUnrestricted(log, *probeTargetAllowlist)
 
+	// factories holds one entry per probed collector, in declaration order.
+	// The // @@PROBE_FACTORIES@@ marker below is where scaffold.sh injects the
+	// starter collector, and where /add-collector appends every collector you
+	// add later. Leave the marker in place.
+	var factories []probe.NamedFactory
+
 	// @@PROBE_FACTORIES@@
 
-	probeHandler := probe.NewHandler(log, factory, *probeTargetAllowlist, *exampleTimeout)
+	modules, err := probe.ParseModules(*probeModules)
+	if err != nil {
+		log.Error("Invalid --probe.module", "err", err)
+		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+		os.Exit(1) //nolint:gocritic // stop() called explicitly above
+	}
+	if err := probe.ValidateModules(factories, modules); err != nil {
+		log.Error("Invalid --probe.module", "err", err)
+		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+		os.Exit(1) //nolint:gocritic // stop() called explicitly above
+	}
+
+	probeHandler := probe.NewHandler(log, factories, *probeTargetAllowlist, *probeTimeout, *probeTimeoutOffset, modules)
 
 	// /metrics reports on the EXPORTER ITSELF (build info, Go runtime/process,
-	// aggregate request timing), scraped independently of any probed target —
+	// aggregate request timing), scraped independently of any probed target,
 	// exactly like the Blackbox exporter. The per-target series come from
 	// /probe, on a fresh registry per request.
 	reg := prometheus.NewRegistry()
