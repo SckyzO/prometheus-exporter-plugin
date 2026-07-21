@@ -52,6 +52,11 @@ func Load(path string) (*Config, error) {
 		return &Config{}, nil
 	}
 
+	// #nosec G304 -- reading an operator-supplied path is the entire purpose of
+	// --config.file. The path comes from the command line of the process being
+	// started, so whoever supplies it already controls the process; there is no
+	// privilege boundary to cross. This is the same posture exporter-toolkit
+	// takes for --web.config.file.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config file: %w", err)
