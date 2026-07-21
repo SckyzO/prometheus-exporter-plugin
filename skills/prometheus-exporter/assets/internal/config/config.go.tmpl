@@ -83,10 +83,6 @@ func Load(path string) (*Config, error) {
 	return &c, nil
 }
 
-// boolFlag mirrors kingpin's own unexported interface (flags.go). A flag whose
-// Value satisfies it accepts the --name / --no-name form.
-type boolFlag interface{ IsBoolFlag() bool }
-
 // Validate reports any key under "flags:" that names no declared flag, that
 // carries no value, or whose value the YAML parser decoded to a Go bool for a
 // flag that is not itself boolean.
@@ -132,10 +128,8 @@ func (c *Config) Validate(app *kingpin.Application) error {
 			empty = append(empty, name)
 			continue
 		}
-		if _, isBool := v.(bool); isBool {
-			if _, flagIsBool := f.Value.(boolFlag); !flagIsBool {
-				notBool = append(notBool, name)
-			}
+		if _, isBool := v.(bool); isBool && !f.IsBoolFlag() {
+			notBool = append(notBool, name)
 		}
 	}
 
