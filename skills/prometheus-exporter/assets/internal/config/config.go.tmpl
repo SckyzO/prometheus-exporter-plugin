@@ -83,10 +83,29 @@ func Load(path string) (*Config, error) {
 	return &c, nil
 }
 
-// Validate reports any key under "flags:" that names no declared flag, or that
-// carries no value. It runs before the arguments are rendered so the operator
-// reads "unknown flag in the config file" instead of kingpin's bare "unknown
-// long flag", which would not say where the name came from.
+// boolFlag mirrors kingpin's own unexported interface (flags.go). A flag whose
+// Value satisfies it accepts the --name / --no-name form.
+type boolFlag interface{ IsBoolFlag() bool }
+
+// Validate reports any key under "flags:" that names no declared flag, that
+// carries no value, or whose value the YAML parser decoded to a Go bool for a
+// flag that is not itself boolean.
+//
+// That last check exists because the pinned parser, go.yaml.in/yaml/v2, is a
+// YAML 1.1 implementation: it resolves the unquoted scalars y, Y, yes, Yes,
+// YES, n, N, no, No, NO, on, On, ON, off, Off, OFF, true and false (in every
+// case variant) to a Go bool before this package, or the destination flag's
+// type, ever enters the picture. A legitimate string value that happens to be
+// one of those words, for example log.level: on, would otherwise decode to
+// true and renderFlag would emit the bare --log.level instead of
+// --log.level=on, silently corrupting the argument list. Quoting the value
+// (log.level: "on") keeps it a YAML string and sidesteps the resolver
+// entirely. A bool decoded for a flag that IS boolean, such as
+// collector.example: false, is exactly what is expected and is accepted.
+//
+// It runs before the arguments are rendered so the operator reads "unknown
+// flag in the config file" instead of kingpin's bare "unknown long flag",
+// which would not say where the name came from.
 //
 // Every flag is declared by the time this runs: main declares its own in a var
 // block, the flavor wiring declares the collector's at // @@CLIENT_INIT@@, and
@@ -97,36 +116,53 @@ func (c *Config) Validate(app *kingpin.Application) error {
 		return nil
 	}
 
-	declared := make(map[string]bool)
+	declared := make(map[string]*kingpin.FlagModel)
 	for _, f := range app.Model().Flags {
-		declared[f.Name] = true
+		declared[f.Name] = f
 	}
 
-	var unknown, empty []string
+	var unknown, empty, notBool []string
 	for name, v := range c.Flags {
-		if !declared[name] {
+		f, ok := declared[name]
+		if !ok {
 			unknown = append(unknown, name)
 			continue
 		}
 		if v == nil {
 			empty = append(empty, name)
+			continue
+		}
+		if _, isBool := v.(bool); isBool {
+			if _, flagIsBool := f.Value.(boolFlag); !flagIsBool {
+				notBool = append(notBool, name)
+			}
 		}
 	}
 
 	// Map iteration order is randomised; sort so the message is reproducible.
 	sort.Strings(unknown)
 	sort.Strings(empty)
+	sort.Strings(notBool)
 
+	var parts []string
 	switch {
 	case len(unknown) > 0 && len(empty) > 0:
-		return fmt.Errorf("config file: unknown flag(s) under \"flags:\": %s; flag(s) with no value: %s",
-			strings.Join(unknown, ", "), strings.Join(empty, ", "))
+		parts = append(parts, fmt.Sprintf("unknown flag(s) under \"flags:\": %s; flag(s) with no value: %s",
+			strings.Join(unknown, ", "), strings.Join(empty, ", ")))
 	case len(unknown) > 0:
-		return fmt.Errorf("config file: unknown flag(s) under \"flags:\": %s", strings.Join(unknown, ", "))
+		parts = append(parts, fmt.Sprintf("unknown flag(s) under \"flags:\": %s", strings.Join(unknown, ", ")))
 	case len(empty) > 0:
-		return fmt.Errorf("config file: flag(s) with no value under \"flags:\": %s", strings.Join(empty, ", "))
+		parts = append(parts, fmt.Sprintf("flag(s) with no value under \"flags:\": %s", strings.Join(empty, ", ")))
 	}
-	return nil
+	if len(notBool) > 0 {
+		parts = append(parts, fmt.Sprintf(
+			"flag(s) read as boolean by YAML 1.1 (unquoted on, off, yes and no all resolve to true/false) but not declared as boolean flags: %s; quote the value to keep it a string, for example %s: \"on\"",
+			strings.Join(notBool, ", "), notBool[0]))
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	return fmt.Errorf("config file: %s", strings.Join(parts, "; "))
 }
 
 // ToArgs renders "flags:" as command-line arguments, omitting any flag already

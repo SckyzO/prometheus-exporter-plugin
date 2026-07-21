@@ -153,6 +153,65 @@ func TestValidateRejectsNullValue(t *testing.T) {
 	}
 }
 
+// YAML 1.1 (the pinned parser's dialect) resolves an unquoted "on" to the Go
+// bool true regardless of the destination type, so log.level (a string enum
+// flag) must not silently accept it: renderFlag would then emit the bare
+// --log.level instead of --log.level=on.
+func TestValidateRejectsYAML11BooleanOnNonBooleanFlag(t *testing.T) {
+	path := writeConfig(t, "flags:\n  log.level: on\n")
+	c, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	err = c.Validate(newApp().app)
+	if err == nil {
+		t.Fatal("Validate accepted an unquoted YAML 1.1 boolean word on a non-boolean flag")
+	}
+	if !strings.Contains(err.Error(), "log.level") {
+		t.Errorf("error = %q, want it to name the offending flag", err)
+	}
+	if !strings.Contains(err.Error(), "quote") {
+		t.Errorf("error = %q, want it to tell the operator to quote the value", err)
+	}
+}
+
+// Quoting the same word keeps it a YAML string, so it must keep working end
+// to end: Validate accepts it and ToArgs renders it as a plain string flag.
+func TestValidateAcceptsQuotedYAML11BooleanWord(t *testing.T) {
+	path := writeConfig(t, "flags:\n  log.level: \"on\"\n")
+	c, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if err := c.Validate(newApp().app); err != nil {
+		t.Fatalf("Validate rejected a quoted value: %v", err)
+	}
+	got := strings.Join(c.ToArgs(nil), " ")
+	if !strings.Contains(got, "--log.level=on") {
+		t.Errorf("ToArgs = %q, want --log.level=on", got)
+	}
+}
+
+// collector.example is a genuine boolean flag: a Go bool is the correct,
+// expected decoding for it and must keep passing Validate and rendering the
+// --no-<name> negation form. This is the non-regression case for the fix
+// above: the new check must not reject every bool, only a bool landing on a
+// flag that is not itself boolean.
+func TestValidateAcceptsRealBooleanFlagValue(t *testing.T) {
+	path := writeConfig(t, "flags:\n  collector.example: false\n")
+	c, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if err := c.Validate(newApp().app); err != nil {
+		t.Fatalf("Validate rejected a real boolean flag's boolean value: %v", err)
+	}
+	got := strings.Join(c.ToArgs(nil), " ")
+	if !strings.Contains(got, "--no-collector.example") {
+		t.Errorf("ToArgs = %q, want --no-collector.example", got)
+	}
+}
+
 func TestLoadRejectsUnknownTopLevelKey(t *testing.T) {
 	path := writeConfig(t, "instances:\n  - name: lib01\n")
 	if _, err := Load(path); err == nil {
