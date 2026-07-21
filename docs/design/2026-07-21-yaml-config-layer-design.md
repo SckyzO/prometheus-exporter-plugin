@@ -270,8 +270,14 @@ factory seam in v0.3.0.
 
 ### 3.8 The multi-target probe seam
 
-`--target-model multi` gets `flags:` for free through §3.2. Giving it
-`http_client_config:` means threading the config into the probe factory:
+`--target-model multi` gets `flags:` for free through §3.2. For
+`http_client_config:`, the multi entry point needs **no new marker**: its
+`// @@PROBE_FACTORIES@@` marker already sits after `kingpin.Parse()`
+(`mains/multi/main.go.tmpl:109` versus `:92`), unlike the single model's
+`// @@COLLECTOR_REGISTRY@@`, which precedes it.
+
+So the factory closure captures the config block from `main`'s scope, exactly
+as it already captures `log`. `Factory` gains only an error return:
 
 ```go
 // internal/probe/probe.go.tmpl, currently line 40
@@ -279,12 +285,19 @@ type Factory func(ctx context.Context, target string,
 	timeout time.Duration) prometheus.Collector
 
 // after
-type Factory func(ctx context.Context, target string, timeout time.Duration,
-	httpCfg config.HTTPClientConfig) (prometheus.Collector, error)
+type Factory func(ctx context.Context, target string,
+	timeout time.Duration) (prometheus.Collector, error)
 ```
 
-and handling the error at the call site (`probe.go.tmpl:223`), where a factory
-that fails now fails that probe rather than the process.
+Passing `httpCfg` as a fourth parameter was the first shape considered and is
+rejected: `internal/probe` would import `prometheus/common/config` solely to
+forward a value it never reads, coupling the probe layer to an HTTP concern
+that belongs to the flavor wiring. The closure already has the value in scope.
+
+The error is handled at the call site (`probe.go.tmpl:223`), where a factory
+that fails now fails that one probe with a 500 rather than taking the process
+down. A construction failure there means a bad CA path or an unreadable
+credentials file, so it is a configuration error and deserves to be loud.
 
 Semantically this matches Blackbox and SNMP: the file carries the credentials,
 the URL carries the target. One `http_client_config:` block applies to every
