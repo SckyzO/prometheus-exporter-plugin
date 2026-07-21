@@ -98,37 +98,53 @@ under `flags:` like everything else. In v0.5.0 the endpoint moves into
 `instances:` without friction, precisely because a flag can no longer carry N
 values at that point.
 
-### 3.2 Flag resolution by name
+### 3.2 Resolution through synthetic arguments
 
-kingpin v2.4.0 has no `Resolver`, so resolution is ours to write. It is
-roughly ten lines, because kingpin exposes exactly the two primitives needed:
-
-- `kingpin.CommandLine.Model().Flags` returns `[]*FlagModel` (`model.go:233`),
-  each carrying a `Name string` and a `Value Value`.
-- `Value` is `{ String() string; Set(string) error }` (`values.go`), so a
-  value can be applied to any flag **without knowing its Go type**.
+kingpin v2.4.0 has no `Resolver`, so resolution is ours to write. Rather than
+writing values into parsed flags afterwards, the layer **renders the file back
+into command-line arguments** and lets kingpin parse them, once:
 
 ```go
 // Flags is map[string]any because YAML supplies three shapes: a scalar
-// (log.level: debug), a list for a cumulative flag (web.listen-address:
-// [":9341"]), and a bool (collector.example: false). setFlagValue renders
-// each to the string form Value.Set expects.
-func (c *Config) ApplyFlags(app *kingpin.Application, setOnCLI map[string]bool) error {
-	for _, f := range app.Model().Flags {
-		v, ok := c.Flags[f.Name]
-		if !ok || setOnCLI[f.Name] {
-			continue
-		}
-		if err := setFlagValue(f, v); err != nil {
-			return fmt.Errorf("config: flag %q: %w", f.Name, err)
-		}
-	}
-	return nil
+// (log.level: debug), a list for a repeatable flag (web.listen-address:
+// [":9341"]), and a bool (collector.example: false).
+type Config struct {
+	Flags            map[string]any               `yaml:"flags,omitempty"`
+	HTTPClientConfig *promconfig.HTTPClientConfig `yaml:"http_client_config,omitempty"`
 }
+
+// in main(), replacing kingpin.Parse()
+cfgPath := config.ExtractFlagValue(os.Args, "config.file")
+cfg, err := config.Load(cfgPath)            // zero Config when the path is empty
+if err != nil { /* fatal */ }
+if err := cfg.Validate(kingpin.CommandLine); err != nil { /* fatal */ }
+
+args := append(cfg.ToArgs(config.CLIFlagNames(os.Args)), os.Args[1:]...)
+kingpin.MustParse(kingpin.CommandLine.Parse(args))
 ```
 
-Three properties follow from resolving by name rather than through a typed
-struct:
+`ToArgs` emits `--name=value` per entry, repeating the flag once per element of
+a list, and rendering a bool as `--name` or `--no-name`. It **omits any flag
+already present on the command line**, so a value never has two sources and
+precedence is structural rather than computed.
+
+This shape was chosen over writing into `Value.Set()` after `Parse()` because
+of `setDefaults` (`app.go:432-437`): kingpin applies a flag's default only when
+that flag is **absent from the parsed elements**, and it does so before
+`setValues` (`app.go:203` then `:207`). Writing a repeatable flag's YAML value
+in afterwards would therefore append to the default already applied, yielding
+`[":9341", ":9342"]` where the file asked for `[":9342"]`. Clearing it first
+needs `reflect` to zero the underlying slice, and leaves map-valued flags
+unsolved. Feeding kingpin arguments sidesteps the whole class: a flag carried
+by the arguments never receives its default, and repeatable flags accumulate
+exactly as they do on a real command line.
+
+It also means kingpin performs every type conversion and validation itself, so
+a malformed value produces kingpin's own error message rather than one we would
+have to reimplement per type.
+
+Three properties follow from addressing flags by name rather than through a
+typed struct:
 
 - **No central list.** `/add-collector` inserts a `kingpin.Flag(...)` call and
   is done; the flag is configurable by virtue of existing.
@@ -139,29 +155,36 @@ struct:
 - **Typos are fatal.** A key under `flags:` matching no declared flag aborts
   startup. Silently ignoring it would let a misspelled setting look applied.
 
-`setFlagValue` handles the one asymmetry: for a flag whose `Value` satisfies
-`repeatableFlag{ IsCumulative() bool }` (`values.go`), `Set()` **appends**
-rather than replaces, so applying a YAML list naively would add to the flag's
-default instead of overriding it. Cumulative flags take a list in YAML, and the
-implementation resets the value before applying the elements. `--web.listen-address`
-is exactly such a flag, so this is not a hypothetical.
+`Validate` supplies the third property. It runs **before** the arguments are
+built, comparing every key under `flags:` against
+`kingpin.CommandLine.Model().Flags` (`model.go:233`), so an unknown key is
+reported as a config-file error naming the file and the key, rather than
+surfacing later as kingpin's bare `unknown long flag '--log.levl'`. Every flag
+is declared by the time this runs: the `var` block, `register()` at
+`// @@COLLECTOR_REGISTRY@@`, and `// @@CLIENT_INIT@@` all execute before this
+point in `main()`.
 
 ### 3.3 Detecting a flag supplied on the command line
 
-`ApplyFlags` must skip any flag the operator passed explicitly. kingpin offers
-`IsSetByUser(*bool)` (`flags.go:259`), but it is unusable here: it must be
-called on the `*FlagClause` at declaration time, which would mean touching
-every flag declaration in every template and frag (defeating §3.2's second
-property), and it is **impossible** for exporter-toolkit's flags since
-`webflag.AddFlags` does not return its clauses.
+`ToArgs` must skip any flag the operator passed explicitly, and `Load` needs
+`--config.file`'s own value before any parsing has happened. kingpin offers
+`IsSetByUser(*bool)` (`flags.go:259`) for the first half, but it is unusable
+here: it must be called on the `*FlagClause` at declaration time, which would
+mean touching every flag declaration in every template and frag (defeating
+§3.2's second property), and it is **impossible** for exporter-toolkit's flags
+since `webflag.AddFlags` does not return its clauses. It also answers only
+after `Parse()`, which is too late for a mechanism that feeds `Parse()`.
 
-The layer instead scans `os.Args` for long-flag **names**, ignoring types
-entirely:
+The layer instead reads `os.Args` directly, in two small functions:
 
 ```go
 // CLIFlagNames returns the set of long flag names present in argv.
 // Values are irrelevant: only "was it supplied" matters.
 func CLIFlagNames(argv []string) map[string]bool
+
+// ExtractFlagValue returns the value of a single long flag from argv,
+// handling both --name=value and --name value. Empty when absent.
+func ExtractFlagValue(argv []string, name string) string
 ```
 
 It handles `--name`, `--name=value`, the `--no-` prefix of a negatable boolean
@@ -178,43 +201,39 @@ token, and the failure is loud rather than silent.
 
     command line  >  config file  >  environment  >  Default()
 
-The environment sitting below the file is a consequence, not a choice:
-`isSetByUser` is armed only from the command-line token parser
-(`flags.go:112`), while an environment value is applied through `setDefault()`
-(`flags.go:168-181`), which never arms it. That inverts the usual 12-factor
-reflex. It has no practical effect today, because no flag in any template
-declares `.Envar()`, but the documentation states the order plainly rather than
-leaving an operator to discover it.
+The first two are structural: `ToArgs` omits anything already on the command
+line, so the file can never contradict it.
+
+The environment sitting below the file is a consequence, not a choice. An
+environment value reaches a flag through `setDefault()` (`flags.go:168-181`),
+which `setDefaults` calls only for flags **absent from the parsed elements**
+(`app.go:432-437`). A flag the file supplies is carried by the synthetic
+arguments, so it is present, so its environment value is never consulted. That
+inverts the usual 12-factor reflex. It has no practical effect today, because
+no flag in any template declares `.Envar()`, but the documentation states the
+order plainly rather than leaving an operator to discover it.
 
 ### 3.5 Ordering inside `main()`
 
-The application point is **immediately after `kingpin.Parse()`**, before
-anything reads a flag. Two call sites make this non-negotiable in
-`mains/single/main.go.tmpl`: the logger is built from `*logFormat` and
-`*logLevel` at `:132-136`, and `warnIfExposedAndUnauthenticated` reads
-`*toolkitFlags.WebListenAddresses` at `:142`. Both would observe pre-config
-values if the layer ran later.
+Feeding the file through `Parse()` rather than applying it afterwards means
+there is no ordering constraint to respect: by the time `Parse()` returns,
+every flag already holds its final value. The logger built from `*logLevel`
+(`mains/single/main.go.tmpl:132-136`) and the
+`warnIfExposedAndUnauthenticated` call reading `*toolkitFlags.WebListenAddresses`
+(`:142`) need no change and cannot observe a pre-config value.
 
-```go
-kingpin.Parse()
+The one requirement is that **`--config.file` itself is declared like any other
+flag** so that it appears in `--help`, even though its value is read from
+`os.Args` before parsing. Declaring it also lets `Validate` reject a `flags:`
+key naming it, which would otherwise be silently ignored.
 
-cfg, err := config.Load(*configFile)          // no-op when the path is empty
-if err != nil { /* fatal */ }
-if err := cfg.ApplyFlags(kingpin.CommandLine, config.CLIFlagNames(os.Args)); err != nil {
-	/* fatal */
-}
-
-// only now: logger, security warning, client build, collector construction
-```
-
-Fatal here means writing to stderr and exiting non-zero: the logger it would
-otherwise use is not built yet, by construction.
+A load or validation failure exits non-zero with a message on stderr: the
+logger is not built yet, by construction, so there is nothing else to write to.
 
 The collector constructors registered at `// @@COLLECTOR_REGISTRY@@` are
-unaffected, because `register()` stores closures that are only invoked in the
-construction loop at `:162-169`, well after this point. That deferred-invocation
-contract, already documented at `register()`'s doc comment (`:65-74`), is what
-makes the layer fit without restructuring the registry.
+unaffected. `register()` stores closures invoked only in the construction loop
+at `:162-169`, and that deferred-invocation contract is already documented at
+`register()`'s doc comment (`:65-74`).
 
 ### 3.6 Authentication and TLS, with no new dependency
 
@@ -348,8 +367,8 @@ in the config body.
 
 ### New (assets, shipped into scaffolds)
 
-- `internal/config/config.go.tmpl` — `Load`, `ApplyFlags`, `CLIFlagNames`,
-  `setFlagValue`, cumulative-flag handling, strict parse, `SetDirectory`.
+- `internal/config/config.go.tmpl` — `Config`, `Load`, `Validate`, `ToArgs`,
+  `CLIFlagNames`, `ExtractFlagValue`, strict parse, `SetDirectory`.
 - `internal/config/config_test.go.tmpl` — the tests in §5.
 - `config.example.yml.tmpl` — a commented example, never loaded by default.
 - `code/http/wiring/client_build.frag` — the second http wiring marker (§3.7).
@@ -372,8 +391,15 @@ in the config body.
 
 ### Modified (plugin knowledge, never shipped)
 
-- `skills/prometheus-exporter/assets/scaffold.sh` — copy `internal/config/`,
-  handle the second http wiring frag.
+- `skills/prometheus-exporter/assets/scaffold.sh` — the frag-to-marker pair list
+  (`:464-467`) gains `"client_build.frag:@@CLIENT_BUILD@@"`, the residual-sentinel
+  exemption (`:536`) gains `CLIENT_BUILD`, and the header comment documenting the
+  fixed marker set (`:52-56, 62-67`) is updated to match.
+  **`internal/config/` needs no change here**: the tree is copied by one blanket
+  `cp -R "$src/." "$dst/"` (`:236-237`) and then rides the three generic passes
+  (sentinel substitution `:383-389`, path renaming `:391-408`, `.tmpl` stripping
+  `:411-414`), exactly like `internal/logger/`. Shipping the files at their final
+  repo-relative path is sufficient.
 - `skills/prometheus-exporter/references/collector-pattern.md`,
   `references/project-scaffold.md` — both document `NewClient`'s signature.
 - `commands/add-collector.md` — the `// @@CLIENT_BUILD@@` marker.
@@ -381,8 +407,17 @@ in the config body.
 
 ### Plugin tests
 
-- `test/golden-smoke.sh` — assertions inside the **existing** five cells. No
-  new cell: the layer is unconditional, so there is no combination to add.
+- `test/golden-smoke.sh` — assertions inside the **existing** five cells. No new
+  cell: the layer is unconditional, so there is no combination to add. The
+  per-cell scaffold-correctness block (`:310-444`) gains an `internal/config/`
+  presence check, and the `/add-collector` sub-check (`:1078-1081`) gains the
+  third marker alongside `@@CLIENT_INIT@@` and `@@COLLECTOR_REGISTRY@@`.
+- `test/scaffold_edge_test.sh` (`:229, :231`) — also enumerates the marker set.
+- `test/scaffold_multitarget_test.sh` (`:54, :61-62`) — asserts `CLIENT_INIT` and
+  `COLLECTOR_REGISTRY` are **absent** from multi's `main.go`. That assertion holds
+  unchanged, since §3.8 keeps `CLIENT_BUILD` out of the multi model too, but the
+  file is listed here because it enumerates markers and must be re-read when the
+  set changes.
 
 ## 5. Testing strategy
 
@@ -390,14 +425,15 @@ Unit tests in the scaffolded repo, so every generated exporter carries them:
 
 | Property | Test |
 |---|---|
-| Empty path is a no-op | `Load("")` returns a zero config, `ApplyFlags` changes nothing |
-| A file value applies | `flags: {log.level: debug}` reaches the flag |
-| The command line wins | same key, `--log.level=warn` in argv, `warn` survives |
-| Unknown flag key is fatal | `flags: {log.levl: debug}` returns an error naming the key |
+| Empty path is a no-op | `Load("")` returns a zero `Config` and `ToArgs` returns no arguments |
+| A file value applies | `flags: {log.level: debug}` reaches the flag after `Parse` |
+| The command line wins | same key plus `--log.level=warn` in argv: `ToArgs` omits it, `warn` survives |
+| Unknown flag key is fatal | `flags: {log.levl: debug}` fails `Validate` with an error naming the file and the key |
 | Wrong type is fatal | `flags: {log.level: nonsense}` surfaces kingpin's own enum error |
-| Cumulative flags replace | a two-element `web.listen-address` list yields two addresses, not two plus the default |
+| Repeatable flags replace | a two-element `web.listen-address` list yields exactly those two, not the default plus two |
+| A bool renders correctly | `true` becomes `--name`, `false` becomes `--no-name` |
 | Unknown top-level key is fatal | strict parse rejects it |
-| `--name=value` and `--name value` | both recognised by `CLIFlagNames` |
+| `--name=value` and `--name value` | both recognised by `CLIFlagNames` and `ExtractFlagValue` |
 | `--no-x` marks `x` | negated boolean detection |
 | `--` terminator | tokens after it are not flag names |
 | Relative paths resolve | `ca_file: certs/x.pem` becomes `<dir>/certs/x.pem` |
@@ -413,7 +449,13 @@ behaviour are unchanged.
 ## 6. Non-regression guarantees
 
 - A binary started without `--config.file` follows exactly the current code
-  path. `Load("")` returns early and `ApplyFlags` iterates an empty map.
+  path. `Load("")` returns early, `ToArgs` returns nothing, and the arguments
+  handed to `Parse` are `os.Args[1:]` unchanged.
+- When the file declares no `http_client_config:`, the flavor wiring keeps
+  calling `NewClient` rather than `NewClientWithConfig`. This matters:
+  `NewClientFromConfig` returns a client with its own transport settings, so
+  routing the no-auth case through it would silently change connection
+  behaviour (keep-alives, HTTP/2) for every existing user.
 - `NewClient`'s signature is untouched, so the 11 existing test call sites and
   any repo scaffolded before v0.4.0 keep compiling.
 - No default changes. No flag is removed or renamed.
@@ -425,10 +467,14 @@ behaviour are unchanged.
 - **Assumption:** no flag in any template declares `.Envar()`. Verified across
   `mains/` and the wiring frags. If one is added later, §3.4's ordering becomes
   observable and should be revisited.
-- **Assumption:** kingpin's `Value.Set` is safe to call after `Parse()`. It is
-  the same method the parser itself calls, on the same value, so this holds;
-  the implementation task should still assert it in a test rather than trust
-  the reading.
+- **Assumption:** `kingpin.CommandLine.Model()` is safe to call **before**
+  `Parse()`, which `Validate` requires in order to name unknown keys. The model
+  is built from the already-declared clauses, so this should hold, but the
+  implementation task asserts it in a test rather than trusting the reading.
+- **Assumption:** a value beginning with `--` never appears in `os.Args`.
+  `CLIFlagNames` would count it as a flag name, causing `ToArgs` to omit a key
+  the file legitimately sets. kingpin itself rejects such a command line on the
+  next token, so the failure is loud rather than silent.
 - **Open:** whether `--config.file` should also accept a directory of
   fragments. Not needed by any known case; deferred until one exists.
 
