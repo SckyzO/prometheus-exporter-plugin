@@ -19,7 +19,7 @@
 - **English** for every shipped artifact, comment, document and commit message.
 - **Never `git push`, `git tag`, or merge.** The maintainer does that.
 - **The YAML parser must be `go.yaml.in/yaml/v2`, never `gopkg.in/yaml.v3`.** `HTTPClientConfig` implements the v2 unmarshaler signature (`UnmarshalYAML(unmarshal func(interface{}) error) error`); under v3 those methods are never called, so defaults and validation silently do not run.
-- **`NewClient`'s signature must not change.** Eleven shipped test call sites depend on it, and so do repos scaffolded before this change.
+- **`NewClient`'s signature must not change.** Ten shipped test call sites depend on it, and so do repos scaffolded before this change.
 - **A binary started without `--config.file` must behave exactly as it does today**, including using `NewClient` rather than `NewClientWithConfig`.
 - **No new Go module.** `prometheus/common` is already a direct dependency; `go.yaml.in/yaml/v2` only moves from indirect to direct.
 - **Never run `scaffold.sh` against the plugin repo itself.** It only ever writes to a throwaway directory.
@@ -625,7 +625,7 @@ Parse would append to a repeatable flag's already-applied default."
 - Consumes: nothing.
 - Produces: `func NewClientWithConfig(target string, timeout time.Duration, httpCfg promconfig.HTTPClientConfig) (*Client, error)`, used by Tasks 4 and 6.
 
-**`NewClient` must keep its exact current signature.** Eleven call sites in shipped test templates depend on it.
+**`NewClient` must keep its exact current signature.** Ten call sites in shipped test templates depend on it.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -709,7 +709,7 @@ func NewClientWithConfig(target string, timeout time.Duration, httpCfg promconfi
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `( cd "$work" && go test ./internal/collector/... )`
-Expected: PASS, including the 11 pre-existing `NewClient` call sites, untouched.
+Expected: PASS, including the 10 pre-existing `NewClient` call sites, untouched.
 
 - [ ] **Step 5: Gate and commit**
 
@@ -1330,6 +1330,6 @@ enumerating scaffold tests. No new cell: the layer is unconditional."
 - `bash test/zero-source-grep.sh` prints `PASS`.
 - No em or en dash under `skills/prometheus-exporter/assets/` or `skills/prometheus-exporter/scripts/`.
 - A scaffold with no `--config.file` builds and behaves exactly as before, and still calls `NewClient`.
-- `NewClient`'s signature is unchanged, and the 11 pre-existing test call sites are untouched.
+- `NewClient`'s signature is unchanged, and the 10 pre-existing test call sites are untouched.
 - `go.mod` gained no module; only `go.yaml.in/yaml/v2` moved from indirect to direct.
 - Nothing pushed, nothing tagged.

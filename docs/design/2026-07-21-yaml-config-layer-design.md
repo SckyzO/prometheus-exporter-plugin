@@ -114,12 +114,13 @@ type Config struct {
 }
 
 // in main(), replacing kingpin.Parse()
-cfgPath := config.ExtractFlagValue(os.Args, "config.file")
+// CLIFlagNames and ExtractFlagValue take argv WITHOUT the program name.
+cfgPath := config.ExtractFlagValue(os.Args[1:], "config.file")
 cfg, err := config.Load(cfgPath)            // zero Config when the path is empty
 if err != nil { /* fatal */ }
 if err := cfg.Validate(kingpin.CommandLine); err != nil { /* fatal */ }
 
-args := append(cfg.ToArgs(config.CLIFlagNames(os.Args)), os.Args[1:]...)
+args := append(cfg.ToArgs(config.CLIFlagNames(os.Args[1:])), os.Args[1:]...)
 kingpin.MustParse(kingpin.CommandLine.Parse(args))
 ```
 
@@ -472,7 +473,7 @@ behaviour are unchanged.
   `NewClientFromConfig` returns a client with its own transport settings, so
   routing the no-auth case through it would silently change connection
   behaviour (keep-alives, HTTP/2) for every existing user.
-- `NewClient`'s signature is untouched, so the 11 existing test call sites and
+- `NewClient`'s signature is untouched, so the 10 existing test call sites and
   any repo scaffolded before v0.4.0 keep compiling.
 - No default changes. No flag is removed or renamed.
 - No module is added; one indirect dependency becomes direct.
