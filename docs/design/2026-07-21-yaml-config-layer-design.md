@@ -343,6 +343,22 @@ instructs callers to use `yaml.UnmarshalStrict()`, and the layer does. An
 unknown key anywhere in the file aborts startup, matching §3.2's treatment of
 unknown flag names.
 
+**A YAML 1.1 boolean on a non-boolean flag is rejected.** `go.yaml.in/yaml/v2`
+implements YAML 1.1, which resolves the unquoted scalars `y`, `yes`, `on`,
+`off`, `n`, `no` (and their case variants) to a Go `bool`
+**unconditionally**, before the decoder considers the destination type
+(`resolve.go:37-43`, `decode.go:471-484`). A string-valued flag whose
+legitimate value is `on` would therefore decode to `true` and render as the
+bare argument `--some.mode` instead of `--some.mode=on`, corrupting the
+argument list silently.
+
+`Validate` therefore cross-checks the decoded Go type against the flag's kind:
+a `bool` on a flag that is not a boolean flag is an error naming the flag and
+telling the operator to quote the value. Rejecting is the only honest option,
+because the file has already lost the information about what was written. Flag
+kind is read from the same model `Validate` already walks, through kingpin's
+own `IsBoolFlag()` interface, redeclared locally since it is unexported.
+
 **Validation is fail-fast.** `HTTPClientConfig.Validate()` (`http_config.go:390`)
 runs at load, so a file declaring both `password` and `password_file` fails at
 startup rather than on the first scrape.
