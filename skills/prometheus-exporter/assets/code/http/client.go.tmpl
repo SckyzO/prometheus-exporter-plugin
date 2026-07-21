@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	promconfig "github.com/prometheus/common/config"
 )
 
 // RequestDuration times every Client.Fetch call, labeled by outcome
@@ -57,6 +58,28 @@ func NewClient(target string, timeout time.Duration) *Client {
 		httpClient: &http.Client{Timeout: timeout},
 		baseURL:    target,
 	}
+}
+
+// NewClientWithConfig builds a Client whose transport carries the
+// authentication and TLS declared in --config.file's http_client_config
+// section. It sits beside NewClient rather than replacing it: NewClient's
+// signature is depended on by every collector test this scaffold ships and by
+// any repo scaffolded before the configuration layer existed.
+//
+// Use it only when the operator actually supplied that section. With no
+// section, keep calling NewClient: NewClientFromConfig returns a client with
+// its own transport settings, so routing the no-authentication case through
+// here would quietly change connection behaviour (keep-alives, HTTP/2) for
+// every existing deployment.
+func NewClientWithConfig(target string, timeout time.Duration, httpCfg promconfig.HTTPClientConfig) (*Client, error) {
+	hc, err := promconfig.NewClientFromConfig(httpCfg, "@@NAMESPACE@@")
+	if err != nil {
+		return nil, fmt.Errorf("build HTTP client from http_client_config: %w", err)
+	}
+	// NewClientFromConfig sets no overall deadline, so apply the same
+	// per-request timeout NewClient applies.
+	hc.Timeout = timeout
+	return &Client{httpClient: hc, baseURL: target}, nil
 }
 
 // Fetch issues a GET request for baseURL+path and returns the response
