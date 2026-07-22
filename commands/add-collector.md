@@ -124,8 +124,8 @@ alert), and append **one** `probe.NamedFactory` block at the
 ```go
 	factories = append(factories, probe.NamedFactory{
 		Name: "<name>",
-		New: func(ctx context.Context, target string, timeout time.Duration) prometheus.Collector {
-			return collector.New<Name>Collector(ctx, log, collector.NewClient(target, timeout))
+		New: func(ctx context.Context, target string, timeout time.Duration) (prometheus.Collector, error) {
+			return collector.New<Name>Collector(ctx, log, collector.NewClient(target, timeout)), nil
 		},
 	})
 ```

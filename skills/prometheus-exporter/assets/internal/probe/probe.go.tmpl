@@ -37,7 +37,12 @@ const collectorSuccessMetric = "@@NAMESPACE@@_exporter_collector_success"
 // (see the collector template's ctx field). The multi main.go appends one
 // NamedFactory per collector at its // @@PROBE_FACTORIES@@ marker, and
 // /add-collector appends another every time it adds a collector.
-type Factory func(ctx context.Context, target string, timeout time.Duration) prometheus.Collector
+//
+// A factory may now fail, which happens when the configured authentication or
+// TLS cannot be turned into a client (an unreadable CA file, for example).
+// That is a configuration error, so it fails the probe loudly rather than
+// being reported as an unreachable target.
+type Factory func(ctx context.Context, target string, timeout time.Duration) (prometheus.Collector, error)
 
 // NamedFactory pairs a Factory with the collector name that the StatusTracker
 // keys its health metric on. Handler holds these in an ordered slice, not a
@@ -220,7 +225,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	reg := prometheus.NewRegistry()
 	tracker := collector.NewStatusTracker(h.log)
 	for _, nf := range factories {
-		tracker.Add(nf.Name, nf.New(ctx, target, timeout))
+		c, err := nf.New(ctx, target, timeout)
+		if err != nil {
+			// A construction failure is a configuration fault, not a target
+			// fault: reporting it as probe_success 0 would blame the target.
+			h.log.Error("Failed to build collector for probe", "collector", nf.Name, "target", target, "err", err)
+			http.Error(w, fmt.Sprintf("collector %s: %v", nf.Name, err), http.StatusInternalServerError)
+			return
+		}
+		tracker.Add(nf.Name, c)
 	}
 	reg.MustRegister(tracker)
 

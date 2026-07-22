@@ -620,8 +620,8 @@ if [ "$target_model" = multi ]; then
   cat > "$second_factory_frag" <<'EOF'
 	factories = append(factories, probe.NamedFactory{
 		Name: "second",
-		New: func(ctx context.Context, target string, timeout time.Duration) prometheus.Collector {
-			return collector.NewSecondCollector(ctx, log, collector.NewClient(target, timeout))
+		New: func(ctx context.Context, target string, timeout time.Duration) (prometheus.Collector, error) {
+			return collector.NewSecondCollector(ctx, log, collector.NewClient(target, timeout)), nil
 		},
 	})
 EOF
