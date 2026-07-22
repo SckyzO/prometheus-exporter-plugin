@@ -60,6 +60,32 @@ func NewClient(target string, timeout time.Duration) *Client {
 	}
 }
 
+// NewHTTPClient builds the *http.Client carrying the authentication and TLS
+// declared in --config.file's http_client_config section.
+//
+// Build it ONCE and share it across targets. NewClientFromConfig mints a
+// fresh http.Transport on every call and caches nothing, so building one per
+// request would give each request a private connection pool, re-read the CA
+// and credential files from disk, and leave the discarded transport holding
+// idle connections until IdleConnTimeout. An *http.Client and the transport
+// inside it are safe for concurrent use, which is what makes sharing correct.
+func NewHTTPClient(httpCfg promconfig.HTTPClientConfig, timeout time.Duration) (*http.Client, error) {
+	hc, err := promconfig.NewClientFromConfig(httpCfg, "@@NAMESPACE@@")
+	if err != nil {
+		return nil, fmt.Errorf("build HTTP client from http_client_config: %w", err)
+	}
+	// NewClientFromConfig sets no overall deadline, so apply the same
+	// per-request timeout NewClient applies.
+	hc.Timeout = timeout
+	return hc, nil
+}
+
+// NewClientFor binds an already-built *http.Client to one base URL. Many
+// targets share one *http.Client, each paying only this struct.
+func NewClientFor(target string, hc *http.Client) *Client {
+	return &Client{httpClient: hc, baseURL: target}
+}
+
 // NewClientWithConfig builds a Client whose transport carries the
 // authentication and TLS declared in --config.file's http_client_config
 // section. It sits beside NewClient rather than replacing it: NewClient's
@@ -72,14 +98,11 @@ func NewClient(target string, timeout time.Duration) *Client {
 // here would quietly change connection behaviour (keep-alives, HTTP/2) for
 // every existing deployment.
 func NewClientWithConfig(target string, timeout time.Duration, httpCfg promconfig.HTTPClientConfig) (*Client, error) {
-	hc, err := promconfig.NewClientFromConfig(httpCfg, "@@NAMESPACE@@")
+	hc, err := NewHTTPClient(httpCfg, timeout)
 	if err != nil {
-		return nil, fmt.Errorf("build HTTP client from http_client_config: %w", err)
+		return nil, err
 	}
-	// NewClientFromConfig sets no overall deadline, so apply the same
-	// per-request timeout NewClient applies.
-	hc.Timeout = timeout
-	return &Client{httpClient: hc, baseURL: target}, nil
+	return NewClientFor(target, hc), nil
 }
 
 // Fetch issues a GET request for baseURL+path and returns the response
