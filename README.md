@@ -53,6 +53,11 @@ flowchart LR
 - **`make docs-check`**: a generated test wired into every scaffolded
   exporter that fails the build if its metrics documentation names a metric
   or label the code doesn't actually emit.
+- **An optional YAML configuration file**: every scaffolded exporter accepts
+  `--config.file`. The file sets any flag the binary declares, and carries the
+  authentication and TLS for the exporter's outbound requests, which no flag
+  surface can express. It is opt-in: the flag defaults to empty and an
+  exporter started without it reads nothing from disk.
 
 See [`ROADMAP.md`](ROADMAP.md) for what each release has shipped and what is
 planned for later versions.
@@ -88,7 +93,7 @@ instead of whatever the marketplace currently points to, add the
 marketplace via its full git URL with the tag appended as a `#` ref:
 
 ```
-/plugin marketplace add https://github.com/SckyzO/prometheus-exporter-plugin.git#v0.3.0
+/plugin marketplace add https://github.com/SckyzO/prometheus-exporter-plugin.git#v0.4.0
 ```
 
 ### Sharing with a team

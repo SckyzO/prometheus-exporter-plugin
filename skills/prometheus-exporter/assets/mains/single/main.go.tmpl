@@ -20,6 +20,7 @@ import (
 	webflag "github.com/prometheus/exporter-toolkit/web/kingpinflag"
 
 	"@@MODULE_PATH@@/internal/collector"
+	"@@MODULE_PATH@@/internal/config"
 	"@@MODULE_PATH@@/internal/logger"
 )
 
@@ -43,6 +44,16 @@ var (
 		"web.disable-exporter-metrics",
 		"Exclude Go runtime and process metrics from /metrics endpoint.",
 	).Default("false").Bool()
+
+	// configFile is declared like any other flag so kingpin accepts it on the
+	// command line and lists it in --help. Its VALUE is read straight from
+	// os.Args below, before parsing, because it decides which arguments the
+	// parser is given. Setting it from inside the file it names would arrive
+	// far too late, so Validate rejects that key.
+	configFile = kingpin.Flag(
+		"config.file",
+		"Path to a YAML configuration file. Unrelated to --web.config.file, which configures the TLS server this exporter exposes.",
+	).Default("").String()
 )
 
 // registryEntry pairs a lazily-invoked collector constructor with the parsed
@@ -127,7 +138,29 @@ func main() {
 
 	kingpin.Version(version.Print("@@EXPORTER_NAME@@"))
 	kingpin.HelpFlag.Short('h')
-	kingpin.Parse()
+
+	// The configuration file is resolved by rendering its "flags:" section
+	// back into arguments and letting kingpin parse them once, ahead of the
+	// real command line so the command line wins. See internal/config for why
+	// values are not written into flags after parsing.
+	cfg, err := config.Load(config.ExtractFlagValue(os.Args[1:], "config.file"))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+		os.Exit(1) //nolint:gocritic // stop() called explicitly above
+	}
+	if err := cfg.Validate(kingpin.CommandLine); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+		os.Exit(1) //nolint:gocritic // stop() called explicitly above
+	}
+	// The logger does not exist yet (it is built from flags, below), so a
+	// failure here goes to stderr.
+	kingpin.MustParse(kingpin.CommandLine.Parse(
+		append(cfg.ToArgs(config.CLIFlagNames(os.Args[1:])), os.Args[1:]...),
+	))
+
+	// @@CLIENT_BUILD@@
 
 	if *logFormat == "json" {
 		log = logger.NewJSONLogger(*logLevel)

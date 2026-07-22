@@ -78,6 +78,40 @@ it points to.
   are runtime flags naming collectors, so adding a collector can never
   invalidate one.
 
+## v0.4 (released)
+
+- **Optional YAML configuration file** (`--config.file`): a `flags:` section
+  addressable by any flag the binary declares, and an `http_client_config:`
+  section for the authentication and TLS no flag surface can express,
+  honored by the HTTP flavor only (the CLI flavor refuses to start if it is
+  set, since it has nothing to authenticate against). Absent
+  `--config.file`, a scaffolded exporter behaves exactly as before: no
+  default moves and no existing scaffold changes. Prerequisite for v0.5's
+  `fanout` target model, which cannot express N instances with per-instance
+  credentials through a kingpin flag surface. The instance list
+  (`instances:`) and the fan-out target model itself are v0.5, not this
+  release.
+
+## v0.5
+
+- **A third target model, `fanout`.** Single-target watches one instance
+  fixed at scaffold time; multi-target takes its instance per request on
+  `/probe`. Fan-out sits between them: one process scrapes a list of
+  instances declared in the configuration file, each with its own
+  authentication, TLS and labels. That list is why v0.4 came first, since a
+  kingpin flag surface cannot express N instances with per-instance
+  credentials.
+- The generic half belongs here: the `instances:` list, per-instance
+  authentication, TLS, labels and overrides, reload on SIGHUP, and fail-fast
+  validation at startup. Anything that answers one target's hardware
+  constraint belongs in that exporter's own repository, not in the scaffold.
+- Budget the combinatorial cost in the design rather than discovering it in
+  flight. Three target models against two flavors and two collector variants
+  would multiply both `scaffold.sh` and the `golden-smoke` matrix, which
+  already runs five containerised cells. Decide up front which combinations
+  are supported and which are refused fail-fast, the way `multi` already
+  requires `--flavor http`.
+
 ## v1.0
 
 - Marketplace polish.

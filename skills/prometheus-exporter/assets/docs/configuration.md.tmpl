@@ -4,9 +4,13 @@
 
 ## Usage
 
-The exporter is configured entirely through command-line flags.
+The exporter is configured through command-line flags. Optionally, a YAML file
+passed via `--config.file` can set some of those same flags and add settings no
+flag can express, such as authentication for outbound requests; see
+[Configuration file](#configuration-file) below. Nothing changes for a
+deployment that never passes `--config.file`.
 
-**Basic execution:**
+**Basic execution, flags only:**
 
 ```bash
 ./@@EXPORTER_NAME@@ --web.listen-address=":@@DEFAULT_PORT@@"
@@ -35,6 +39,7 @@ Prometheus itself uses.
 |------|-------------|---------|
 | `--web.listen-address` | Address to listen on for web interface and telemetry | `:@@DEFAULT_PORT@@` |
 | `--web.config.file` | Path to a configuration file for TLS/Basic Auth | (none) |
+| `--config.file` | Path to this exporter's own YAML configuration file (see [Configuration file](#configuration-file)). Not the same thing as `--web.config.file` | (none) |
 | `--log.level` | Log level: `debug`, `info`, `warn`, `error` | `info` |
 | `--log.format` | Log format: `json`, `text` | `text` |
 | `--web.disable-exporter-metrics` | Exclude Go runtime and process metrics from `/metrics` | `false` |
@@ -88,7 +93,59 @@ Use `--[no-]collector.<name>` (kingpin boolean syntax) to enable or disable a co
   --log.format=json
 ```
 
-### The `/probe?target=` endpoint (multi-target builds only)
+## Configuration file
+
+`--config.file` optionally points at a YAML file that sets flag values and,
+for an HTTP-flavor exporter, the outbound authentication and TLS settings no
+flag can express. It is **empty by default**, so nothing in this section
+changes anything for a deployment that never passes `--config.file`.
+
+```bash
+./@@EXPORTER_NAME@@ --config.file=config.example.yml
+```
+
+A commented, ready-to-copy example ships at the repo root:
+[`config.example.yml`](../config.example.yml).
+
+**`--config.file` is not `--web.config.file`.** `--config.file` configures
+what this exporter does: its own flags, and how it authenticates to whatever
+it queries. `--web.config.file` is a separate flag, from
+`prometheus/exporter-toolkit`, that configures the TLS/Basic Auth the
+exporter's own HTTP server presents to Prometheus. They govern opposite
+directions of the same deployment and neither substitutes for the other.
+
+The file has two sections, and one rule decides which a setting belongs to:
+anything a command-line flag can already express goes under `flags:`, keyed
+by the flag's own long name (without the leading `--`). Anything a flag
+cannot express, such as `basic_auth` or `tls_config` for an HTTP-flavor
+exporter's outbound requests, gets its own section instead,
+`http_client_config:`. No setting is ever expressible in both places, so a
+value never has two conflicting sources.
+
+`http_client_config:` is HTTP-flavor only. A CLI-flavor exporter runs a local
+command rather than issuing HTTP requests, so it has nothing to authenticate.
+Given that section it exits with an error instead of starting, because a
+setting that looks applied but does nothing is worse than a refusal.
+
+**Precedence, highest wins:**
+
+1. Command line
+2. `--config.file`
+3. Process environment
+4. Each flag's own built-in default
+
+A value set on the command line always overrides the same key set in the
+file. The file itself sits above the process environment, not below it: for
+a flag that also reads an environment variable, the file wins if both are
+set.
+
+Paths written inside the file (`password_file`, `ca_file`, `cert_file`,
+`key_file`, and similar) resolve relative to the file's own location, not to
+the exporter's working directory. Prefer a `*_file` form over an inline
+secret, `password_file` over `password` for example, so the secret itself
+never has to live in the file.
+
+## The `/probe?target=` endpoint (multi-target builds only)
 
 Multi-target builds (scaffolded with `--target-model multi`, http flavor
 only) also expose `/probe?target=<url>`: Prometheus's own

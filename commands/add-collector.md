@@ -119,16 +119,68 @@ templates, which do declare `ctx`, and gets that deadline for free.
 Then materialize the collector exactly as for single-target (the five-piece
 shape, the test triad, the `docs/metrics.md` entry, the proposed business
 alert), and append **one** `probe.NamedFactory` block at the
-`// @@PROBE_FACTORIES@@` marker in `cmd/*/main.go`:
+`// @@PROBE_FACTORIES@@` marker in `cmd/*/main.go`.
+
+First, run the same configuration-layer check the single-target http variant
+uses in step 5 below:
+
+```sh
+grep -q 'cfg, err := config.Load(' cmd/*/main.go && echo has-config || echo pre-config-layer
+```
+
+**`pre-config-layer`**: this repository predates `--config.file`, so there is
+no `cfg` variable in scope at `@@PROBE_FACTORIES@@` either. Paste only the
+plain factory below, with no shared client:
 
 ```go
 	factories = append(factories, probe.NamedFactory{
 		Name: "<name>",
-		New: func(ctx context.Context, target string, timeout time.Duration) prometheus.Collector {
-			return collector.New<Name>Collector(ctx, log, collector.NewClient(target, timeout))
+		New: func(ctx context.Context, target string, timeout time.Duration) (prometheus.Collector, error) {
+			return collector.New<Name>Collector(ctx, log, collector.NewClient(target, timeout)), nil
 		},
 	})
 ```
+
+**`has-config`**: pasting only the block above would leave this one collector
+probing unauthenticated even when the operator has an `http_client_config:`
+section, an asymmetry with the scaffolded `example` collector, which already
+honors it. Build this collector's own shared client once, before the
+`factories = append(...)` call, named after the collector being added rather
+than reused from `example`'s: one shared client per collector stays bounded
+and keeps collectors independent from each other; it is only a client built
+per PROBE (per request) that connection reuse rules out.
+
+```go
+	// Built once, before the closure: see NewHTTPClient on why building a
+	// client per probe would defeat connection reuse. An unreadable CA or
+	// credentials file is a configuration fault, so it stops the exporter
+	// here rather than surfacing on the first probe.
+	var <name>HTTP *http.Client
+	if cfg.HTTPClientConfig != nil {
+		<name>HTTP, err = collector.NewHTTPClient(*cfg.HTTPClientConfig, *probeTimeout)
+		if err != nil {
+			log.Error("Failed to build HTTP client from http_client_config", "err", err)
+			stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+			os.Exit(1) //nolint:gocritic // stop() called explicitly above
+		}
+	}
+
+	factories = append(factories, probe.NamedFactory{
+		Name: "<name>",
+		New: func(ctx context.Context, target string, timeout time.Duration) (prometheus.Collector, error) {
+			if <name>HTTP != nil {
+				return collector.New<Name>Collector(ctx, log, collector.NewClientFor(target, <name>HTTP)), nil
+			}
+			return collector.New<Name>Collector(ctx, log, collector.NewClient(target, timeout)), nil
+		},
+	})
+```
+
+Unlike the single-target http variant's `@@CLIENT_BUILD@@` step, nothing here
+needs deferred assignment: `cfg`, `log`, `stop`, and `err` are all already in
+scope at `@@PROBE_FACTORIES@@`, which sits AFTER `kingpin.Parse()` and after
+the logger is built, so `<name>HTTP` can be built directly, right where it's
+declared.
 
 Append, never replace: the marker stays in place for the next collector.
 
@@ -385,10 +437,38 @@ cli: whatever `parse<Name>` expects) with realistic, anonymized sample data
 
 ## 5. Register the collector
 
-Both markers already exist verbatim in `cmd/*/main.go` (they survive
-scaffolding for exactly this purpose). Insert **after the last existing line**
-of each block: never replace the marker comment itself, and never re-declare
-`log`, which the closures below capture by reference:
+`// @@CLIENT_INIT@@`, `// @@COLLECTOR_REGISTRY@@`, and `// @@CLIENT_BUILD@@`
+all already exist verbatim in `cmd/*/main.go` (they survive scaffolding for
+exactly this purpose). Insert **after the last existing line** of each block:
+never replace the marker comment itself, and never re-declare `log`, which the
+closures below capture by reference.
+
+`// @@CLIENT_BUILD@@` only matters for the **http** flavor: it is where a
+collector's `*collector.Client` is actually built, once flags are parsed, so it
+can honor an operator's `http_client_config:` section. For the **cli** flavor,
+the block already spliced there rejects `http_client_config` outright (this
+exec-only flavor has no HTTP transport to authenticate) and does not reference
+any particular collector, so adding a cli collector never needs a new entry at
+that marker; the cli variants below only touch `@@CLIENT_INIT@@`/
+`@@COLLECTOR_REGISTRY@@`, exactly as before.
+
+Before touching either http variant below, check whether this repository even
+has the configuration layer:
+
+```sh
+grep -q 'cfg, err := config.Load(' cmd/*/main.go && echo has-config || echo pre-config-layer
+```
+
+**`pre-config-layer`**: this repository was scaffolded before `--config.file`
+existed, so there is no `cfg` variable anywhere in `cmd/*/main.go`. Skip the
+`@@CLIENT_BUILD@@` step below entirely and use the plain, single-flag shape
+this command taught before that layer existed: declare only the target/timeout
+(and, for the background variant, interval) flags at `@@CLIENT_INIT@@`, and
+build the client inline, inside the `register(...)` closure, with
+`collector.NewClient(*<name>Target, *<name>Timeout)`. Never paste a block that
+reads `cfg` into a repository that does not declare one.
+
+**`has-config`**: follow the three-step http blocks below exactly as written.
 
 **Synchronous variant (default): http**. After the last existing flag line
 under `// @@CLIENT_INIT@@`:
@@ -396,6 +476,27 @@ under `// @@CLIENT_INIT@@`:
 ```go
 <name>Target := kingpin.Flag("collector.<name>.target", "Base URL the <name> collector scrapes.").Default("<base URL from step 1>").String()
 <name>Timeout := kingpin.Flag("collector.<name>.timeout", "Per-request timeout for the <name> collector.").Default("5s").Duration()
+// Declared here, assigned at // @@CLIENT_BUILD@@ once flags are parsed.
+// The registry closure below captures it by reference and only
+// dereferences it later, in main's construction loop.
+var <name>Client *collector.Client
+```
+
+then, after the last existing block under `// @@CLIENT_BUILD@@`:
+
+```go
+if cfg.HTTPClientConfig != nil {
+	<name>Client, err = collector.NewClientWithConfig(*<name>Target, *<name>Timeout, *cfg.HTTPClientConfig)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+		os.Exit(1) //nolint:gocritic // stop() called explicitly above
+	}
+} else {
+	// No http_client_config section: keep the transport every existing
+	// deployment already runs.
+	<name>Client = collector.NewClient(*<name>Target, *<name>Timeout)
+}
 ```
 
 then after the last existing `register(...)` call under
@@ -403,7 +504,7 @@ then after the last existing `register(...)` call under
 
 ```go
 register("<name>", func() prometheus.Collector {
-	return collector.New<Name>Collector(context.Background(), log, collector.NewClient(*<name>Target, *<name>Timeout))
+	return collector.New<Name>Collector(context.Background(), log, <name>Client)
 }, true)
 ```
 
@@ -431,6 +532,28 @@ synchronous branch above, plus one new interval flag):
 <name>Target := kingpin.Flag("collector.<name>.target", "Base URL the <name> collector scrapes.").Default("<base URL from step 1>").String()
 <name>Timeout := kingpin.Flag("collector.<name>.timeout", "Per-request timeout for the <name> collector.").Default("5s").Duration()
 <name>Interval := kingpin.Flag("collector.<name>.interval", "Refresh interval for the <name> collector.").Default("5m").Duration()
+// Declared here, assigned at // @@CLIENT_BUILD@@ once flags are parsed.
+// The registry closure below captures it by reference and only
+// dereferences it later, in main's construction loop.
+var <name>Client *collector.Client
+```
+
+then, after the last existing block under `// @@CLIENT_BUILD@@` (same shape as
+the synchronous variant above, this marker does not vary by variant):
+
+```go
+if cfg.HTTPClientConfig != nil {
+	<name>Client, err = collector.NewClientWithConfig(*<name>Target, *<name>Timeout, *cfg.HTTPClientConfig)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+		os.Exit(1) //nolint:gocritic // stop() called explicitly above
+	}
+} else {
+	// No http_client_config section: keep the transport every existing
+	// deployment already runs.
+	<name>Client = collector.NewClient(*<name>Target, *<name>Timeout)
+}
 ```
 
 then after the last existing `register(...)` call under
@@ -438,7 +561,7 @@ then after the last existing `register(...)` call under
 
 ```go
 register("<name>", func() prometheus.Collector {
-	<name>Coll := collector.New<Name>Collector(log, collector.NewClient(*<name>Target, *<name>Timeout), *<name>Interval)
+	<name>Coll := collector.New<Name>Collector(log, <name>Client, *<name>Interval)
 	<name>Coll.Start(ctx)
 	backgroundCollectors = append(backgroundCollectors, <name>Coll)
 	return <name>Coll
@@ -487,6 +610,22 @@ does `log`. (In the pristine `main.go.tmpl`, `ctx` used to be declared far
 below these markers in the shutdown block, Task 1 moved it up for exactly
 this reason: a Go closure cannot close over a name declared textually after
 it.)
+
+**Where `// @@CLIENT_BUILD@@` sits, and why the http variants above assign
+`<name>Client` there instead of building it right where it's declared:**
+`// @@CLIENT_INIT@@` and `// @@COLLECTOR_REGISTRY@@` both sit textually
+BEFORE `kingpin.Parse()`, exactly like the two markers discussed above, but
+`// @@CLIENT_BUILD@@` sits AFTER it, still before `log` is constructed.
+`<name>Client` has to be declared as a `var` at `@@CLIENT_INIT@@` (before
+the parse) purely so the `register(...)` closure can close over it, the same
+reason `ctx`/`backgroundCollectors` were moved up front; it can only be
+safely built once `*<name>Target`/`*<name>Timeout` hold their real parsed
+values and the configuration file has actually been loaded, both of which
+are true only once `@@CLIENT_BUILD@@` runs. Because `log` does not exist yet
+at that point either, the `@@CLIENT_BUILD@@` block reports a failure with
+`fmt.Fprintln(os.Stderr, err)` plus `stop()`/`os.Exit(1)`, the same pattern
+`cfg.Load`/`cfg.Validate`'s own error paths just above it already use, not
+`log.Error`.
 
 `register()` auto-declares the negatable `--[no-]collector.<name>` flag
 (defaulting to enabled), nothing else to wire for that, in either variant.

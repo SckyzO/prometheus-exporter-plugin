@@ -321,6 +321,15 @@ else
   echo "confirmed: .github/ absent ($flavor/$forge)"
 fi
 
+# Configuration-layer presence (YAML config epic): internal/config/config.go
+# and config.example.yml ship unconditionally, no --forge/--flavor gate, so
+# this check is not nested in an if: every cell must have both. Checked here,
+# same fail-fast-before-build reasoning as the forge check just above.
+echo "== internal/config/ present ($flavor/$forge) =="
+[ -f "$work/internal/config/config.go" ] || die "internal/config/config.go missing after scaffold ($flavor/$forge)"
+[ -f "$work/config.example.yml" ] || die "config.example.yml missing after scaffold ($flavor/$forge)"
+echo "confirmed: configuration layer present ($flavor/$forge)"
+
 # git-init the scaffold (Task 14): a real /new-prometheus-exporter run leaves
 # an actual repo behind, and by the time anyone runs `make check` on it,
 # `git init` has happened - it is the single most basic step of "create a new
@@ -381,11 +390,11 @@ esac
 
 # No @@VAR@@ sentinel may survive scaffolding, with the same narrow, named
 # exception scaffold.sh's own internal residual-sentinel guard carries:
-# main.go's structural markers — `// @@CLIENT_INIT@@` and
-# `// @@COLLECTOR_REGISTRY@@` (single-target), `// @@PROBE_FACTORIES@@`
-# (multi-target) — are deliberately left in place forever (for /add-collector
+# main.go's structural markers, `// @@CLIENT_INIT@@`, `// @@CLIENT_BUILD@@`
+# and `// @@COLLECTOR_REGISTRY@@` (single-target), `// @@PROBE_FACTORIES@@`
+# (multi-target), are deliberately left in place forever (for /add-collector
 # to find and reuse later), not data placeholders that a --var should have
-# filled — asserting a bare `@@[A-Z_]*@@` with no exception here would make
+# filled, so asserting a bare `@@[A-Z_]*@@` with no exception here would make
 # this check fail on every single green run.
 echo "== no residual @@VAR@@ sentinels in ${work#"$root"/} =="
 grep_rc=0
@@ -393,7 +402,7 @@ hits=$(command grep -rnI '@@[A-Z_]*@@' "$work" 2>&1) || grep_rc=$?
 case "$grep_rc" in
   1) ;; # no match: clean
   0)
-    filtered=$(printf '%s\n' "$hits" | grep -v -E '@@(CLIENT_INIT|COLLECTOR_REGISTRY|PROBE_FACTORIES)@@') || true
+    filtered=$(printf '%s\n' "$hits" | grep -v -E '@@(CLIENT_INIT|CLIENT_BUILD|COLLECTOR_REGISTRY|PROBE_FACTORIES)@@') || true
     if [ -n "$filtered" ]; then
       echo "$prog: error: residual @@VAR@@ sentinel(s) left in $work:" >&2
       echo "$filtered" >&2
@@ -451,6 +460,21 @@ echo "== make check ($flavor/$forge) =="
 if ! ( cd "$work" && make check ); then
   die "make check FAILED for $flavor/$forge — see output above"
 fi
+
+# config.example.yml must LOAD, not merely exist. It is the file
+# docs/configuration.md tells the operator to copy and run, and it ships
+# unchanged across every flavor and target model, so an entry naming a flag
+# only one of them declares makes it exit 1 out of the box. That is exactly
+# what happened once: collector.example.timeout does not exist on a
+# multi-target binary, and the existence check above could not see it.
+# --help is enough: --config.file is read and validated before kingpin gets
+# its arguments, so a bad file fails here without binding a port.
+echo "== config.example.yml loads ($flavor/$forge) =="
+if ! ( cd "$work" && ./bin/demo_exporter --config.file=config.example.yml --help >/dev/null 2>&1 ); then
+  ( cd "$work" && ./bin/demo_exporter --config.file=config.example.yml --help >/dev/null ) || true
+  die "config.example.yml FAILED to load for $flavor/$forge; the shipped example must work on every cell"
+fi
+echo "confirmed: config.example.yml loads ($flavor/$forge)"
 
 # promtool check rules (Task 12): monitoring/prometheus/{alerts,rules}.yml must
 # be valid Prometheus rule files — the same anti-lie bar as docs-check, just
@@ -620,8 +644,8 @@ if [ "$target_model" = multi ]; then
   cat > "$second_factory_frag" <<'EOF'
 	factories = append(factories, probe.NamedFactory{
 		Name: "second",
-		New: func(ctx context.Context, target string, timeout time.Duration) prometheus.Collector {
-			return collector.NewSecondCollector(ctx, log, collector.NewClient(target, timeout))
+		New: func(ctx context.Context, target string, timeout time.Duration) (prometheus.Collector, error) {
+			return collector.NewSecondCollector(ctx, log, collector.NewClient(target, timeout)), nil
 		},
 	})
 EOF
@@ -1038,10 +1062,12 @@ if [ "$flavor" = http ] && [ "$forge" = none ] && [ "$target_model" != multi ]; 
   echo "== mechanical /add-collector sub-check ($flavor/$forge): scaffolded templates still support adding a 2nd collector =="
   addc_tmpl="$assets/code/http/collector.go.tmpl"
   addc_client_frag="$assets/code/http/wiring/client_init.frag"
+  addc_build_frag="$assets/code/http/wiring/client_build.frag"
   addc_registry_frag="$assets/code/http/wiring/registry.frag"
   addc_main="$work/cmd/demo_exporter/main.go"
   addc_metrics_doc="$work/docs/metrics.md"
   addc_qclient="$work/internal/collector/.addc_client_init.frag.tmp"
+  addc_qbuild="$work/internal/collector/.addc_client_build.frag.tmp"
   addc_qregistry="$work/internal/collector/.addc_registry.frag.tmp"
 
   # 1. Materialize queue.go: rename identifiers + the two metric-name
@@ -1063,23 +1089,32 @@ if [ "$flavor" = http ] && [ "$forge" = none ] && [ "$target_model" != multi ]; 
     "$work/internal/collector/queue.go.tmp" > "$work/internal/collector/queue.go"
   rm -f "$work/internal/collector/queue.go.tmp"
 
-  # 2. Build queue's own client_init/registry fragments (same rename, same
-  # order) and splice them at the SAME two markers scaffold.sh itself used
-  # — the markers survive scaffolding verbatim for exactly this reuse (see
-  # scaffold.sh's own comment on why /add-collector needs them intact).
+  # 2. Build queue's own client_init/client_build/registry fragments (same
+  # rename, same order) and splice them at the SAME three markers scaffold.sh
+  # itself used: the markers survive scaffolding verbatim for exactly this
+  # reuse (see scaffold.sh's own comment on why /add-collector needs them
+  # intact). All three are required, not just the first and last: client_init
+  # only DECLARES queueTarget/queueTimeout/queueClient, and client_build is
+  # what consumes the timeout and assigns the client. Injecting client_init
+  # and registry alone leaves queueTimeout declared and not used, which is a
+  # compile error, so this sub-check is the executable contract that
+  # /add-collector must fill all three.
   # registry.frag also carries the http_client_requests self-instrumentation
-  # registration (shared, already wired once by scaffold.sh) — filtered out
+  # registration (shared, already wired once by scaffold.sh), filtered out
   # of this copy so it is not registered a second time.
   sed -e 's/example/queue/g' -e 's/Example/Queue/g' "$addc_client_frag" \
     | sed -e 's/@@DATA_SOURCE@@/http:\/\/localhost:9999/g' > "$addc_qclient"
+  sed -e 's/example/queue/g' -e 's/Example/Queue/g' "$addc_build_frag" > "$addc_qbuild"
   sed -e 's/example/queue/g' -e 's/Example/Queue/g' "$addc_registry_frag" \
     | grep -v 'register("http_client_requests"' > "$addc_qregistry"
 
   grep -q '^[[:blank:]]*// @@CLIENT_INIT@@[[:blank:]]*$' "$addc_main" || die "add-collector sub-check: no standalone // @@CLIENT_INIT@@ marker in $addc_main"
   sed -e '\|^[[:blank:]]*// @@CLIENT_INIT@@[[:blank:]]*$|r '"$addc_qclient" "$addc_main" > "$addc_main.tmp" && mv "$addc_main.tmp" "$addc_main"
+  grep -q '^[[:blank:]]*// @@CLIENT_BUILD@@[[:blank:]]*$' "$addc_main" || die "add-collector sub-check: no standalone // @@CLIENT_BUILD@@ marker in $addc_main"
+  sed -e '\|^[[:blank:]]*// @@CLIENT_BUILD@@[[:blank:]]*$|r '"$addc_qbuild" "$addc_main" > "$addc_main.tmp" && mv "$addc_main.tmp" "$addc_main"
   grep -q '^[[:blank:]]*// @@COLLECTOR_REGISTRY@@[[:blank:]]*$' "$addc_main" || die "add-collector sub-check: no standalone // @@COLLECTOR_REGISTRY@@ marker in $addc_main"
   sed -e '\|^[[:blank:]]*// @@COLLECTOR_REGISTRY@@[[:blank:]]*$|r '"$addc_qregistry" "$addc_main" > "$addc_main.tmp" && mv "$addc_main.tmp" "$addc_main"
-  rm -f "$addc_qclient" "$addc_qregistry"
+  rm -f "$addc_qclient" "$addc_qbuild" "$addc_qregistry"
 
   # Regression-lock, mirroring scaffold_edge_test.sh's own exact-count check
   # for this same class of bug: an unanchored marker match would ALSO splice
@@ -1128,6 +1163,7 @@ EOF
   addc_bg_main="$work/cmd/demo_exporter/main.go"
   addc_bg_metrics_doc="$work/docs/metrics.md"
   addc_bg_client="$work/internal/collector/.addc_bg_client_init.frag.tmp"
+  addc_bg_build="$work/internal/collector/.addc_bg_client_build.frag.tmp"
   addc_bg_registry="$work/internal/collector/.addc_bg_registry.frag.tmp"
 
   [ -f "$addc_bg_tmpl" ] || die "background collector template missing: $addc_bg_tmpl"
@@ -1147,29 +1183,54 @@ EOF
     "$work/internal/collector/tape.go.tmp" > "$work/internal/collector/tape.go"
   rm -f "$work/internal/collector/tape.go.tmp"
 
-  # 2. Flags under // @@CLIENT_INIT@@ (target, timeout, interval) — the
-  # SAME marker the queue sub-check already injected into above; the marker
-  # comment itself survives every previous injection (see scaffold.sh's own
-  # comment on why), so it is still there to reuse.
+  # 2. Flags under // @@CLIENT_INIT@@ (target, timeout, interval), plus the
+  # deferred-assignment tapeClient declaration commands/add-collector.md's
+  # background variant now teaches, the same shape as the queue sub-check's
+  # own client_init above with one added interval flag: this marker only
+  # DECLARES tapeTarget/tapeTimeout/tapeInterval/tapeClient, and
+  # // @@CLIENT_BUILD@@ below is what actually assigns tapeClient, so this
+  # step alone would leave tapeClient declared and never assigned, a compile
+  # error, until step 3 fills it in. The marker comment itself survives
+  # every previous injection (see scaffold.sh's own comment on why), so it
+  # is still there to reuse.
   cat > "$addc_bg_client" <<'EOF'
 	tapeTarget := kingpin.Flag("collector.tape.target", "Base URL the tape collector scrapes.").Default("http://localhost:9999").String()
 	tapeTimeout := kingpin.Flag("collector.tape.timeout", "Per-request timeout for the tape collector.").Default("5s").Duration()
 	tapeInterval := kingpin.Flag("collector.tape.interval", "Refresh interval for the tape collector.").Default("5m").Duration()
+	// Declared here, assigned at // @@CLIENT_BUILD@@ once flags are parsed.
+	// The registry closure below captures it by reference and only
+	// dereferences it later, in main's construction loop.
+	var tapeClient *collector.Client
 EOF
   grep -q '^[[:blank:]]*// @@CLIENT_INIT@@[[:blank:]]*$' "$addc_bg_main" || die "add-collector background sub-check: no standalone // @@CLIENT_INIT@@ marker in $addc_bg_main"
   sed -e '\|^[[:blank:]]*// @@CLIENT_INIT@@[[:blank:]]*$|r '"$addc_bg_client" "$addc_bg_main" > "$addc_bg_main.tmp" && mv "$addc_bg_main.tmp" "$addc_bg_main"
   rm -f "$addc_bg_client"
 
-  # 3. Registry snippet under // @@COLLECTOR_REGISTRY@@: eager-construct +
+  # 3. // @@CLIENT_BUILD@@: build tapeClient from cfg.HTTPClientConfig, or
+  # fall back to the plain transport, exactly like the queue sub-check's own
+  # client_build splice above. commands/add-collector.md's background
+  # variant section is explicit that this marker does not vary by variant,
+  # so this reuses the SAME generic client_build.frag the queue splice reads
+  # from, renamed to tape/Tape instead of queue/Queue.
+  sed -e 's/example/tape/g' -e 's/Example/Tape/g' "$addc_build_frag" > "$addc_bg_build"
+  grep -q '^[[:blank:]]*// @@CLIENT_BUILD@@[[:blank:]]*$' "$addc_bg_main" || die "add-collector background sub-check: no standalone // @@CLIENT_BUILD@@ marker in $addc_bg_main"
+  sed -e '\|^[[:blank:]]*// @@CLIENT_BUILD@@[[:blank:]]*$|r '"$addc_bg_build" "$addc_bg_main" > "$addc_bg_main.tmp" && mv "$addc_bg_main.tmp" "$addc_bg_main"
+  rm -f "$addc_bg_build"
+
+  # 4. Registry snippet under // @@COLLECTOR_REGISTRY@@: eager-construct +
   # Start(ctx) + append(backgroundCollectors, ...) ALL INSIDE the
-  # register(...) closure (see commands/add-collector.md §5's own note on
+  # register(...) closure (see commands/add-collector.md's own note on
   # why: this splice point sits BEFORE kingpin.Parse() in main.go, so log
-  # is still nil and every flag pointer still holds its zero value there —
+  # is still nil and every flag pointer still holds its zero value there,
   # the closure defers all of this to the registry loop later in main(),
-  # which runs after Parse() and after log is assigned).
+  # which runs after Parse() and after log is assigned). Passes the
+  # tapeClient step 3 built rather than an inline collector.NewClient(...):
+  # the command's background variant reuses the same shared,
+  # http_client_config-aware client the synchronous queue sub-check builds,
+  # never a bespoke unauthenticated one.
   cat > "$addc_bg_registry" <<'EOF'
 	register("tape", func() prometheus.Collector {
-		tapeColl := collector.NewTapeCollector(log, collector.NewClient(*tapeTarget, *tapeTimeout), *tapeInterval)
+		tapeColl := collector.NewTapeCollector(log, tapeClient, *tapeInterval)
 		tapeColl.Start(ctx)
 		backgroundCollectors = append(backgroundCollectors, tapeColl)
 		return tapeColl
@@ -1186,8 +1247,10 @@ EOF
   [ "$addc_bg_regcount" -eq 1 ] || die "add-collector background sub-check: expected exactly 1 injected register(\"tape\" call, found $addc_bg_regcount ($flavor/$forge)"
   addc_bg_clientcount=$(grep -c 'tapeTarget := kingpin.Flag' "$addc_bg_main")
   [ "$addc_bg_clientcount" -eq 1 ] || die "add-collector background sub-check: expected exactly 1 injected client_init copy, found $addc_bg_clientcount ($flavor/$forge)"
+  addc_bg_buildcount=$(grep -c 'tapeClient = collector.NewClient(\*tapeTarget, \*tapeTimeout)' "$addc_bg_main")
+  [ "$addc_bg_buildcount" -eq 1 ] || die "add-collector background sub-check: expected exactly 1 injected client_build copy, found $addc_bg_buildcount ($flavor/$forge)"
 
-  # 4. docs/metrics.md row, including the freshness gauge — the metric
+  # 5. docs/metrics.md row, including the freshness gauge, the metric
   # Decision 4/6 of the background-refresh design exist for.
   cat >> "$addc_bg_metrics_doc" <<'EOF'
 

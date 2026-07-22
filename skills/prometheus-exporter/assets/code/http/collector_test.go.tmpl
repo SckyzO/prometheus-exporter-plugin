@@ -11,6 +11,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	promconfig "github.com/prometheus/common/config"
 
 	"@@MODULE_PATH@@/internal/logger"
 )
@@ -233,5 +234,66 @@ func TestRequestDuration_CustomRegistryReachable(t *testing.T) {
 	}
 	if dcount != 0 {
 		t.Fatalf("GatherAndCount(DefaultGatherer) = %d, want 0: RequestDuration must not self-register into the process-wide default registerer (that was the pre-fix bug: promauto.NewHistogramVec auto-registers there, a registry main.go's own /metrics handler never gathers)", dcount)
+	}
+}
+
+func TestNewClientWithConfigAppliesBasicAuth(t *testing.T) {
+	var gotUser, gotPass string
+	var gotOK bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUser, gotPass, gotOK = r.BasicAuth()
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("{}"))
+	}))
+	defer srv.Close()
+
+	cfg := promconfig.HTTPClientConfig{
+		BasicAuth: &promconfig.BasicAuth{Username: "monitor", Password: "hunter2"},
+	}
+	c, err := NewClientWithConfig(srv.URL, time.Second, cfg)
+	if err != nil {
+		t.Fatalf("NewClientWithConfig: %v", err)
+	}
+	if _, err := c.Fetch(context.Background(), "/"); err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+
+	if !gotOK {
+		t.Fatal("the request carried no basic auth header")
+	}
+	if gotUser != "monitor" || gotPass != "hunter2" {
+		t.Errorf("credentials = %q/%q, want monitor/hunter2", gotUser, gotPass)
+	}
+}
+
+func TestNewClientWithConfigRejectsAnUnreadableCA(t *testing.T) {
+	cfg := promconfig.HTTPClientConfig{
+		TLSConfig: promconfig.TLSConfig{CAFile: "/nonexistent/ca.pem"},
+	}
+	if _, err := NewClientWithConfig("https://example.invalid", time.Second, cfg); err == nil {
+		t.Fatal("NewClientWithConfig accepted a CA file that cannot be read")
+	}
+}
+
+// TestNewClientForSharesOneTransport proves NewClientFor binds two targets to
+// the SAME *http.Client instead of building a private one per target: the
+// whole point of splitting NewHTTPClient out of NewClientWithConfig (see
+// NewHTTPClient's own doc comment) is that the caller builds the transport
+// once and shares it, so every target must point at the identical
+// *http.Client value, each keeping only its own base URL.
+func TestNewClientForSharesOneTransport(t *testing.T) {
+	hc, err := NewHTTPClient(promconfig.HTTPClientConfig{}, 5*time.Second)
+	if err != nil {
+		t.Fatalf("NewHTTPClient: %v", err)
+	}
+
+	a := NewClientFor("http://a.example", hc)
+	b := NewClientFor("http://b.example", hc)
+
+	if a.httpClient != b.httpClient {
+		t.Error("two targets built their own http.Client; the transport must be shared or every probe pays a fresh connection pool")
+	}
+	if a.baseURL == b.baseURL {
+		t.Errorf("both clients bound to %s; each target must keep its own base URL", a.baseURL)
 	}
 }

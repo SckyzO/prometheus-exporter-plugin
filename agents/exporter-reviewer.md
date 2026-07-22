@@ -296,6 +296,15 @@ whatever builds outbound requests/commands (`Client`/`Execute` call sites):
 a target URL or command argument built from a credential-bearing flag
 should never be echoed back through a label.
 
+If the exporter ships `internal/config/` and a `--config.file` flag, widen
+this pass to that file. Its `http_client_config:` section is the one place
+in a generated repository designed to hold a password, a bearer token or a
+key path, so check that nothing logs the parsed configuration, echoes it in
+an HTTP response body, or copies a value out of it into a label. Note that
+`prometheus/common`'s `Secret` type redacts itself when marshalled back to
+YAML or JSON, but not when formatted with `%v`. A `%v` on one of those fields
+therefore prints the credential in clear, so report it.
+
 A grep hit is a lead, not an automatic finding: read each match before
 reporting it. A word like "token" turns up constantly in ways that have
 nothing to do with a secret: Go's own `go/token` package, an OAuth

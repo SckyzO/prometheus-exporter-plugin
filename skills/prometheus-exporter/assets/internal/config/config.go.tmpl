@@ -1,0 +1,310 @@
+// Package config loads this exporter's optional YAML configuration file,
+// selected with --config.file.
+//
+// The file has two sections and one rule decides which a setting belongs to:
+// anything a flag can express goes under "flags:", keyed by the flag's own
+// name; anything a flag cannot express (authentication, TLS) gets its own
+// section. Nothing is expressible in both, so no value ever has two sources.
+//
+// Resolution works by rendering "flags:" back into command-line arguments and
+// letting kingpin parse them once, rather than writing values into flags after
+// parsing. kingpin applies a flag's default only when that flag is absent from
+// the parsed arguments, so a value written in afterwards would ADD to the
+// default of a repeatable flag such as --web.listen-address instead of
+// replacing it. Feeding kingpin arguments also means it performs every type
+// conversion and validation itself.
+package config
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/alecthomas/kingpin/v2"
+	promconfig "github.com/prometheus/common/config"
+	"go.yaml.in/yaml/v2"
+)
+
+// Config is the parsed content of --config.file.
+type Config struct {
+	// Flags maps a declared flag name to the value the file gives it. The
+	// value stays untyped because YAML supplies three shapes: a scalar
+	// (log.level: debug), a list for a repeatable flag
+	// (web.listen-address: [":9341"]), and a bool (collector.example:
+	// false). kingpin converts when it parses the rendered arguments.
+	Flags map[string]interface{} `yaml:"flags,omitempty"`
+
+	// HTTPClientConfig carries the authentication and TLS no flag can
+	// express. It is a pointer so an absent section is distinguishable from
+	// an empty one: with no section the flavor wiring keeps calling
+	// NewClient, whose transport is the one every existing deployment
+	// already runs.
+	HTTPClientConfig *promconfig.HTTPClientConfig `yaml:"http_client_config,omitempty"`
+}
+
+// Load reads and validates path. An empty path yields a zero Config that
+// renders no arguments: that is the "no --config.file" path, and it stays
+// behaviourally identical to this package not existing.
+func Load(path string) (*Config, error) {
+	if path == "" {
+		return &Config{}, nil
+	}
+
+	// #nosec G304 -- reading an operator-supplied path is the entire purpose of
+	// --config.file. The path comes from the command line of the process being
+	// started, so whoever supplies it already controls the process; there is no
+	// privilege boundary to cross. This is the same posture exporter-toolkit
+	// takes for --web.config.file.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read config file: %w", err)
+	}
+
+	var c Config
+	// UnmarshalStrict, not Unmarshal: prometheus/common/config's own package
+	// documentation instructs callers to use it, and an unknown key is a typo
+	// the operator wants to hear about rather than a setting silently dropped.
+	if err := yaml.UnmarshalStrict(data, &c); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+
+	if c.HTTPClientConfig != nil {
+		// Paths inside the file (ca_file, password_file, ...) are relative to
+		// the file, not to the process working directory. An exporter started
+		// by systemd runs from /, so the difference decides whether it works.
+		dir, err := filepath.Abs(filepath.Dir(path))
+		if err != nil {
+			return nil, fmt.Errorf("resolve the directory of %s: %w", path, err)
+		}
+		c.HTTPClientConfig.SetDirectory(dir)
+
+		if err := c.HTTPClientConfig.Validate(); err != nil {
+			return nil, fmt.Errorf("invalid http_client_config in %s: %w", path, err)
+		}
+	}
+
+	return &c, nil
+}
+
+// Validate reports any key under "flags:" that names no declared flag, that
+// carries no value, or whose value the YAML parser decoded to a Go bool for a
+// flag that is not itself boolean.
+//
+// That last check exists because the pinned parser, go.yaml.in/yaml/v2, is a
+// YAML 1.1 implementation: it resolves the unquoted scalars y, Y, yes, Yes,
+// YES, n, N, no, No, NO, on, On, ON, off, Off, OFF, true and false (in every
+// case variant) to a Go bool before this package, or the destination flag's
+// type, ever enters the picture. A legitimate string value that happens to be
+// one of those words, for example log.level: on, would otherwise decode to
+// true and renderFlag would emit the bare --log.level instead of
+// --log.level=on, silently corrupting the argument list. Quoting the value
+// (log.level: "on") keeps it a YAML string and sidesteps the resolver
+// entirely. A bool decoded for a flag that IS boolean, such as
+// collector.example: false, is exactly what is expected and is accepted.
+//
+// It runs before the arguments are rendered so the operator reads "unknown
+// flag in the config file" instead of kingpin's bare "unknown long flag",
+// which would not say where the name came from.
+//
+// Every flag is declared by the time this runs, whichever target model this
+// exporter was scaffolded with. A single-target main declares its own in a var
+// block, the flavor wiring declares the collector's at // @@CLIENT_INIT@@, and
+// register declares one --[no-]collector.<name> per collector. A multi-target
+// main has neither of the last two: it declares its own flags, in the var block
+// and in main itself, and its collectors take their target per request rather
+// than from a flag. Either way the declarations all precede the call site.
+func (c *Config) Validate(app *kingpin.Application) error {
+	if len(c.Flags) == 0 {
+		return nil
+	}
+
+	declared := make(map[string]*kingpin.FlagModel)
+	for _, f := range app.Model().Flags {
+		declared[f.Name] = f
+	}
+
+	var unknown, empty, notBool, notScalar, selfRef []string
+	for name, v := range c.Flags {
+		// config.file names this very file. It is a declared flag, so the
+		// unknown-key check below would accept it, and ToArgs would render it
+		// into arguments that arrive far too late to matter: the path was
+		// already read from os.Args before parsing. Rejecting it says so,
+		// rather than letting the key sit there doing nothing.
+		if name == "config.file" {
+			selfRef = append(selfRef, name)
+			continue
+		}
+		f, ok := declared[name]
+		if !ok {
+			unknown = append(unknown, name)
+			continue
+		}
+		if v == nil {
+			empty = append(empty, name)
+			continue
+		}
+		if _, isBool := v.(bool); isBool && !f.IsBoolFlag() {
+			notBool = append(notBool, name)
+			continue
+		}
+		// A nested block under a flag name is a shape no flag can take.
+		// Without this, renderFlag's default case would format the map with
+		// %v and hand kingpin --name=map[a:1 b:2], which a string flag
+		// accepts without complaint: the same silent corruption the boolean
+		// check above exists to stop.
+		switch v.(type) {
+		case map[interface{}]interface{}, map[string]interface{}:
+			notScalar = append(notScalar, name)
+		}
+	}
+
+	// Map iteration order is randomised; sort so the message is reproducible.
+	sort.Strings(unknown)
+	sort.Strings(empty)
+	sort.Strings(notBool)
+	sort.Strings(notScalar)
+	sort.Strings(selfRef)
+
+	var parts []string
+	switch {
+	case len(unknown) > 0 && len(empty) > 0:
+		parts = append(parts, fmt.Sprintf("unknown flag(s) under \"flags:\": %s; flag(s) with no value: %s",
+			strings.Join(unknown, ", "), strings.Join(empty, ", ")))
+	case len(unknown) > 0:
+		parts = append(parts, fmt.Sprintf("unknown flag(s) under \"flags:\": %s", strings.Join(unknown, ", ")))
+	case len(empty) > 0:
+		parts = append(parts, fmt.Sprintf("flag(s) with no value under \"flags:\": %s", strings.Join(empty, ", ")))
+	}
+	if len(notScalar) > 0 {
+		parts = append(parts, fmt.Sprintf(
+			"flag(s) given a nested block instead of a value: %s; a flag takes a scalar, or a list if it is repeatable",
+			strings.Join(notScalar, ", ")))
+	}
+	if len(selfRef) > 0 {
+		parts = append(parts, "config.file cannot be set from inside the configuration file; pass it on the command line")
+	}
+	if len(notBool) > 0 {
+		parts = append(parts, fmt.Sprintf(
+			"flag(s) read as boolean by YAML 1.1 (unquoted on, off, yes and no all resolve to true/false) but not declared as boolean flags: %s; quote the value to keep it a string, for example %s: \"on\"",
+			strings.Join(notBool, ", "), notBool[0]))
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	return fmt.Errorf("config file: %s", strings.Join(parts, "; "))
+}
+
+// ToArgs renders "flags:" as command-line arguments, omitting any flag already
+// present on the real command line so a value never has two sources. The
+// result is meant to be prepended to os.Args[1:], which is what makes the
+// command line win without any precedence being computed.
+//
+// Call Validate first: ToArgs assumes every key names a declared flag and
+// carries a value.
+func (c *Config) ToArgs(setOnCLI map[string]bool) []string {
+	if len(c.Flags) == 0 {
+		return nil
+	}
+
+	names := make([]string, 0, len(c.Flags))
+	for name := range c.Flags {
+		names = append(names, name)
+	}
+	// Deterministic output: a reproducible argument list makes a failure
+	// reproducible too.
+	sort.Strings(names)
+
+	var args []string
+	for _, name := range names {
+		if setOnCLI[name] {
+			continue
+		}
+		args = append(args, renderFlag(name, c.Flags[name])...)
+	}
+	return args
+}
+
+// renderFlag turns one key and value into zero or more arguments. A bool
+// becomes --name or --no-name, kingpin's own negation form. A list repeats the
+// flag, which is exactly how a repeatable flag accumulates on a real command
+// line.
+func renderFlag(name string, v interface{}) []string {
+	switch t := v.(type) {
+	case bool:
+		if t {
+			return []string{"--" + name}
+		}
+		return []string{"--no-" + name}
+	case []interface{}:
+		args := make([]string, 0, len(t))
+		for _, item := range t {
+			args = append(args, fmt.Sprintf("--%s=%v", name, item))
+		}
+		return args
+	default:
+		return []string{fmt.Sprintf("--%s=%v", name, v)}
+	}
+}
+
+// CLIFlagNames returns the set of long flag names present in argv, which must
+// not include the program name (pass os.Args[1:]). Only presence matters, so
+// values are ignored and no type information is needed.
+//
+// kingpin's own IsSetByUser cannot serve here. It has to be attached when a
+// flag is declared, so every template and fragment would have to change; it is
+// impossible for the flags exporter-toolkit declares through webflag.AddFlags,
+// which does not return its clauses; and it only answers after Parse, which is
+// too late to decide what Parse is given.
+//
+// Known limit: a flag VALUE that itself begins with "--" is counted as a flag
+// name, which would drop a key the file legitimately sets. kingpin rejects such
+// a command line on the following token, so the failure is loud, not silent.
+func CLIFlagNames(argv []string) map[string]bool {
+	names := make(map[string]bool)
+	for _, tok := range argv {
+		if tok == "--" {
+			break // everything after the terminator is positional
+		}
+		if !strings.HasPrefix(tok, "--") {
+			continue
+		}
+		name := strings.TrimPrefix(tok, "--")
+		if i := strings.IndexByte(name, '='); i >= 0 {
+			name = name[:i]
+		}
+		if name == "" {
+			continue
+		}
+		names[name] = true
+		// --no-collector.example negates the flag named collector.example.
+		// Record both spellings rather than guessing which one is declared:
+		// this set is only ever used to omit a key, so recording one name too
+		// many is safe, while missing one would let a value have two sources.
+		names[strings.TrimPrefix(name, "no-")] = true
+	}
+	return names
+}
+
+// ExtractFlagValue returns the value of one long flag from argv (again without
+// the program name), handling both --name=value and --name value. It exists
+// because --config.file has to be read before kingpin parses anything: its
+// value decides which arguments kingpin is given.
+func ExtractFlagValue(argv []string, name string) string {
+	for i, tok := range argv {
+		if tok == "--" {
+			return ""
+		}
+		switch {
+		case tok == "--"+name:
+			if i+1 < len(argv) {
+				return argv[i+1]
+			}
+			return ""
+		case strings.HasPrefix(tok, "--"+name+"="):
+			return strings.TrimPrefix(tok, "--"+name+"=")
+		}
+	}
+	return ""
+}

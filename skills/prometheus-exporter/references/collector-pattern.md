@@ -28,6 +28,20 @@ points `NewClient` at an `httptest.Server` instead of a real target: no
 conditional, no test-only code path inside `Client` itself, just a different
 base URL.
 
+`client.go` also exports `NewClientWithConfig(target string, timeout
+time.Duration, httpCfg promconfig.HTTPClientConfig) (*Client, error)`, which
+builds a `*Client` whose transport carries the authentication and TLS declared
+in `--config.file`'s `http_client_config:` section. The rule for which to call
+is the presence of that section, not a preference: with an
+`http_client_config:` section, call `NewClientWithConfig`; without one, keep
+calling `NewClient`, because its transport is what every existing deployment
+already runs, and `NewClientWithConfig` would build a client with different
+transport defaults (keep-alives, HTTP/2) even with no authentication
+configured. A multi-target probe's wiring uses a different pair for the same
+job, `NewHTTPClient`/`NewClientFor`, so the shared transport is built once
+across every target instead of once per probe; see `client.go`'s own doc
+comments for why building one per probe would defeat connection reuse.
+
 **CLI (shipped).** A package-level function variable
 (`internal/collector/execute.go`):
 

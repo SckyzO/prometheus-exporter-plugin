@@ -1,0 +1,88 @@
+# Example configuration file for @@EXPORTER_NAME@@.
+#
+# This file has no effect on its own. --config.file defaults to empty, so
+# nothing here is read unless you start the exporter with:
+#
+#   ./@@EXPORTER_NAME@@ --config.file=/path/to/your-config.yml
+#
+# Copy this file, edit the copy, and point --config.file at it; nothing
+# scans for a config file automatically.
+#
+# --config.file is not --web.config.file. This file (config.file) configures
+# what the exporter does: which flags get which values, and how it
+# authenticates to whatever it queries. --web.config.file is a separate flag,
+# from prometheus/exporter-toolkit, that configures the TLS/Basic Auth the
+# exporter's own HTTP server presents to Prometheus. Mixing the two up means
+# looking in the wrong file when either side misbehaves.
+#
+# The file has two sections, and one rule decides which a setting belongs to:
+# anything a command-line flag can already express goes under "flags:",
+# keyed by the flag's own long name, without the leading "--". Anything a
+# flag cannot express, such as authentication or TLS for the requests an
+# HTTP-flavor exporter makes outward, gets its own section instead
+# (http_client_config: below). No setting is ever expressible in both
+# places, so a value never has two conflicting sources.
+#
+# Precedence, highest wins: command-line flag, then this file, then the
+# process environment, then the flag's own built-in default. In particular,
+# a value set here is overridden by the same flag passed on the command
+# line, and this file itself sits above the environment, not below it.
+#
+# Paths written inside this file, such as password_file below or
+# tls_config's ca_file/cert_file/key_file, resolve relative to this file's
+# own location, not to the exporter's working directory. Prefer a *_file
+# form over an inline value for any secret (password_file over password,
+# for example) so the secret itself never has to live in this file.
+
+flags:
+  # A plain scalar: one value for the flag.
+  log.level: info
+
+  # A bool must be written as a YAML boolean (true/false), not a quoted
+  # string. Watch out for the reverse case, though: this parser reads YAML
+  # 1.1, so an UNQUOTED yes, no, on, or off also resolves to a boolean. If a
+  # flag takes a string value that happens to be one of those words, quote
+  # it (log.level: "on") to keep it a string.
+  web.disable-exporter-metrics: false
+
+  # A repeatable flag becomes a YAML list, one entry per repetition on the
+  # command line. web.listen-address defaults to a single address; listing
+  # two here binds both instead of just the second one. Pick addresses that
+  # do not overlap: on Linux, a wildcard address already covers both IPv4
+  # and IPv6 on the same port, so also listing an explicit ::1 on that same
+  # port fails to bind. The second entry below deliberately sits well outside
+  # the 9100 to 9999 range exporters draw their default port from, so it
+  # cannot collide with the first whatever port this exporter was built with.
+  web.listen-address:
+    - ":@@DEFAULT_PORT@@"
+    - "127.0.0.1:19101"
+
+  # A collector's own flags follow the same rule as any built-in flag.
+  # Commented out because this file ships with both target models and a
+  # multi-target exporter declares no collector.example.* flags: its target
+  # arrives per request on /probe rather than from a flag. Uncomment it on a
+  # single-target exporter, where the flag exists.
+  # collector.example.timeout: 10s
+
+# http_client_config carries the authentication and TLS settings no flag can
+# express. It only applies to an HTTP-flavor exporter's outbound requests. A
+# CLI-flavor exporter runs a local command instead, so it has nothing to
+# authenticate: given this section it refuses to start rather than accept a
+# setting it would silently drop.
+#
+# Commented out here on purpose: an active block pointing at password_file/
+# ca_file/cert_file/key_file paths that do not exist on your machine would
+# fail --config.file loading outright, which is the last thing an example
+# meant to be copied and tried should do. Uncomment it and point the paths
+# at your own files to use it.
+#
+# http_client_config:
+#   basic_auth:
+#     username: monitoring
+#     password_file: /etc/@@EXPORTER_NAME@@/basic_auth_password
+#   tls_config:
+#     ca_file: /etc/@@EXPORTER_NAME@@/ca.crt
+#     cert_file: /etc/@@EXPORTER_NAME@@/client.crt
+#     key_file: /etc/@@EXPORTER_NAME@@/client.key
+#     server_name: example.internal
+#     insecure_skip_verify: false
