@@ -1038,10 +1038,12 @@ if [ "$flavor" = http ] && [ "$forge" = none ] && [ "$target_model" != multi ]; 
   echo "== mechanical /add-collector sub-check ($flavor/$forge): scaffolded templates still support adding a 2nd collector =="
   addc_tmpl="$assets/code/http/collector.go.tmpl"
   addc_client_frag="$assets/code/http/wiring/client_init.frag"
+  addc_build_frag="$assets/code/http/wiring/client_build.frag"
   addc_registry_frag="$assets/code/http/wiring/registry.frag"
   addc_main="$work/cmd/demo_exporter/main.go"
   addc_metrics_doc="$work/docs/metrics.md"
   addc_qclient="$work/internal/collector/.addc_client_init.frag.tmp"
+  addc_qbuild="$work/internal/collector/.addc_client_build.frag.tmp"
   addc_qregistry="$work/internal/collector/.addc_registry.frag.tmp"
 
   # 1. Materialize queue.go: rename identifiers + the two metric-name
@@ -1063,23 +1065,32 @@ if [ "$flavor" = http ] && [ "$forge" = none ] && [ "$target_model" != multi ]; 
     "$work/internal/collector/queue.go.tmp" > "$work/internal/collector/queue.go"
   rm -f "$work/internal/collector/queue.go.tmp"
 
-  # 2. Build queue's own client_init/registry fragments (same rename, same
-  # order) and splice them at the SAME two markers scaffold.sh itself used
-  # — the markers survive scaffolding verbatim for exactly this reuse (see
-  # scaffold.sh's own comment on why /add-collector needs them intact).
+  # 2. Build queue's own client_init/client_build/registry fragments (same
+  # rename, same order) and splice them at the SAME three markers scaffold.sh
+  # itself used: the markers survive scaffolding verbatim for exactly this
+  # reuse (see scaffold.sh's own comment on why /add-collector needs them
+  # intact). All three are required, not just the first and last: client_init
+  # only DECLARES queueTarget/queueTimeout/queueClient, and client_build is
+  # what consumes the timeout and assigns the client. Injecting client_init
+  # and registry alone leaves queueTimeout declared and not used, which is a
+  # compile error, so this sub-check is the executable contract that
+  # /add-collector must fill all three.
   # registry.frag also carries the http_client_requests self-instrumentation
-  # registration (shared, already wired once by scaffold.sh) — filtered out
+  # registration (shared, already wired once by scaffold.sh), filtered out
   # of this copy so it is not registered a second time.
   sed -e 's/example/queue/g' -e 's/Example/Queue/g' "$addc_client_frag" \
     | sed -e 's/@@DATA_SOURCE@@/http:\/\/localhost:9999/g' > "$addc_qclient"
+  sed -e 's/example/queue/g' -e 's/Example/Queue/g' "$addc_build_frag" > "$addc_qbuild"
   sed -e 's/example/queue/g' -e 's/Example/Queue/g' "$addc_registry_frag" \
     | grep -v 'register("http_client_requests"' > "$addc_qregistry"
 
   grep -q '^[[:blank:]]*// @@CLIENT_INIT@@[[:blank:]]*$' "$addc_main" || die "add-collector sub-check: no standalone // @@CLIENT_INIT@@ marker in $addc_main"
   sed -e '\|^[[:blank:]]*// @@CLIENT_INIT@@[[:blank:]]*$|r '"$addc_qclient" "$addc_main" > "$addc_main.tmp" && mv "$addc_main.tmp" "$addc_main"
+  grep -q '^[[:blank:]]*// @@CLIENT_BUILD@@[[:blank:]]*$' "$addc_main" || die "add-collector sub-check: no standalone // @@CLIENT_BUILD@@ marker in $addc_main"
+  sed -e '\|^[[:blank:]]*// @@CLIENT_BUILD@@[[:blank:]]*$|r '"$addc_qbuild" "$addc_main" > "$addc_main.tmp" && mv "$addc_main.tmp" "$addc_main"
   grep -q '^[[:blank:]]*// @@COLLECTOR_REGISTRY@@[[:blank:]]*$' "$addc_main" || die "add-collector sub-check: no standalone // @@COLLECTOR_REGISTRY@@ marker in $addc_main"
   sed -e '\|^[[:blank:]]*// @@COLLECTOR_REGISTRY@@[[:blank:]]*$|r '"$addc_qregistry" "$addc_main" > "$addc_main.tmp" && mv "$addc_main.tmp" "$addc_main"
-  rm -f "$addc_qclient" "$addc_qregistry"
+  rm -f "$addc_qclient" "$addc_qbuild" "$addc_qregistry"
 
   # Regression-lock, mirroring scaffold_edge_test.sh's own exact-count check
   # for this same class of bug: an unanchored marker match would ALSO splice
