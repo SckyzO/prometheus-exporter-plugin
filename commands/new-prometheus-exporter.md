@@ -224,6 +224,11 @@ Point the user to:
 
 - **`/add-collector <name>`** to add each further collector from the step 0
   list, with its full test triad and registry wiring.
+- **`docs/configuration.md`** and `config.example.yml`: every scaffold ships
+  `internal/config` and an unconditional `--config.file` flag, empty by
+  default, so an operator can override flag values from a file instead of the
+  command line and, on the http flavor, set an `http_client_config:` section
+  for authentication or TLS no flag can express.
 - **`docs/metrics.md`**: the metrics reference, kept truthful by `make
   docs-check`.
 - **`monitoring/`**: the shipped Prometheus health alerts, recording rules,

@@ -101,11 +101,14 @@ is still nil/zero at the moment `register()` runs, provided nothing calls the
 closure before `main()` finishes assigning them. `main()`'s own ordering
 guarantees that; nothing about `register()` itself would, on its own.
 
-### The two seam markers
+### The three seam markers
 
 Both the initial scaffold and every later `/add-collector` insert their flag
-declarations and `register()` calls at two fixed, literal comment markers
-inside `main()`, textually *before* `kingpin.Parse()`:
+declarations, client construction, and `register()` calls at three fixed,
+literal comment markers inside `main()`. `// @@CLIENT_INIT@@` and
+`// @@COLLECTOR_REGISTRY@@` sit textually *before* `kingpin.Parse()`, exactly
+like before; `// @@CLIENT_BUILD@@` sits right after it, still before the
+logger is built:
 
 ```go
 func main() {
@@ -116,35 +119,58 @@ func main() {
 	// @@COLLECTOR_REGISTRY@@
 
 	kingpin.Version(version.Print("@@EXPORTER_NAME@@"))
-	kingpin.Parse()
+	kingpin.MustParse(kingpin.CommandLine.Parse(...))
+
+	// @@CLIENT_BUILD@@
+
 	...
 ```
 
 `// @@CLIENT_INIT@@` is where a flavor's per-collector flags are declared:
-HTTP's bundled example contributes a target flag and a timeout flag; CLI's
-contributes only a timeout, because its target is a fixed command baked in at
-scaffold time rather than a runtime flag (`collector-pattern.md` explains why
-the two flavors differ here). `// @@COLLECTOR_REGISTRY@@` is where the
-matching `register(...)` call lands, its closure capturing whatever
-`@@CLIENT_INIT@@` just declared:
+HTTP's bundled example contributes a target flag, a timeout flag, and a
+`var exampleClient *collector.Client` (assigned later, at
+`// @@CLIENT_BUILD@@`); CLI's contributes only a timeout, because its target
+is a fixed command baked in at scaffold time rather than a runtime flag
+(`collector-pattern.md` explains why the two flavors differ here).
+`// @@CLIENT_BUILD@@` is HTTP-only: it is where `exampleClient` is actually
+built, once flags are parsed and the configuration file has been loaded, so
+it can honor an operator's `http_client_config:` section.
+`// @@COLLECTOR_REGISTRY@@` is where the matching `register(...)` call lands,
+its closure capturing whatever the other two markers declared and built:
 
 ```go
 // HTTP flavor
 exampleTarget := kingpin.Flag("collector.example.target", "...").Default("@@DATA_SOURCE@@").String()
 exampleTimeout := kingpin.Flag("collector.example.timeout", "...").Default("5s").Duration()
+// Declared here, assigned at // @@CLIENT_BUILD@@ once flags are parsed.
+var exampleClient *collector.Client
 ...
 register("example", func() prometheus.Collector {
-	return collector.NewExampleCollector(context.Background(), log, collector.NewClient(*exampleTarget, *exampleTimeout))
+	return collector.NewExampleCollector(context.Background(), log, exampleClient)
 }, true)
+...
+// at // @@CLIENT_BUILD@@, after kingpin.MustParse:
+if cfg.HTTPClientConfig != nil {
+	exampleClient, err = collector.NewClientWithConfig(*exampleTarget, *exampleTimeout, *cfg.HTTPClientConfig)
+	...
+} else {
+	exampleClient = collector.NewClient(*exampleTarget, *exampleTimeout)
+}
 ```
 
-Both markers survive the substitution that fills them: the scaffolding
+`NewClientWithConfig(target string, timeout time.Duration, httpCfg
+promconfig.HTTPClientConfig) (*Client, error)` sits beside `NewClient` in
+`client.go`, never replacing it: with an `http_client_config:` section, the
+wiring above calls it; without one, it keeps calling `NewClient`, because that
+transport is what every existing deployment already runs.
+
+All three markers survive the substitution that fills them: the scaffolding
 mechanism inserts each flavor's snippet immediately *after* the marker line
-without consuming it, specifically so the same two markers are still present,
-unchanged, for `/add-collector` to insert the next collector at later. A
-generated repository's `main.go` therefore keeps both comments even after
-several collectors have been added. They are structural, not leftover
-scaffolding residue.
+without consuming it, specifically so the same three markers are still
+present, unchanged, for `/add-collector` to insert the next collector at
+later. A generated repository's `main.go` therefore keeps all three comments
+even after several collectors have been added. They are structural, not
+leftover scaffolding residue.
 
 ## Auto flags: `--[no-]collector.<name>`
 
@@ -373,7 +399,8 @@ factory line at `// @@PROBE_FACTORIES@@`).
 - [ ] Every collector (bundled example, self-instrumentation, anything
       `/add-collector` adds later) is exactly one `register(name, newFn,
       enabledByDefault)` call at `// @@COLLECTOR_REGISTRY@@`, with its flags
-      (if any) declared at `// @@CLIENT_INIT@@`, both markers left intact.
+      (if any) declared at `// @@CLIENT_INIT@@` and, for the http flavor, its
+      client built at `// @@CLIENT_BUILD@@`; all markers left intact.
 - [ ] `newFn`'s closure references `log`/flag variables safely: it is never
       invoked before `kingpin.Parse()` and the logger's construction, both of
       which happen once, later in `main()`.
