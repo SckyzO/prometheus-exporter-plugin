@@ -28,6 +28,11 @@ and exposes them at `/metrics` for scraping.
 - OpenMetrics exposition format on `/metrics`, with a liveness probe at `/healthz` for
   Kubernetes or systemd.
 - TLS and Basic Authentication available out of the box via `--web.config.file`.
+- An optional YAML configuration file, `--config.file`, for setting flags from a file and
+  for the authentication and TLS this exporter uses on its own outbound requests. The flag
+  defaults to empty, so nothing is read until you pass it. Start from
+  [`config.example.yml`](config.example.yml) in this repository; the format is documented in
+  [docs/configuration.md](docs/configuration.md).
 - Signal-aware shutdown: `SIGTERM`/`SIGINT` drain in-flight requests before exiting.
 - Container-first tooling: a container engine (Docker or Podman) is the only development
   requirement; every quality gate also runs on the host Go toolchain via `NATIVE=1`.

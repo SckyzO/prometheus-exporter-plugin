@@ -14,8 +14,11 @@ what happens to it at a tagged release is `cicd-and-release.md`'s.
 ## Repository layout
 
 ```
+config.example.yml      # commented example for --config.file, never loaded by default
 cmd/@@EXPORTER_NAME@@/
   main.go               # entry point: flags, registry, HTTP server, shutdown
+internal/config/
+  config.go             # --config.file: loads it, validates it, renders it back to args
 internal/collector/
   status_tracker.go     # shared health-metric wrapper (flavor-agnostic)
   docs_check_test.go    # make docs-check's implementation (flavor-agnostic)

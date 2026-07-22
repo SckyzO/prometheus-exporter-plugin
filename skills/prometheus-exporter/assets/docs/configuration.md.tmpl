@@ -39,6 +39,7 @@ Prometheus itself uses.
 |------|-------------|---------|
 | `--web.listen-address` | Address to listen on for web interface and telemetry | `:@@DEFAULT_PORT@@` |
 | `--web.config.file` | Path to a configuration file for TLS/Basic Auth | (none) |
+| `--config.file` | Path to this exporter's own YAML configuration file (see [Configuration file](#configuration-file)). Not the same thing as `--web.config.file` | (none) |
 | `--log.level` | Log level: `debug`, `info`, `warn`, `error` | `info` |
 | `--log.format` | Log format: `json`, `text` | `text` |
 | `--web.disable-exporter-metrics` | Exclude Go runtime and process metrics from `/metrics` | `false` |

@@ -108,10 +108,13 @@ func Load(path string) (*Config, error) {
 // flag in the config file" instead of kingpin's bare "unknown long flag",
 // which would not say where the name came from.
 //
-// Every flag is declared by the time this runs: main declares its own in a var
+// Every flag is declared by the time this runs, whichever target model this
+// exporter was scaffolded with. A single-target main declares its own in a var
 // block, the flavor wiring declares the collector's at // @@CLIENT_INIT@@, and
-// register declares one --[no-]collector.<name> per collector, all before the
-// call site.
+// register declares one --[no-]collector.<name> per collector. A multi-target
+// main has neither of the last two: it declares its own flags, in the var block
+// and in main itself, and its collectors take their target per request rather
+// than from a flag. Either way the declarations all precede the call site.
 func (c *Config) Validate(app *kingpin.Application) error {
 	if len(c.Flags) == 0 {
 		return nil
