@@ -49,18 +49,19 @@
 #   - Selects mains/<target-model>/main.go.tmpl as the one cmd/<name>/main.go,
 #     then removes the whole mains/ staging tree; drops internal/probe/ for
 #     --target-model single (it is multi-only).
-#   - Fills main.go's structural markers: // @@CLIENT_INIT@@ and
-#     // @@COLLECTOR_REGISTRY@@ (single-target), // @@PROBE_FACTORIES@@
-#     (multi-target), from the selected flavor's internal/collector/wiring/
-#     {client_init.frag,registry.frag,probe_factory.frag}, whichever the
-#     chosen main model actually carries a marker for, then removes that
-#     staging directory. The marker comments themselves survive the fill
-#     (sed inserts after them, never replacing them) so /add-collector can
-#     reuse the same markers later to insert more collectors.
+#   - Fills main.go's structural markers: // @@CLIENT_INIT@@,
+#     // @@CLIENT_BUILD@@ and // @@COLLECTOR_REGISTRY@@ (single-target),
+#     // @@PROBE_FACTORIES@@ (multi-target), from the selected flavor's
+#     internal/collector/wiring/{client_init.frag,client_build.frag,
+#     registry.frag,probe_factory.frag}, whichever the chosen main model
+#     actually carries a marker for, then removes that staging directory.
+#     The marker comments themselves survive the fill (sed inserts after
+#     them, never replacing them) so /add-collector can reuse the same
+#     markers later to insert more collectors.
 #   - Places the licenses/LICENSE-<license, lowercased>.txt as LICENSE, then
 #     discards the unused alternatives.
 #   - Fails loudly (exit 3) if any @@...@@ sentinel survives, EXCEPT the
-#     named structural markers in main.go (@@CLIENT_INIT@@,
+#     named structural markers in main.go (@@CLIENT_INIT@@, @@CLIENT_BUILD@@,
 #     @@COLLECTOR_REGISTRY@@, @@PROBE_FACTORIES@@): those are not --var data
 #     placeholders, and the wiring-marker fill above deliberately preserves
 #     them, so their survival to this point is expected, not a forgotten
@@ -463,6 +464,7 @@ if [ -d "$dst/internal/collector/wiring" ]; then
   # discovered/growing registry, same precedent as --forge github|none.
   for pair in \
     "client_init.frag:@@CLIENT_INIT@@" \
+    "client_build.frag:@@CLIENT_BUILD@@" \
     "registry.frag:@@COLLECTOR_REGISTRY@@" \
     "probe_factory.frag:@@PROBE_FACTORIES@@"; do
     fragfile="$dst/internal/collector/wiring/${pair%%:*}"
@@ -533,7 +535,7 @@ esac
 # @@FOO@@ sharing a line with one of these markers would be swallowed too.
 # Fine today because each marker sits alone on its own line in main.go.
 filtered_rc=0
-grep -v -E '@@(CLIENT_INIT|COLLECTOR_REGISTRY|PROBE_FACTORIES)@@' "$sentinels" > "$pathlist" || filtered_rc=$?
+grep -v -E '@@(CLIENT_INIT|CLIENT_BUILD|COLLECTOR_REGISTRY|PROBE_FACTORIES)@@' "$sentinels" > "$pathlist" || filtered_rc=$?
 case "$filtered_rc" in
   0)
     echo "$prog: error: residual @@VAR@@ sentinel(s) left in $dst" >&2

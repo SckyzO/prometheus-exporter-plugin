@@ -159,6 +159,8 @@ func main() {
 		append(cfg.ToArgs(config.CLIFlagNames(os.Args[1:])), os.Args[1:]...),
 	))
 
+	// @@CLIENT_BUILD@@
+
 	if *logFormat == "json" {
 		log = logger.NewJSONLogger(*logLevel)
 	} else {

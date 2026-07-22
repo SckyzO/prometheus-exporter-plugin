@@ -381,11 +381,11 @@ esac
 
 # No @@VAR@@ sentinel may survive scaffolding, with the same narrow, named
 # exception scaffold.sh's own internal residual-sentinel guard carries:
-# main.go's structural markers — `// @@CLIENT_INIT@@` and
-# `// @@COLLECTOR_REGISTRY@@` (single-target), `// @@PROBE_FACTORIES@@`
-# (multi-target) — are deliberately left in place forever (for /add-collector
+# main.go's structural markers, `// @@CLIENT_INIT@@`, `// @@CLIENT_BUILD@@`
+# and `// @@COLLECTOR_REGISTRY@@` (single-target), `// @@PROBE_FACTORIES@@`
+# (multi-target), are deliberately left in place forever (for /add-collector
 # to find and reuse later), not data placeholders that a --var should have
-# filled — asserting a bare `@@[A-Z_]*@@` with no exception here would make
+# filled, so asserting a bare `@@[A-Z_]*@@` with no exception here would make
 # this check fail on every single green run.
 echo "== no residual @@VAR@@ sentinels in ${work#"$root"/} =="
 grep_rc=0
@@ -393,7 +393,7 @@ hits=$(command grep -rnI '@@[A-Z_]*@@' "$work" 2>&1) || grep_rc=$?
 case "$grep_rc" in
   1) ;; # no match: clean
   0)
-    filtered=$(printf '%s\n' "$hits" | grep -v -E '@@(CLIENT_INIT|COLLECTOR_REGISTRY|PROBE_FACTORIES)@@') || true
+    filtered=$(printf '%s\n' "$hits" | grep -v -E '@@(CLIENT_INIT|CLIENT_BUILD|COLLECTOR_REGISTRY|PROBE_FACTORIES)@@') || true
     if [ -n "$filtered" ]; then
       echo "$prog: error: residual @@VAR@@ sentinel(s) left in $work:" >&2
       echo "$filtered" >&2
