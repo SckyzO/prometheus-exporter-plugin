@@ -132,9 +132,12 @@ HTTP's bundled example contributes a target flag, a timeout flag, and a
 `// @@CLIENT_BUILD@@`); CLI's contributes only a timeout, because its target
 is a fixed command baked in at scaffold time rather than a runtime flag
 (`collector-pattern.md` explains why the two flavors differ here).
-`// @@CLIENT_BUILD@@` is HTTP-only: it is where `exampleClient` is actually
-built, once flags are parsed and the configuration file has been loaded, so
-it can honor an operator's `http_client_config:` section.
+`// @@CLIENT_BUILD@@` is where the client is actually built, once flags are
+parsed and the configuration file has been loaded, so it can honor an
+operator's `http_client_config:` section. Both flavors fill it: HTTP builds
+`exampleClient` there, while CLI, having no outbound request to authenticate,
+uses it to refuse an `http_client_config:` section rather than accept a
+setting it would silently drop.
 `// @@COLLECTOR_REGISTRY@@` is where the matching `register(...)` call lands,
 its closure capturing whatever the other two markers declared and built:
 
@@ -390,9 +393,8 @@ Prometheus's own multi-target exporter pattern (see `exporter-architecture.md`
 retrofitted onto this `main.go` afterward). The two models are mutually
 exclusive per scaffold: a generated repository has exactly one `main.go`, and
 either this registry or that `/probe` handler, never both. `/add-collector`
-against a multi-target scaffold is a documented follow-up, not implemented
-today: it refuses cleanly and points at the manual procedure (add one
-factory line at `// @@PROBE_FACTORIES@@`).
+handles both models: against a multi-target scaffold it appends a factory at
+`// @@PROBE_FACTORIES@@` instead of a `register(...)` call.
 
 ## Checklist
 

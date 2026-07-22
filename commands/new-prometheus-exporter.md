@@ -44,9 +44,8 @@ on their behalf):
   the scaffolder rejects that pairing outright. If the design calls for
   multi-target with a CLI-flavored source, stop and flag the conflict to the
   user rather than silently falling back to single-target: either the flavor
-  or the target model has to change. `/add-collector` against a multi-target
-  scaffold is a documented follow-up (it refuses cleanly and points at the
-  manual procedure), not something either command automates yet.
+  or the target model has to change. `/add-collector` works against either
+  target model, so the choice made here does not close that door.
 - **The collector list**: which resources/metrics this exporter will track,
   even if only the first one is built today. Later collectors are added one
   at a time with `/add-collector`.
@@ -236,9 +235,7 @@ Point the user to:
 - **`docs/release-process.md`**: how to cut a first real release with
   GoReleaser once there's something worth releasing.
 
-If this exporter was scaffolded with `--target-model multi`, note that
-`/add-collector` will refuse cleanly against it: it only knows how to insert
-a `register(...)` call into the single-target registry. Adding a collector to
-a multi-target exporter today means adding one factory line by hand at
-`// @@PROBE_FACTORIES@@` in `cmd/*/main.go`; this is documented follow-up
-work for `/add-collector` itself, not a bug.
+If this exporter was scaffolded with `--target-model multi`, `/add-collector`
+detects that and appends a factory at `// @@PROBE_FACTORIES@@` in
+`cmd/*/main.go` rather than a `register(...)` call into a single-target
+registry.
