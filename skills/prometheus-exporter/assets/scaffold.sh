@@ -415,11 +415,12 @@ while IFS= read -r file; do
 done < "$pathlist"
 
 # Flavor wiring-marker injection: fill main.go's structural markers
-# (// @@CLIENT_INIT@@, // @@COLLECTOR_REGISTRY@@, single-target markers;
-# // @@PROBE_FACTORIES@@, multi-target's own marker, see mains/multi/
-# main.go.tmpl) with the selected flavor's wiring snippets, if it shipped any.
-# Flavor snippets stage under code/<flavor>/wiring/{client_init.frag,
-# registry.frag,probe_factory.frag} (mirror-layout, exactly like every other
+# (// @@CLIENT_INIT@@, // @@CLIENT_BUILD@@, // @@COLLECTOR_REGISTRY@@,
+# single-target markers; // @@PROBE_FACTORIES@@, multi-target's own marker,
+# see mains/multi/main.go.tmpl) with the selected flavor's wiring snippets, if
+# it shipped any. Flavor snippets stage under code/<flavor>/wiring/
+# {client_init.frag,client_build.frag,registry.frag,probe_factory.frag}
+# (mirror-layout, exactly like every other
 # flavor file) and so land at internal/collector/wiring/ after the
 # flavor-selection move earlier in this script. By this point they are also
 # fully @@KEY@@-substituted, since the content-substitution pass above runs
@@ -434,8 +435,9 @@ done < "$pathlist"
 # marker comment itself survives verbatim in the output, deliberate, so
 # /add-collector can find and reuse the same marker later to insert
 # additional collectors. That is also why the residual-sentinel guard below
-# still needs (and already has) its CLIENT_INIT/COLLECTOR_REGISTRY/
-# PROBE_FACTORIES exemption after this step runs, not just before it.
+# still needs (and already has) its CLIENT_INIT/CLIENT_BUILD/
+# COLLECTOR_REGISTRY/PROBE_FACTORIES exemption after this step runs, not just
+# before it.
 if [ -d "$dst/internal/collector/wiring" ]; then
   mainfile=""
   for f in "$dst"/cmd/*/main.go; do
@@ -458,7 +460,8 @@ if [ -d "$dst/internal/collector/wiring" ]; then
   # A frag whose marker is absent from the SELECTED main model is skipped, not
   # fatal: each main model (mains/single/, mains/multi/) carries only its own
   # markers now (single has no // @@PROBE_FACTORIES@@; multi has no
-  # // @@CLIENT_INIT@@ / // @@COLLECTOR_REGISTRY@@), so a flavor shipping a
+  # // @@CLIENT_INIT@@ / // @@CLIENT_BUILD@@ / // @@COLLECTOR_REGISTRY@@), so
+  # a flavor shipping a
   # frag the chosen main doesn't use is the expected, common case, not a
   # broken scaffold. This is still a hardcoded, fixed set of pairs, not a
   # discovered/growing registry, same precedent as --forge github|none.
@@ -519,8 +522,9 @@ case "$grep_rc" in
   *) die "residual-sentinel scan of $dst failed (grep exit $grep_rc)" ;;
 esac
 
-# main.go's structural markers (@@CLIENT_INIT@@, @@COLLECTOR_REGISTRY@@,
-# single-target; @@PROBE_FACTORIES@@, multi-target) are deliberately left as
+# main.go's structural markers (@@CLIENT_INIT@@, @@CLIENT_BUILD@@,
+# @@COLLECTOR_REGISTRY@@, single-target; @@PROBE_FACTORIES@@, multi-target)
+# are deliberately left as
 # literal comments for a later flavor-specific scaffold.sh step to replace:
 # they are not --var data placeholders, so their survival is expected, not a
 # forgotten substitution. Filter exactly these named sentinels out before
