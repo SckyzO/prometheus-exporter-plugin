@@ -321,6 +321,15 @@ else
   echo "confirmed: .github/ absent ($flavor/$forge)"
 fi
 
+# Configuration-layer presence (YAML config epic): internal/config/config.go
+# and config.example.yml ship unconditionally, no --forge/--flavor gate, so
+# this check is not nested in an if: every cell must have both. Checked here,
+# same fail-fast-before-build reasoning as the forge check just above.
+echo "== internal/config/ present ($flavor/$forge) =="
+[ -f "$work/internal/config/config.go" ] || die "internal/config/config.go missing after scaffold ($flavor/$forge)"
+[ -f "$work/config.example.yml" ] || die "config.example.yml missing after scaffold ($flavor/$forge)"
+echo "confirmed: configuration layer present ($flavor/$forge)"
+
 # git-init the scaffold (Task 14): a real /new-prometheus-exporter run leaves
 # an actual repo behind, and by the time anyone runs `make check` on it,
 # `git init` has happened - it is the single most basic step of "create a new
@@ -1139,6 +1148,7 @@ EOF
   addc_bg_main="$work/cmd/demo_exporter/main.go"
   addc_bg_metrics_doc="$work/docs/metrics.md"
   addc_bg_client="$work/internal/collector/.addc_bg_client_init.frag.tmp"
+  addc_bg_build="$work/internal/collector/.addc_bg_client_build.frag.tmp"
   addc_bg_registry="$work/internal/collector/.addc_bg_registry.frag.tmp"
 
   [ -f "$addc_bg_tmpl" ] || die "background collector template missing: $addc_bg_tmpl"
@@ -1158,29 +1168,54 @@ EOF
     "$work/internal/collector/tape.go.tmp" > "$work/internal/collector/tape.go"
   rm -f "$work/internal/collector/tape.go.tmp"
 
-  # 2. Flags under // @@CLIENT_INIT@@ (target, timeout, interval) — the
-  # SAME marker the queue sub-check already injected into above; the marker
-  # comment itself survives every previous injection (see scaffold.sh's own
-  # comment on why), so it is still there to reuse.
+  # 2. Flags under // @@CLIENT_INIT@@ (target, timeout, interval), plus the
+  # deferred-assignment tapeClient declaration commands/add-collector.md's
+  # background variant now teaches, the same shape as the queue sub-check's
+  # own client_init above with one added interval flag: this marker only
+  # DECLARES tapeTarget/tapeTimeout/tapeInterval/tapeClient, and
+  # // @@CLIENT_BUILD@@ below is what actually assigns tapeClient, so this
+  # step alone would leave tapeClient declared and never assigned, a compile
+  # error, until step 3 fills it in. The marker comment itself survives
+  # every previous injection (see scaffold.sh's own comment on why), so it
+  # is still there to reuse.
   cat > "$addc_bg_client" <<'EOF'
 	tapeTarget := kingpin.Flag("collector.tape.target", "Base URL the tape collector scrapes.").Default("http://localhost:9999").String()
 	tapeTimeout := kingpin.Flag("collector.tape.timeout", "Per-request timeout for the tape collector.").Default("5s").Duration()
 	tapeInterval := kingpin.Flag("collector.tape.interval", "Refresh interval for the tape collector.").Default("5m").Duration()
+	// Declared here, assigned at // @@CLIENT_BUILD@@ once flags are parsed.
+	// The registry closure below captures it by reference and only
+	// dereferences it later, in main's construction loop.
+	var tapeClient *collector.Client
 EOF
   grep -q '^[[:blank:]]*// @@CLIENT_INIT@@[[:blank:]]*$' "$addc_bg_main" || die "add-collector background sub-check: no standalone // @@CLIENT_INIT@@ marker in $addc_bg_main"
   sed -e '\|^[[:blank:]]*// @@CLIENT_INIT@@[[:blank:]]*$|r '"$addc_bg_client" "$addc_bg_main" > "$addc_bg_main.tmp" && mv "$addc_bg_main.tmp" "$addc_bg_main"
   rm -f "$addc_bg_client"
 
-  # 3. Registry snippet under // @@COLLECTOR_REGISTRY@@: eager-construct +
+  # 3. // @@CLIENT_BUILD@@: build tapeClient from cfg.HTTPClientConfig, or
+  # fall back to the plain transport, exactly like the queue sub-check's own
+  # client_build splice above. commands/add-collector.md's background
+  # variant section is explicit that this marker does not vary by variant,
+  # so this reuses the SAME generic client_build.frag the queue splice reads
+  # from, renamed to tape/Tape instead of queue/Queue.
+  sed -e 's/example/tape/g' -e 's/Example/Tape/g' "$addc_build_frag" > "$addc_bg_build"
+  grep -q '^[[:blank:]]*// @@CLIENT_BUILD@@[[:blank:]]*$' "$addc_bg_main" || die "add-collector background sub-check: no standalone // @@CLIENT_BUILD@@ marker in $addc_bg_main"
+  sed -e '\|^[[:blank:]]*// @@CLIENT_BUILD@@[[:blank:]]*$|r '"$addc_bg_build" "$addc_bg_main" > "$addc_bg_main.tmp" && mv "$addc_bg_main.tmp" "$addc_bg_main"
+  rm -f "$addc_bg_build"
+
+  # 4. Registry snippet under // @@COLLECTOR_REGISTRY@@: eager-construct +
   # Start(ctx) + append(backgroundCollectors, ...) ALL INSIDE the
-  # register(...) closure (see commands/add-collector.md §5's own note on
+  # register(...) closure (see commands/add-collector.md's own note on
   # why: this splice point sits BEFORE kingpin.Parse() in main.go, so log
-  # is still nil and every flag pointer still holds its zero value there —
+  # is still nil and every flag pointer still holds its zero value there,
   # the closure defers all of this to the registry loop later in main(),
-  # which runs after Parse() and after log is assigned).
+  # which runs after Parse() and after log is assigned). Passes the
+  # tapeClient step 3 built rather than an inline collector.NewClient(...):
+  # the command's background variant reuses the same shared,
+  # http_client_config-aware client the synchronous queue sub-check builds,
+  # never a bespoke unauthenticated one.
   cat > "$addc_bg_registry" <<'EOF'
 	register("tape", func() prometheus.Collector {
-		tapeColl := collector.NewTapeCollector(log, collector.NewClient(*tapeTarget, *tapeTimeout), *tapeInterval)
+		tapeColl := collector.NewTapeCollector(log, tapeClient, *tapeInterval)
 		tapeColl.Start(ctx)
 		backgroundCollectors = append(backgroundCollectors, tapeColl)
 		return tapeColl
@@ -1197,8 +1232,10 @@ EOF
   [ "$addc_bg_regcount" -eq 1 ] || die "add-collector background sub-check: expected exactly 1 injected register(\"tape\" call, found $addc_bg_regcount ($flavor/$forge)"
   addc_bg_clientcount=$(grep -c 'tapeTarget := kingpin.Flag' "$addc_bg_main")
   [ "$addc_bg_clientcount" -eq 1 ] || die "add-collector background sub-check: expected exactly 1 injected client_init copy, found $addc_bg_clientcount ($flavor/$forge)"
+  addc_bg_buildcount=$(grep -c 'tapeClient = collector.NewClient(\*tapeTarget, \*tapeTimeout)' "$addc_bg_main")
+  [ "$addc_bg_buildcount" -eq 1 ] || die "add-collector background sub-check: expected exactly 1 injected client_build copy, found $addc_bg_buildcount ($flavor/$forge)"
 
-  # 4. docs/metrics.md row, including the freshness gauge — the metric
+  # 5. docs/metrics.md row, including the freshness gauge, the metric
   # Decision 4/6 of the background-refresh design exist for.
   cat >> "$addc_bg_metrics_doc" <<'EOF'
 

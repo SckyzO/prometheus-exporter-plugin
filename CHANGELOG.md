@@ -28,6 +28,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scrape timeout so a probe answers before Prometheus abandons the scrape.
 - `probe_timeout_seconds` is exported alongside `probe_success` and
   `probe_duration_seconds`.
+- **Optional YAML configuration file** (`--config.file`): every scaffolded
+  exporter can load a `flags:` section (any flag the binary declares,
+  addressable by name) and an `http_client_config:` section (basic auth,
+  bearer token, TLS/client certs) for the authentication no flag surface can
+  express. `http_client_config:` is honored by the HTTP flavor only; the CLI
+  flavor refuses to start if it is set, since it runs a local command and has
+  nothing to authenticate against. Precedence is command-line flag, then the
+  file, then environment, then the flag's own built-in default. A binary
+  started without `--config.file` is unchanged: the flag defaults to empty
+  and nothing is read.
+
+### Security
+
+- Bumped the scaffold's `golang.org/x/text` dependency to v0.39.0, closing
+  GO-2026-5970: `govulncheck` reports the underlying infinite-loop advisory as
+  reachable through `NewClientFromConfig`'s path to `norm.Form`, so every
+  scaffolded exporter that builds an authenticated client inherited it.
+  `go mod tidy` carried `golang.org/x/sync` to v0.21.0 along with it as a
+  transitive requirement, and moved `go.yaml.in/yaml/v2` from the indirect
+  block to the direct one, which it had already earned when `internal/config`
+  started importing it directly.
 
 ### Fixed
 

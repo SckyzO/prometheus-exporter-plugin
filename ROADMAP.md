@@ -78,6 +78,20 @@ it points to.
   are runtime flags naming collectors, so adding a collector can never
   invalidate one.
 
+## v0.4
+
+- **Optional YAML configuration file** (`--config.file`): a `flags:` section
+  addressable by any flag the binary declares, and an `http_client_config:`
+  section for the authentication and TLS no flag surface can express,
+  honored by the HTTP flavor only (the CLI flavor refuses to start if it is
+  set, since it has nothing to authenticate against). Absent
+  `--config.file`, a scaffolded exporter behaves exactly as before: no
+  default moves and no existing scaffold changes. Prerequisite for v0.5's
+  `fanout` target model, which cannot express N instances with per-instance
+  credentials through a kingpin flag surface. The instance list
+  (`instances:`) and the fan-out target model itself are v0.5, not this
+  release.
+
 ## v1.0
 
 - Marketplace polish.

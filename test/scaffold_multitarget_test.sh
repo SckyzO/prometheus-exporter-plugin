@@ -59,6 +59,7 @@ grep -q 'factories \[\]NamedFactory' "$probefile" || fail "multi scaffold's prob
 # The multi main model carries only its own marker (// @@PROBE_FACTORIES@@);
 # it must never retain the single-target markers verbatim as dead comments.
 grep -q '// @@CLIENT_INIT@@' "$mainfile" && fail "multi scaffold's main.go still has a // @@CLIENT_INIT@@ marker (single-only)"
+grep -q '// @@CLIENT_BUILD@@' "$mainfile" && fail "multi scaffold's main.go still has a // @@CLIENT_BUILD@@ marker (single-only)"
 grep -q '// @@COLLECTOR_REGISTRY@@' "$mainfile" && fail "multi scaffold's main.go still has a // @@COLLECTOR_REGISTRY@@ marker (single-only)"
 
 echo "PASS: --target-model multi ships internal/probe and wires /probe"

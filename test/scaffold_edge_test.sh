@@ -199,14 +199,14 @@ run --src "$fixtures" --dst "$work/selfcopy-dst" \
 
 # ---------------------------------------------------------------------------
 # Task 5: HTTP-flavor wiring-marker injection. scaffold.sh must fill
-# // @@CLIENT_INIT@@ and // @@COLLECTOR_REGISTRY@@ in main.go from the
-# selected flavor's code/<flavor>/wiring/*.frag snippets, keep each marker
-# comment line itself intact (so /add-collector can reuse it later), and
-# remove the internal/collector/wiring/ staging directory afterward so it
-# never ships in the generated repo. Exercised against the REAL assets tree
-# (not fixtures/mini-template): the wiring frags and the markers they fill
-# are real production content, not scaffold-engine plumbing, and
-# mini-template deliberately carries neither.
+# // @@CLIENT_INIT@@, // @@CLIENT_BUILD@@, and // @@COLLECTOR_REGISTRY@@ in
+# main.go from the selected flavor's code/<flavor>/wiring/*.frag snippets,
+# keep each marker comment line itself intact (so /add-collector can reuse
+# it later), and remove the internal/collector/wiring/ staging directory
+# afterward so it never ships in the generated repo. Exercised against the
+# REAL assets tree (not fixtures/mini-template): the wiring frags and the
+# markers they fill are real production content, not scaffold-engine
+# plumbing, and mini-template deliberately carries neither.
 # ---------------------------------------------------------------------------
 realassets="$root/skills/prometheus-exporter/assets"
 run --src "$realassets" --dst "$work/wiring-dst" --flavor http --forge none \
@@ -227,6 +227,8 @@ done
 
 grep -q 'exampleTarget := kingpin.Flag' "$mainfile" || fail "client_init.frag was not injected into main.go"
 grep -q '// @@CLIENT_INIT@@' "$mainfile" || fail "// @@CLIENT_INIT@@ marker must survive injection so /add-collector can reuse it"
+grep -q 'exampleClient = collector.NewClient(\*exampleTarget, \*exampleTimeout)' "$mainfile" || fail "client_build.frag was not injected into main.go"
+grep -q '// @@CLIENT_BUILD@@' "$mainfile" || fail "// @@CLIENT_BUILD@@ marker must survive injection so /add-collector can reuse it"
 grep -q 'register("example"' "$mainfile" || fail "registry.frag was not injected into main.go"
 grep -q '// @@COLLECTOR_REGISTRY@@' "$mainfile" || fail "// @@COLLECTOR_REGISTRY@@ marker must survive injection so /add-collector can reuse it"
 [ ! -d "$work/wiring-dst/internal/collector/wiring" ] || fail "internal/collector/wiring/ staging dir should be removed after injection"
@@ -244,6 +246,8 @@ regcount=$(grep -c 'register("example"' "$mainfile")
 [ "$regcount" -eq 1 ] || fail "expected exactly 1 injected register(\"example\" call, found $regcount (regex likely matches register()'s own doc-comment prose mention of the marker too)"
 initcount=$(grep -c 'exampleTarget := kingpin.Flag' "$mainfile")
 [ "$initcount" -eq 1 ] || fail "expected exactly 1 injected client_init.frag copy, found $initcount"
+buildcount=$(grep -c 'exampleClient = collector.NewClient(\*exampleTarget, \*exampleTimeout)' "$mainfile")
+[ "$buildcount" -eq 1 ] || fail "expected exactly 1 injected client_build.frag copy, found $buildcount"
 
 # ---------------------------------------------------------------------------
 # Task 11: flavor-specific docs/metrics.md relocation. code/<flavor>/
