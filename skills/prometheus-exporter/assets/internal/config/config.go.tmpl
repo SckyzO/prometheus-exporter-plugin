@@ -122,8 +122,17 @@ func (c *Config) Validate(app *kingpin.Application) error {
 		declared[f.Name] = f
 	}
 
-	var unknown, empty, notBool []string
+	var unknown, empty, notBool, notScalar, selfRef []string
 	for name, v := range c.Flags {
+		// config.file names this very file. It is a declared flag, so the
+		// unknown-key check below would accept it, and ToArgs would render it
+		// into arguments that arrive far too late to matter: the path was
+		// already read from os.Args before parsing. Rejecting it says so,
+		// rather than letting the key sit there doing nothing.
+		if name == "config.file" {
+			selfRef = append(selfRef, name)
+			continue
+		}
 		f, ok := declared[name]
 		if !ok {
 			unknown = append(unknown, name)
@@ -135,6 +144,16 @@ func (c *Config) Validate(app *kingpin.Application) error {
 		}
 		if _, isBool := v.(bool); isBool && !f.IsBoolFlag() {
 			notBool = append(notBool, name)
+			continue
+		}
+		// A nested block under a flag name is a shape no flag can take.
+		// Without this, renderFlag's default case would format the map with
+		// %v and hand kingpin --name=map[a:1 b:2], which a string flag
+		// accepts without complaint: the same silent corruption the boolean
+		// check above exists to stop.
+		switch v.(type) {
+		case map[interface{}]interface{}, map[string]interface{}:
+			notScalar = append(notScalar, name)
 		}
 	}
 
@@ -142,6 +161,8 @@ func (c *Config) Validate(app *kingpin.Application) error {
 	sort.Strings(unknown)
 	sort.Strings(empty)
 	sort.Strings(notBool)
+	sort.Strings(notScalar)
+	sort.Strings(selfRef)
 
 	var parts []string
 	switch {
@@ -152,6 +173,14 @@ func (c *Config) Validate(app *kingpin.Application) error {
 		parts = append(parts, fmt.Sprintf("unknown flag(s) under \"flags:\": %s", strings.Join(unknown, ", ")))
 	case len(empty) > 0:
 		parts = append(parts, fmt.Sprintf("flag(s) with no value under \"flags:\": %s", strings.Join(empty, ", ")))
+	}
+	if len(notScalar) > 0 {
+		parts = append(parts, fmt.Sprintf(
+			"flag(s) given a nested block instead of a value: %s; a flag takes a scalar, or a list if it is repeatable",
+			strings.Join(notScalar, ", ")))
+	}
+	if len(selfRef) > 0 {
+		parts = append(parts, "config.file cannot be set from inside the configuration file; pass it on the command line")
 	}
 	if len(notBool) > 0 {
 		parts = append(parts, fmt.Sprintf(

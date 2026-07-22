@@ -58,7 +58,11 @@ flags:
     - "127.0.0.1:19101"
 
   # A collector's own flags follow the same rule as any built-in flag.
-  collector.example.timeout: 10s
+  # Commented out because this file ships with both target models and a
+  # multi-target exporter declares no collector.example.* flags: its target
+  # arrives per request on /probe rather than from a flag. Uncomment it on a
+  # single-target exporter, where the flag exists.
+  # collector.example.timeout: 10s
 
 # http_client_config carries the authentication and TLS settings no flag can
 # express. It only applies to an HTTP-flavor exporter's outbound requests. A

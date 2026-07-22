@@ -225,8 +225,9 @@ every flag already holds its final value. The logger built from `*logLevel`
 
 The one requirement is that **`--config.file` itself is declared like any other
 flag** so that it appears in `--help`, even though its value is read from
-`os.Args` before parsing. Declaring it also lets `Validate` reject a `flags:`
-key naming it, which would otherwise be silently ignored.
+`os.Args` before parsing. Because it is declared, the unknown-key check would
+accept a `flags: config.file:` entry and then do nothing with it: the path was
+already read. `Validate` therefore rejects that key by name.
 
 A load or validation failure exits non-zero with a message on stderr: the
 logger is not built yet, by construction, so there is nothing else to write to.

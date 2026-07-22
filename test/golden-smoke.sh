@@ -461,6 +461,21 @@ if ! ( cd "$work" && make check ); then
   die "make check FAILED for $flavor/$forge — see output above"
 fi
 
+# config.example.yml must LOAD, not merely exist. It is the file
+# docs/configuration.md tells the operator to copy and run, and it ships
+# unchanged across every flavor and target model, so an entry naming a flag
+# only one of them declares makes it exit 1 out of the box. That is exactly
+# what happened once: collector.example.timeout does not exist on a
+# multi-target binary, and the existence check above could not see it.
+# --help is enough: --config.file is read and validated before kingpin gets
+# its arguments, so a bad file fails here without binding a port.
+echo "== config.example.yml loads ($flavor/$forge) =="
+if ! ( cd "$work" && ./bin/demo_exporter --config.file=config.example.yml --help >/dev/null 2>&1 ); then
+  ( cd "$work" && ./bin/demo_exporter --config.file=config.example.yml --help >/dev/null ) || true
+  die "config.example.yml FAILED to load for $flavor/$forge; the shipped example must work on every cell"
+fi
+echo "confirmed: config.example.yml loads ($flavor/$forge)"
+
 # promtool check rules (Task 12): monitoring/prometheus/{alerts,rules}.yml must
 # be valid Prometheus rule files — the same anti-lie bar as docs-check, just
 # for PromQL instead of Go source. promtool itself is not in the tools image

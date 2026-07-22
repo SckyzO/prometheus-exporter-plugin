@@ -45,10 +45,11 @@ var (
 		"Exclude Go runtime and process metrics from /metrics endpoint.",
 	).Default("false").Bool()
 
-	// configFile is declared like any other flag so it appears in --help and
-	// so Validate can reject a "flags:" key naming it. Its VALUE is read
-	// straight from os.Args below, before parsing, because it decides which
-	// arguments the parser is given.
+	// configFile is declared like any other flag so kingpin accepts it on the
+	// command line and lists it in --help. Its VALUE is read straight from
+	// os.Args below, before parsing, because it decides which arguments the
+	// parser is given. Setting it from inside the file it names would arrive
+	// far too late, so Validate rejects that key.
 	configFile = kingpin.Flag(
 		"config.file",
 		"Path to a YAML configuration file. Unrelated to --web.config.file, which configures the TLS server this exporter exposes.",
