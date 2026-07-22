@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-22
+
 ### Changed
 
 - **Breaking (multi-target only):** `--collector.example.timeout` is renamed
@@ -39,16 +41,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   started without `--config.file` is unchanged: the flag defaults to empty
   and nothing is read.
 
-### Security
+- A scaffolded exporter's dependency floor moves: `golang.org/x/text` to
+  v0.39.0, and `golang.org/x/sync` to v0.21.0 as a transitive requirement of
+  it. `go.yaml.in/yaml/v2` also moves from the indirect block to the direct
+  one, which it earned when `internal/config` started importing it.
 
-- Bumped the scaffold's `golang.org/x/text` dependency to v0.39.0, closing
-  GO-2026-5970: `govulncheck` reports the underlying infinite-loop advisory as
-  reachable through `NewClientFromConfig`'s path to `norm.Form`, so every
-  scaffolded exporter that builds an authenticated client inherited it.
-  `go mod tidy` carried `golang.org/x/sync` to v0.21.0 along with it as a
-  transitive requirement, and moved `go.yaml.in/yaml/v2` from the indirect
-  block to the direct one, which it had already earned when `internal/config`
-  started importing it directly.
+  No released version of this plugin ever generated an exporter affected by
+  GO-2026-5970, the advisory the `x/text` bump closes. Reaching the
+  vulnerable code requires calling `NewClientFromConfig`, which nothing
+  imported before the configuration layer above. That call and the bump that
+  closes it both land in this release, so there is nothing to upgrade away
+  from and no reason to rebuild an exporter generated from v0.3.0 or earlier.
 
 ### Fixed
 

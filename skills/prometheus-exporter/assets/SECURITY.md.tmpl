@@ -43,6 +43,38 @@ Only the latest release receives security fixes.
   `govulncheck` run on every pull request, and Dependabot-managed dependency updates across
   Go modules, GitHub Actions, and container base images.
 
+## Configuration file
+
+`--config.file` is optional and empty by default: pass no such flag and this
+exporter reads nothing from disk. If you do use it, its `http_client_config:`
+section is the one place in a generated repository that can hold credentials,
+so treat that file as a secret.
+
+- **Prefer the `_file` variants to inline values.** `password_file`,
+  `bearer_token_file`, `credentials_file`, `ca_file`, `cert_file` and
+  `key_file` keep the secret in its own file, which you can permission and
+  rotate separately, and keep it out of the configuration you might paste into
+  an issue. `password`, `bearer_token`, `credentials` and `key` accept the
+  value inline; that is supported, not recommended.
+- **Restrict the file's permissions.** It is read once at startup by the user
+  running the exporter, so `0600` owned by that user is enough. The same goes
+  for any file a `_file` key points at.
+- **Paths inside the file resolve relative to the file itself**, not to the
+  working directory the exporter was started from. A unit started from `/` and
+  a shell started from the repository therefore read the same certificate.
+- Nothing from this section reaches `/metrics`: this exporter never places a
+  configuration value in a metric or a label, and it never logs the parsed
+  configuration. Note that `prometheus/common`'s `Secret` type redacts itself
+  when the configuration is marshalled back to YAML or JSON, not when it is
+  formatted with `%v`, so a collector you add must not print one either.
+- `config.example.yml` ships at the repository root as documentation. It is
+  never loaded unless you point `--config.file` at it, and its
+  `http_client_config:` block is commented out, so it holds no credentials as
+  shipped.
+
+See [docs/configuration.md](docs/configuration.md) for the file's format and
+the precedence rules.
+
 ## Multi-target `/probe` (if applicable)
 
 Multi-target builds (`--target-model multi`) also expose a
