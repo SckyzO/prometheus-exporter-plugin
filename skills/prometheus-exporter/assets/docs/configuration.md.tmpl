@@ -121,9 +121,10 @@ exporter's outbound requests, gets its own section instead,
 `http_client_config:`. No setting is ever expressible in both places, so a
 value never has two conflicting sources.
 
-`http_client_config:` is HTTP-flavor only: a CLI-flavor exporter has no
-outbound HTTP client of its own to configure and ignores that section
-entirely.
+`http_client_config:` is HTTP-flavor only. A CLI-flavor exporter runs a local
+command rather than issuing HTTP requests, so it has nothing to authenticate.
+Given that section it exits with an error instead of starting, because a
+setting that looks applied but does nothing is worse than a refusal.
 
 **Precedence, highest wins:**
 

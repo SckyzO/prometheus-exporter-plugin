@@ -50,18 +50,21 @@ flags:
   # two here binds both instead of just the second one. Pick addresses that
   # do not overlap: on Linux, a wildcard address already covers both IPv4
   # and IPv6 on the same port, so also listing an explicit ::1 on that same
-  # port fails to bind.
+  # port fails to bind. The second entry below deliberately sits well outside
+  # the 9100 to 9999 range exporters draw their default port from, so it
+  # cannot collide with the first whatever port this exporter was built with.
   web.listen-address:
     - ":@@DEFAULT_PORT@@"
-    - "127.0.0.1:9101"
+    - "127.0.0.1:19101"
 
   # A collector's own flags follow the same rule as any built-in flag.
   collector.example.timeout: 10s
 
 # http_client_config carries the authentication and TLS settings no flag can
-# express. It only applies to an HTTP-flavor exporter's outbound requests; a
-# CLI-flavor exporter has no HTTP client to configure and ignores this
-# section entirely.
+# express. It only applies to an HTTP-flavor exporter's outbound requests. A
+# CLI-flavor exporter runs a local command instead, so it has nothing to
+# authenticate: given this section it refuses to start rather than accept a
+# setting it would silently drop.
 #
 # Commented out here on purpose: an active block pointing at password_file/
 # ca_file/cert_file/key_file paths that do not exist on your machine would
