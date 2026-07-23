@@ -86,6 +86,41 @@ run --src "$assets" --dst "$work/explicit-single" --flavor http --forge none --t
 echo "PASS: explicit --target-model single matches the default"
 
 # ---------------------------------------------------------------------------
+# 2b. --target-model multi-instance (http/none): ships internal/instance/, no
+#     internal/probe/, wires WrapRegistererWith, and ships the BACKGROUND
+#     collector as its starter.
+# ---------------------------------------------------------------------------
+# shellcheck disable=SC2086
+run --src "$assets" --dst "$work/mi" --flavor http --forge none --target-model multi-instance --instance-label target $commonvars
+[ "$rc" -eq 0 ] || fail "multi-instance scaffold exited $rc, expected 0 (stderr: $(cat "$err"))"
+
+[ -f "$work/mi/internal/instance/instance.go" ] || fail "multi-instance scaffold did not ship internal/instance/instance.go"
+[ ! -d "$work/mi/internal/probe" ] || fail "multi-instance scaffold shipped internal/probe/ (should be multi-only)"
+
+mi_main=$(find "$work/mi/cmd" -maxdepth 2 -name main.go)
+[ -n "$mi_main" ] || fail "multi-instance scaffold has no cmd/*/main.go"
+grep -q 'WrapRegistererWith' "$mi_main" || fail "multi-instance main.go does not wrap per-instance labels"
+grep -q 'var factories \[\]instance.Factory' "$mi_main" || fail "multi-instance main.go does not declare the instance factories slice"
+grep -q '// @@INSTANCE_FACTORIES@@' "$mi_main" || fail "multi-instance main.go lost the // @@INSTANCE_FACTORIES@@ marker (/add-collector appends there)"
+grep -q '/probe' "$mi_main" && fail "multi-instance main.go registers /probe (should be multi-only)"
+
+# The starter collector must be the background variant (has Start/Done), not the
+# synchronous one.
+grep -q 'func (c \*ExampleCollector) Start(' "$work/mi/internal/collector/collector.go" || fail "multi-instance starter collector is not the background variant"
+
+echo "PASS: --target-model multi-instance ships internal/instance and the background starter"
+
+# ---------------------------------------------------------------------------
+# 2c. --target-model multi-instance --flavor cli must be rejected.
+# ---------------------------------------------------------------------------
+# shellcheck disable=SC2086
+run --src "$assets" --dst "$work/bad-cli-mi" --flavor cli --forge none --target-model multi-instance $commonvars
+[ "$rc" -ne 0 ] || fail "--target-model multi-instance --flavor cli was accepted, expected rejection"
+grep -q 'target-model multi-instance requires --flavor http' "$err" || fail "expected a clear cli-rejection message, got: $(cat "$err")"
+
+echo "PASS: --target-model multi-instance --flavor cli is rejected"
+
+# ---------------------------------------------------------------------------
 # 3. --target-model multi --flavor cli must be rejected: there is no cli
 #    multi-target (Global Constraint, docs/design/2026-07-10-multi-target-design.md).
 # ---------------------------------------------------------------------------
