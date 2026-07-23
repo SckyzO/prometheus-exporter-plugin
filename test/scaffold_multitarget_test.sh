@@ -32,7 +32,7 @@ run() {
   "$scaffold" "$@" >"$out" 2>"$err" || rc=$?
 }
 
-commonvars="--var EXPORTER_NAME=demo --var NAMESPACE=demo --var MODULE_PATH=example.com/demo --var DATA_SOURCE=http://localhost:9999 --var DATA_SOURCE_PATH=/api/example --var DEFAULT_PORT=9999 --var LICENSE=apache-2.0 --var OWNER=demo"
+commonvars="--var EXPORTER_NAME=demo --var NAMESPACE=demo --var MODULE_PATH=example.com/demo --var DATA_SOURCE=http://localhost:9999 --var DATA_SOURCE_PATH=/api/example --var DEFAULT_PORT=9999 --var LICENSE=apache-2.0 --var OWNER=demo --var COLLECTOR_HEALTH_BY=job --var COLLECTOR_LOCATION=instance"
 
 # ---------------------------------------------------------------------------
 # 1. --target-model multi (http/none): ships internal/probe/probe.go, and

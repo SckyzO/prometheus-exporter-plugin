@@ -261,7 +261,9 @@ case "$flavor-$forge" in
       --var DATA_SOURCE_PATH=/api/example \
       --var DEFAULT_PORT=9999 \
       --var OWNER=acme \
-      --var LICENSE=apache-2.0
+      --var LICENSE=apache-2.0 \
+      --var COLLECTOR_HEALTH_BY=job \
+      --var COLLECTOR_LOCATION=instance
     ;;
   cli-none)
     sh "$assets/scaffold.sh" \
@@ -274,7 +276,9 @@ case "$flavor-$forge" in
       --var DATA_SOURCE_PATH=unused \
       --var DEFAULT_PORT=9999 \
       --var OWNER=acme \
-      --var LICENSE=apache-2.0
+      --var LICENSE=apache-2.0 \
+      --var COLLECTOR_HEALTH_BY=job \
+      --var COLLECTOR_LOCATION=instance
     ;;
   http-github)
     sh "$assets/scaffold.sh" \
@@ -287,7 +291,9 @@ case "$flavor-$forge" in
       --var DATA_SOURCE_PATH=/api/example \
       --var DEFAULT_PORT=9999 \
       --var OWNER=acme \
-      --var LICENSE=apache-2.0
+      --var LICENSE=apache-2.0 \
+      --var COLLECTOR_HEALTH_BY=job \
+      --var COLLECTOR_LOCATION=instance
     ;;
   cli-github)
     sh "$assets/scaffold.sh" \
@@ -300,7 +306,9 @@ case "$flavor-$forge" in
       --var DATA_SOURCE_PATH=unused \
       --var DEFAULT_PORT=9999 \
       --var OWNER=acme \
-      --var LICENSE=apache-2.0
+      --var LICENSE=apache-2.0 \
+      --var COLLECTOR_HEALTH_BY=job \
+      --var COLLECTOR_LOCATION=instance
     ;;
   *)
     die "no golden @@VAR@@ values wired for --flavor $flavor --forge $forge (only http+none, cli+none, http+github, cli+github are wired)"
