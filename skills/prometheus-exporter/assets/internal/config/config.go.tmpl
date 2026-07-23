@@ -428,6 +428,19 @@ func (c *Config) ResolveInstances(instanceLabel string) ([]ResolvedInstance, err
 			ClientConfig: hc,
 		})
 	}
+
+	// Every instance must declare the same set of label keys. WrapRegistererWith
+	// folds them into each metric's ConstLabels, and the shared registry rejects
+	// two collectors that share a metric name but differ in label-key dimension,
+	// which would otherwise surface as an opaque panic at registration.
+	if len(c.Instances) > 1 {
+		refKeys := sortedLabelKeys(c.Instances[0].Labels)
+		for _, inst := range c.Instances[1:] {
+			if keys := sortedLabelKeys(inst.Labels); !equalStrings(keys, refKeys) {
+				return nil, fmt.Errorf("instance %q declares label keys %v but instance %q declares %v; every instance must declare the same label keys", inst.Name, keys, c.Instances[0].Name, refKeys)
+			}
+		}
+	}
 	return out, nil
 }
 
@@ -470,6 +483,30 @@ func validateInstanceAddress(addr string) error {
 		return fmt.Errorf("address %q has no host", addr)
 	}
 	return nil
+}
+
+// sortedLabelKeys returns m's keys sorted, for a deterministic comparison and
+// error message.
+func sortedLabelKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// equalStrings reports whether two string slices are element-wise equal.
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // RejectModulesAndInstances refuses a modules: or instances: section, which a

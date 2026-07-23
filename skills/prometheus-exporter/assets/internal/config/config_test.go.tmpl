@@ -485,6 +485,26 @@ func TestResolveInstancesRejectsModuleCollectorsSubset(t *testing.T) {
 	}
 }
 
+func TestResolveInstancesRejectsHeterogeneousLabelKeys(t *testing.T) {
+	c := &Config{Instances: []Instance{
+		{Name: "a", Address: "https://a.example.net", Labels: map[string]string{"rack": "r1"}},
+		{Name: "b", Address: "https://b.example.net"},
+	}}
+	if _, err := c.ResolveInstances("target"); err == nil {
+		t.Fatal("ResolveInstances accepted instances with different label key sets (would panic at registry registration)")
+	}
+}
+
+func TestResolveInstancesAcceptsUniformLabelKeys(t *testing.T) {
+	c := &Config{Instances: []Instance{
+		{Name: "a", Address: "https://a.example.net", Labels: map[string]string{"rack": "r1"}},
+		{Name: "b", Address: "https://b.example.net", Labels: map[string]string{"rack": "r2"}},
+	}}
+	if _, err := c.ResolveInstances("target"); err != nil {
+		t.Fatalf("ResolveInstances rejected uniform label keys: %v", err)
+	}
+}
+
 func TestRejectModulesAndInstances(t *testing.T) {
 	if err := (&Config{}).RejectModulesAndInstances(); err != nil {
 		t.Errorf("errored on an empty config: %v", err)
