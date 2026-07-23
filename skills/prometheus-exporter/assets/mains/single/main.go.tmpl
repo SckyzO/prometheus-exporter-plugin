@@ -154,6 +154,11 @@ func main() {
 		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
 		os.Exit(1) //nolint:gocritic // stop() called explicitly above
 	}
+	if err := cfg.RejectModulesAndInstances(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+		os.Exit(1) //nolint:gocritic // stop() called explicitly above
+	}
 	// The logger does not exist yet (it is built from flags, below), so a
 	// failure here goes to stderr.
 	kingpin.MustParse(kingpin.CommandLine.Parse(
