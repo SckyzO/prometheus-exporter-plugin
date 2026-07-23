@@ -27,6 +27,8 @@ internal/collector/
   ...                    # one file pair per collector /add-collector adds later
 internal/logger/
   logger.go              # thin log/slog wrapper
+internal/instance/
+  instance.go            # multi-instance seam: the background collector Factory the multi-instance main fans out over instances
 ```
 
 Neither `internal/collector` nor `internal/logger` is Prometheus-specific by

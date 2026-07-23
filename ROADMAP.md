@@ -87,30 +87,47 @@ it points to.
   set, since it has nothing to authenticate against). Absent
   `--config.file`, a scaffolded exporter behaves exactly as before: no
   default moves and no existing scaffold changes. Prerequisite for v0.5's
-  `fanout` target model, which cannot express N instances with per-instance
-  credentials through a kingpin flag surface. The instance list
-  (`instances:`) and the fan-out target model itself are v0.5, not this
-  release.
+  `multi-instance` target model, which cannot express N instances with
+  per-instance credentials through a kingpin flag surface. The instance list
+  (`instances:`) and the multi-instance target model itself are v0.5, not
+  this release.
 
 ## v0.5
 
-- **A third target model, `fanout`.** Single-target watches one instance
-  fixed at scaffold time; multi-target takes its instance per request on
-  `/probe`. Fan-out sits between them: one process scrapes a list of
-  instances declared in the configuration file, each with its own
-  authentication, TLS and labels. That list is why v0.4 came first, since a
-  kingpin flag surface cannot express N instances with per-instance
-  credentials.
-- The generic half belongs here: the `instances:` list, per-instance
-  authentication, TLS, labels and overrides, reload on SIGHUP, and fail-fast
-  validation at startup. Anything that answers one target's hardware
-  constraint belongs in that exporter's own repository, not in the scaffold.
+- **A third target model, `multi-instance`, delivered.** Single-target
+  watches one instance fixed at scaffold time; multi-target takes its
+  instance per request on `/probe`. Neither fits a target whose data is only
+  worth refreshing every fifteen minutes or once a night: Prometheus only
+  keeps a sample queryable for a staleness window that defaults to five
+  minutes, so slowing down `scrape_interval` just makes the series flicker
+  in and out of existence instead of settling anything, and `/probe` cannot
+  host a background poller because a poller needs its target at startup, not
+  per request. Multi-instance is the fix: one process watches a list of
+  instances declared in the configuration file (`instances:`), each polled
+  in the background on its own schedule and re-served from a cache on every
+  scrape, so the scrape itself stays fast no matter how slow the underlying
+  fetch is. This isn't specific to tape libraries or any one slow device;
+  the same argument applies to any application API, batch job, or nightly
+  inventory that can't be scraped live.
+- Delivered as part of this: the `instances:` list, per-instance labels,
+  module-based credential and TLS selection (`modules:`, building on v0.4's
+  configuration file), a fixed identifying label applied to every instance's
+  series (default `target`, set once at scaffold time via
+  `scaffold.sh --instance-label`), and fail-fast validation at boot (unique
+  instance names, valid addresses, resolvable modules, no label collisions).
+- **Sequenced follow-up: per-target credentials for `multi` (volet A).** The
+  `multi` (`?target=`) model still authenticates every target through one
+  shared `http_client_config:`. Next on this epic: let it select a module
+  per `?target=` request, the same thing multi-instance already does per
+  instance. Not part of this drop.
+- Also not in this drop: reload on SIGHUP (pushed to v0.6) and per-instance
+  flag overrides (not planned unless a real consumer needs one).
 - Budget the combinatorial cost in the design rather than discovering it in
   flight. Three target models against two flavors and two collector variants
-  would multiply both `scaffold.sh` and the `golden-smoke` matrix, which
-  already runs five containerised cells. Decide up front which combinations
-  are supported and which are refused fail-fast, the way `multi` already
-  requires `--flavor http`.
+  multiply both `scaffold.sh` and the `golden-smoke` matrix, now six
+  containerised cells. Decide up front which combinations are supported and
+  which are refused fail-fast, the way `multi` and `multi-instance` already
+  require `--flavor http`.
 
 ## v1.0
 
