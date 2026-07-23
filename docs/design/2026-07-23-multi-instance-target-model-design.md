@@ -187,10 +187,13 @@ Then:
    file is a configuration fault that must stop the process at boot rather than
    surface on the first scrape.
 3. **For each instance, for each enabled factory:** call
-   `f.New(ctx, inst.Address, timeout)`, add the collector to a per-instance
-   `StatusTracker`, and register that tracker against
+   `f.New(inst.Address, inst.ClientConfig)`, which returns a background
+   collector (poller plus cache) already bound to that instance's transport;
+   call its `Start(ctx)`, add it to the shared shutdown-wait slice, add it to a
+   per-instance `StatusTracker`, and register that tracker against
    `prometheus.WrapRegistererWith(labels, reg)` where `labels` carries the
-   identifying label plus the instance's extra labels.
+   identifying label plus the instance's extra labels. The factory is the
+   `internal/instance` seam, not `probe.NamedFactory` (see §9).
 4. `/metrics`, `/healthz`, `/`. No `/probe`.
 
 **Collector flags stay.** The `multi-instance` main keeps the
@@ -259,25 +262,59 @@ Therefore, on a multi-instance scaffold:
   the mirror of its existing refusal of the background variant on `multi`
   (`commands/add-collector.md:191-195`).
 
-## 9. Architecture: reuse the `NamedFactory` seam
+## 9. Architecture: mirror the `NamedFactory` pattern with a background seam
 
-The multi-target epic already introduced
-`probe.NamedFactory{Name string, New func(ctx, target, timeout) (prometheus.Collector, error)}`,
-whose job is precisely "build a collector for a given target". `multi` calls it
-once per request; `multi-instance` calls it once per instance at boot. Same
-interface, different call site.
+The multi-target epic introduced
+`probe.NamedFactory{Name, New func(ctx, target, timeout) (prometheus.Collector, error)}`,
+whose `New` builds a **synchronous** collector: the probe re-scrapes its target
+on every request, so no goroutine and no cache are involved. `multi-instance`
+mandates the opposite (§8): a **background** collector, whose constructor takes
+a refresh interval, must be `Start(ctx)`-ed, and must be waited on via `Done()`
+at shutdown. That lifecycle does not fit through the synchronous `New` signature
+(`timeout` is not `interval`; there is nowhere to hand back the `Start`/`Done`
+handle), and widening the probe seam to carry it would make the same seam mean
+two incompatible things.
+
+So `multi-instance` gets its own seam, `internal/instance`, that mirrors the
+`NamedFactory` pattern rather than reusing the type:
+
+```go
+package instance
+
+type BackgroundCollector interface {
+	prometheus.Collector
+	Start(context.Context)
+	Done() <-chan struct{}
+}
+
+type Factory struct {
+	Name    string
+	Enabled *bool // the --[no-]collector.<name> toggle, kept per §5
+	New     func(addr string, hcfg *promconfig.HTTPClientConfig) (BackgroundCollector, error)
+}
+```
+
+`New` builds the instance's `*collector.Client` (honouring the module's
+`http_client_config`, or the default transport when absent) and the background
+collector around it; it may fail on an unreadable CA or secret file, which fails
+the boot. `*ExampleCollector`, the background variant already shipped
+(`code/http/variants/background_collector.go.tmpl`), satisfies
+`BackgroundCollector` structurally, so no collector or test template changes.
 
 Consequences:
 
-- **Collectors are untouched.** The client is already injected
-  (`NewExampleCollector(ctx, log, client)`), and `NewClientFor(target, hc)`
-  already separates target from transport. No collector or test template
-  changes.
-- **`/add-collector` reuses its multi branch.** No third wiring shape to teach.
-- **The shared wiring fragment learns to resolve a client per target** instead
-  of capturing one. For `multi` this stays one client for all targets
-  (behaviour identical, covered by the existing http-multi golden cell); for
-  `multi-instance` it is one client per instance.
+- **The probe seam is untouched.** `multi` (`?target=`) keeps
+  `probe.NamedFactory` verbatim; volet A adds module-credential selection to it
+  (§1A) without changing its synchronous lifecycle. Zero regression risk to the
+  shipped `multi` runtime.
+- **Collectors are untouched.** `multi-instance` ships the existing background
+  variant as its starter (§8, §10); `NewExampleCollector(log, client, interval)`
+  and `NewClientWithConfig(target, timeout, hc)` already exist. No template
+  edits.
+- **`/add-collector` gains a multi-instance branch** that appends an
+  `instance.Factory` (background only), the mirror of its existing multi branch.
+  It is a third wiring shape, the honest cost of two genuinely different
+  collector lifecycles.
 
 ## 10. Scaffold surface
 
