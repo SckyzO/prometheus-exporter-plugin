@@ -1,0 +1,69 @@
+package instance
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	promconfig "github.com/prometheus/common/config"
+)
+
+// fakeBG is a minimal BackgroundCollector that is NOT internal/collector's
+// ExampleCollector, proving the seam is satisfiable independently of any one
+// collector implementation.
+type fakeBG struct {
+	desc *prometheus.Desc
+	done chan struct{}
+}
+
+func newFakeBG() *fakeBG {
+	return &fakeBG{desc: prometheus.NewDesc("fake_metric", "help", nil, nil), done: make(chan struct{})}
+}
+
+func (f *fakeBG) Describe(ch chan<- *prometheus.Desc) { ch <- f.desc }
+func (f *fakeBG) Collect(ch chan<- prometheus.Metric) {
+	ch <- prometheus.MustNewConstMetric(f.desc, prometheus.GaugeValue, 1)
+}
+func (f *fakeBG) Start(ctx context.Context) { go func() { <-ctx.Done(); close(f.done) }() }
+func (f *fakeBG) Done() <-chan struct{}     { return f.done }
+
+// Compile-time proof the fake satisfies the seam.
+var _ BackgroundCollector = (*fakeBG)(nil)
+
+func TestFactoryBuildsAndStarts(t *testing.T) {
+	enabled := true
+	var gotAddr string
+	var gotCfg *promconfig.HTTPClientConfig
+	f := Factory{
+		Name:    "fake",
+		Enabled: &enabled,
+		New: func(addr string, hcfg *promconfig.HTTPClientConfig) (BackgroundCollector, error) {
+			gotAddr, gotCfg = addr, hcfg
+			return newFakeBG(), nil
+		},
+	}
+
+	bg, err := f.New("https://machine-a", nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if gotAddr != "https://machine-a" {
+		t.Errorf("New received addr %q, want https://machine-a", gotAddr)
+	}
+	if gotCfg != nil {
+		t.Error("New received a non-nil client config, want nil (default transport)")
+	}
+	if !*f.Enabled {
+		t.Error("Enabled = false, want true")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	bg.Start(ctx)
+	cancel()
+	select {
+	case <-bg.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("Done() did not close within 2s after cancel")
+	}
+}
