@@ -256,9 +256,66 @@ func TestValidateAcceptsRealBooleanFlagValue(t *testing.T) {
 }
 
 func TestLoadRejectsUnknownTopLevelKey(t *testing.T) {
-	path := writeConfig(t, "instances:\n  - name: lib01\n")
+	path := writeConfig(t, "nonsense_section: true\n")
 	if _, err := Load(path); err == nil {
 		t.Fatal("Load accepted an unknown top-level key; parsing must be strict")
+	}
+}
+
+func TestLoadParsesModulesAndInstances(t *testing.T) {
+	path := writeConfig(t, `
+modules:
+  default:
+    http_client_config:
+      basic_auth: { username: monitor, password: hunter2 }
+instances:
+  - { name: lib-a, address: https://a.example.net, labels: { site: paris } }
+  - { name: lib-b, address: https://b.example.net, module: default }
+`)
+	c, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(c.Modules) != 1 {
+		t.Fatalf("Modules = %v, want exactly one", c.Modules)
+	}
+	if len(c.Instances) != 2 {
+		t.Fatalf("Instances = %d, want 2", len(c.Instances))
+	}
+	if c.Instances[0].Name != "lib-a" || c.Instances[0].Labels["site"] != "paris" {
+		t.Errorf("instance 0 = %+v, want name lib-a with site=paris", c.Instances[0])
+	}
+	if c.Instances[1].Module != "default" {
+		t.Errorf("instance 1 module = %q, want default", c.Instances[1].Module)
+	}
+}
+
+func TestLoadValidatesModuleHTTPClientConfig(t *testing.T) {
+	path := writeConfig(t, `
+modules:
+  broken:
+    http_client_config:
+      basic_auth: { username: monitor, password: inline, password_file: /etc/pw }
+`)
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load accepted a module whose basic_auth sets both password and password_file")
+	}
+}
+
+func TestLoadResolvesModulePathsAgainstTheFile(t *testing.T) {
+	path := writeConfig(t, `
+modules:
+  tls:
+    http_client_config:
+      tls_config: { ca_file: certs/corp.pem }
+`)
+	c, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := filepath.Join(filepath.Dir(path), "certs/corp.pem")
+	if got := c.Modules["tls"].HTTPClientConfig.TLSConfig.CAFile; got != want {
+		t.Errorf("module ca_file = %q, want %q (relative to the config file)", got, want)
 	}
 }
 

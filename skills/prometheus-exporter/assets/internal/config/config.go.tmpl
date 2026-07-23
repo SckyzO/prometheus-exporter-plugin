@@ -42,6 +42,42 @@ type Config struct {
 	// NewClient, whose transport is the one every existing deployment
 	// already runs.
 	HTTPClientConfig *promconfig.HTTPClientConfig `yaml:"http_client_config,omitempty"`
+
+	// Modules are named credential/TLS bundles, Blackbox-shaped. A
+	// multi-instance instance references one by name for its transport. A nil
+	// HTTPClientConfig means the default transport. (The multi /probe model
+	// will select one per request in a later version; volet A.)
+	Modules map[string]Module `yaml:"modules,omitempty"`
+
+	// Instances is the list of machines a multi-instance exporter watches.
+	// Meaningful only under the multi-instance target model; single and multi
+	// reject it at boot.
+	Instances []Instance `yaml:"instances,omitempty"`
+}
+
+// Module is a named bundle of an optional collector subset and an optional
+// outbound HTTP client config, shaped like a Blackbox exporter module.
+type Module struct {
+	// Collectors narrows a probe to this subset. Honoured only under the multi
+	// (/probe) model; multi-instance enables collectors globally via the
+	// --collector.<name> flags and refuses this key at boot (see
+	// ResolveInstances).
+	Collectors []string `yaml:"collectors,omitempty"`
+
+	// HTTPClientConfig carries the authentication and TLS this module applies,
+	// the same promconfig.HTTPClientConfig the top-level section uses. A nil
+	// value means the default transport.
+	HTTPClientConfig *promconfig.HTTPClientConfig `yaml:"http_client_config,omitempty"`
+}
+
+// Instance is one machine a multi-instance exporter watches. It references a
+// module for its credentials by name and never carries inline authentication,
+// keeping the "no value has two sources" rule the flags layer relies on.
+type Instance struct {
+	Name    string            `yaml:"name"`
+	Address string            `yaml:"address"`
+	Module  string            `yaml:"module,omitempty"`
+	Labels  map[string]string `yaml:"labels,omitempty"`
 }
 
 // Load reads and validates path. An empty path yields a zero Config that
@@ -70,18 +106,37 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
 
-	if c.HTTPClientConfig != nil {
-		// Paths inside the file (ca_file, password_file, ...) are relative to
-		// the file, not to the process working directory. An exporter started
-		// by systemd runs from /, so the difference decides whether it works.
-		dir, err := filepath.Abs(filepath.Dir(path))
-		if err != nil {
-			return nil, fmt.Errorf("resolve the directory of %s: %w", path, err)
-		}
-		c.HTTPClientConfig.SetDirectory(dir)
+	// Paths inside the file (ca_file, password_file, ...) are relative to the
+	// file, not the process working directory. An exporter started by systemd
+	// runs from /, so the difference decides whether it works. Resolve the
+	// directory once and apply it to the top-level client config and to every
+	// module's.
+	dir, err := filepath.Abs(filepath.Dir(path))
+	if err != nil {
+		return nil, fmt.Errorf("resolve the directory of %s: %w", path, err)
+	}
 
+	if c.HTTPClientConfig != nil {
+		c.HTTPClientConfig.SetDirectory(dir)
 		if err := c.HTTPClientConfig.Validate(); err != nil {
 			return nil, fmt.Errorf("invalid http_client_config in %s: %w", path, err)
+		}
+	}
+
+	// Sorted so a config with two broken modules always fails on the same one.
+	moduleNames := make([]string, 0, len(c.Modules))
+	for name := range c.Modules {
+		moduleNames = append(moduleNames, name)
+	}
+	sort.Strings(moduleNames)
+	for _, name := range moduleNames {
+		hc := c.Modules[name].HTTPClientConfig
+		if hc == nil {
+			continue
+		}
+		hc.SetDirectory(dir)
+		if err := hc.Validate(); err != nil {
+			return nil, fmt.Errorf("invalid http_client_config in module %q of %s: %w", name, path, err)
 		}
 	}
 
