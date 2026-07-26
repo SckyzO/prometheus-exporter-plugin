@@ -380,9 +380,17 @@ type ResolvedInstance struct {
 // the identifying label scaffold.sh baked in (default "target"); an instance's
 // own labels may not reuse it. It fails on the first problem, the boot posture
 // the design mandates.
-func (c *Config) ResolveInstances(instanceLabel string) ([]ResolvedInstance, error) {
+func (c *Config) ResolveInstances(instanceLabel string, reservedLabels ...string) ([]ResolvedInstance, error) {
 	if len(c.Instances) == 0 {
 		return nil, fmt.Errorf("the multi-instance model requires at least one instance under \"instances:\"")
+	}
+
+	// Label keys an instance may not reuse: the identifying label this exporter
+	// applies itself, plus any label a collector already emits (passed by the
+	// caller, which knows its collectors). Reusing one collides at registration.
+	forbidden := map[string]string{instanceLabel: "the identifying label this exporter applies itself"}
+	for _, r := range reservedLabels {
+		forbidden[r] = "a label a collector already emits"
 	}
 
 	// A module carrying "collectors:" is meaningless under multi-instance
@@ -413,8 +421,10 @@ func (c *Config) ResolveInstances(instanceLabel string) ([]ResolvedInstance, err
 		if err := validateInstanceAddress(inst.Address); err != nil {
 			return nil, fmt.Errorf("instance %q: %w", inst.Name, err)
 		}
-		if _, taken := inst.Labels[instanceLabel]; taken {
-			return nil, fmt.Errorf("instance %q sets label %q, which is the identifying label this exporter applies itself; rename it", inst.Name, instanceLabel)
+		for k := range inst.Labels {
+			if reason, bad := forbidden[k]; bad {
+				return nil, fmt.Errorf("instance %q sets label %q, which is %s; rename it", inst.Name, k, reason)
+			}
 		}
 
 		hc, err := c.resolveModule(inst.Module)

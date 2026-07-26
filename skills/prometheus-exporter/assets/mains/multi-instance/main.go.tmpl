@@ -123,7 +123,9 @@ func main() {
 	// unique names, http/https addresses, resolvable module references, no
 	// instance label colliding with the identifying label. Each module's
 	// http_client_config was already validated by config.Load.
-	instances, err := cfg.ResolveInstances(instanceLabel)
+	// "collector" is the variable label StatusTracker's health metrics carry; an
+	// instance label reusing it would collide at registration.
+	instances, err := cfg.ResolveInstances(instanceLabel, "collector")
 	if err != nil {
 		log.Error("Invalid instance configuration", "err", err)
 		stop()     // release the signal handler explicitly before bypassing defer via os.Exit

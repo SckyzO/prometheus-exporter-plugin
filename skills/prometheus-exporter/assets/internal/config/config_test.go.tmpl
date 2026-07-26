@@ -449,6 +449,15 @@ func TestResolveInstancesRejectsLabelCollidingWithIdentifier(t *testing.T) {
 	}
 }
 
+func TestResolveInstancesRejectsLabelCollidingWithCollectorLabel(t *testing.T) {
+	c := &Config{Instances: []Instance{
+		{Name: "a", Address: "https://a.example.net", Labels: map[string]string{"collector": "x"}},
+	}}
+	if _, err := c.ResolveInstances("target", "collector"); err == nil {
+		t.Fatal("ResolveInstances accepted an instance label reusing a collector-emitted label")
+	}
+}
+
 func TestResolveInstancesResolvesDefaultModuleFromTopLevel(t *testing.T) {
 	// v0.4 compat: no modules: section, top-level http_client_config is default.
 	hc := &promconfig.HTTPClientConfig{}
