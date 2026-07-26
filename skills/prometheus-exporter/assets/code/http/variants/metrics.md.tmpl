@@ -57,8 +57,12 @@ Emitted regardless of which `--collector.*` flags are set: see
 ## The instance label
 
 This exporter watches every instance listed in its `--config.file` and serves
-them all through one `/metrics`. Every metric above additionally carries the
-`@@INSTANCE_LABEL@@` label (plus any per-instance labels you declare), applied by
-the exporter per instance rather than by the collector, so it is not part of the
-collector's own descriptor and `make docs-check` does not see it. See
-[docs/configuration.md](configuration.md).
+them all through one `/metrics`. The ExampleCollector metrics and the
+per-collector health metrics (`@@NAMESPACE@@_exporter_collector_success` /
+`_duration_seconds`) additionally carry the `@@INSTANCE_LABEL@@` label (plus any
+per-instance labels you declare), applied by the exporter per instance rather
+than by the collector, so it is not part of the collector's own descriptor and
+`make docs-check` does not see it. The one exception is
+`@@NAMESPACE@@_exporter_request_duration_seconds`: a single process-wide
+histogram shared across every instance, so it is labeled only by `outcome`,
+never by `@@INSTANCE_LABEL@@`. See [docs/configuration.md](configuration.md).

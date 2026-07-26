@@ -252,10 +252,13 @@ with a clear message, not at the first scrape.
 
 ### Instance label
 
-Every series this exporter emits, across every instance and every collector
-including the built-in health metrics, carries one identifying label:
-`@@INSTANCE_LABEL@@` by default, for example
+Every per-collector series this exporter emits, across every instance and every
+collector including the per-collector health metrics, carries one identifying
+label: `@@INSTANCE_LABEL@@` by default, for example
 `@@NAMESPACE@@_exporter_collector_success{collector="example", @@INSTANCE_LABEL@@="machine-a"}`.
+The one exception is `@@NAMESPACE@@_exporter_request_duration_seconds`, a single
+process-wide histogram shared across all instances and labeled only by
+`outcome`, never by `@@INSTANCE_LABEL@@`.
 Its name is fixed at scaffold time via `scaffold.sh --instance-label`, never
 a runtime flag. It is applied by the exporter itself, per instance, rather
 than by any collector's own descriptor, so `make docs-check` cannot see or
