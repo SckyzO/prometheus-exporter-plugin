@@ -73,9 +73,14 @@ Whatever the ladder grounded, and whatever gaps it left, run
 
 1. **Data source**, in preference order: REST/API > gRPC > database > CLI
    (CLI is the last resort: justify it if chosen).
-2. **Single- vs. multi-target**: state plainly if the real shape is
-   multi-target; that stays documented follow-up work, not something this
-   command or `/new-prometheus-exporter` produces.
+2. **Single-target vs. multi-target vs. multi-instance**: state which of the
+   three the real shape is. `single` reports on one fixed target. `multi` lets
+   Prometheus pick the target per scrape (`?target=`, the Blackbox pattern).
+   `multi-instance` polls a fixed list of machines in the background and serves
+   them through one `/metrics` (the model for sources that refresh more slowly
+   than Prometheus's 5-minute staleness window, or that carry per-machine
+   credentials). All three are produced by `/new-prometheus-exporter`; both
+   multi models require the `http` flavor.
 3. **I/O flavor** (`http` or `cli`), following directly from the data
    source.
 4. **Collector list**, one resource per collector, in the order they will

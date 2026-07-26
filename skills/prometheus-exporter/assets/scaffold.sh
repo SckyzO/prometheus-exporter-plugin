@@ -18,13 +18,19 @@
 # Usage:
 #   scaffold.sh --src <assets-dir> --dst <target-dir> \
 #               --flavor <http|cli> --forge <github|none> \
-#               [--target-model <single|multi>] \
+#               [--target-model <single|multi|multi-instance>] \
+#               [--instance-label <name>] \
 #               [--force] [--var KEY=VALUE ...]
 #
 # --target-model defaults to "single" (today's runtime, unchanged). "multi"
 # requires --flavor http (there is no cli multi-target) and ships a
 # /probe?target=… handler (internal/probe/) instead of a fixed-target
-# collector registry. See mains/single/ and mains/multi/.
+# collector registry. "multi-instance" also requires --flavor http and ships
+# internal/instance/ instead: one process watches a fixed list of machines
+# declared in --config.file, each refreshed by its own background poller, all
+# served through a single /metrics. --instance-label (default "target") names
+# the identifying label applied per instance; only multi-instance reads it.
+# See mains/single/, mains/multi/, and mains/multi-instance/.
 #
 # Behavior:
 #   - Copies --src to --dst, then strips the copy's own scaffold.sh (plugin
@@ -47,14 +53,17 @@
 #   - Substitutes every @@KEY@@ (content and path components) for each --var.
 #   - Strips the .tmpl suffix from file names.
 #   - Selects mains/<target-model>/main.go.tmpl as the one cmd/<name>/main.go,
-#     then removes the whole mains/ staging tree; drops internal/probe/ for
-#     --target-model single (it is multi-only).
+#     then removes the whole mains/ staging tree; drops internal/probe/ unless
+#     --target-model multi, and drops internal/instance/ unless --target-model
+#     multi-instance.
 #   - Fills main.go's structural markers: // @@CLIENT_INIT@@,
 #     // @@CLIENT_BUILD@@ and // @@COLLECTOR_REGISTRY@@ (single-target),
-#     // @@PROBE_FACTORIES@@ (multi-target), from the selected flavor's
+#     // @@PROBE_FACTORIES@@ (multi-target), // @@INSTANCE_FACTORIES@@
+#     (multi-instance), from the selected flavor's
 #     internal/collector/wiring/{client_init.frag,client_build.frag,
-#     registry.frag,probe_factory.frag}, whichever the chosen main model
-#     actually carries a marker for, then removes that staging directory.
+#     registry.frag,probe_factory.frag,instance_factory.frag}, whichever the
+#     chosen main model actually carries a marker for, then removes that
+#     staging directory.
 #     The marker comments themselves survive the fill (sed inserts after
 #     them, never replacing them) so /add-collector can reuse the same
 #     markers later to insert more collectors.
@@ -62,10 +71,10 @@
 #     discards the unused alternatives.
 #   - Fails loudly (exit 3) if any @@...@@ sentinel survives, EXCEPT the
 #     named structural markers in main.go (@@CLIENT_INIT@@, @@CLIENT_BUILD@@,
-#     @@COLLECTOR_REGISTRY@@, @@PROBE_FACTORIES@@): those are not --var data
-#     placeholders, and the wiring-marker fill above deliberately preserves
-#     them, so their survival to this point is expected, not a forgotten
-#     substitution.
+#     @@COLLECTOR_REGISTRY@@, @@PROBE_FACTORIES@@, @@INSTANCE_FACTORIES@@):
+#     those are not --var data placeholders, and the wiring-marker fill above
+#     deliberately preserves them, so their survival to this point is
+#     expected, not a forgotten substitution.
 #   - Refuses a non-empty --dst unless --force.
 set -eu
 
@@ -73,7 +82,7 @@ prog=$(basename "$0")
 
 usage() {
   cat <<EOF >&2
-Usage: $prog --src <assets-dir> --dst <target-dir> --flavor <http|cli> --forge <github|none> [--target-model <single|multi>] [--force] [--var KEY=VALUE ...]
+Usage: $prog --src <assets-dir> --dst <target-dir> --flavor <http|cli> --forge <github|none> [--target-model <single|multi|multi-instance>] [--instance-label <name>] [--force] [--var KEY=VALUE ...]
 EOF
 }
 
@@ -87,6 +96,7 @@ dst=""
 flavor=""
 forge=""
 target_model="single"
+instance_label="target"
 force=no
 license_choice=""
 
@@ -131,6 +141,11 @@ while [ $# -gt 0 ]; do
     --target-model)
       [ $# -ge 2 ] || die "--target-model requires a value"
       target_model=$2
+      shift 2
+      ;;
+    --instance-label)
+      [ $# -ge 2 ] || die "--instance-label requires a value"
+      instance_label=$2
       shift 2
       ;;
     --force)
@@ -185,12 +200,20 @@ case "$forge" in
 esac
 
 case "$target_model" in
-  single|multi) ;;
-  *) die "invalid --target-model '$target_model'; must be single or multi" ;;
+  single|multi|multi-instance) ;;
+  *) die "invalid --target-model '$target_model'; must be single, multi, or multi-instance" ;;
 esac
-if [ "$target_model" = multi ] && [ "$flavor" != http ]; then
-  die "--target-model multi requires --flavor http (no cli multi-target)"
+if { [ "$target_model" = multi ] || [ "$target_model" = multi-instance ]; } && [ "$flavor" != http ]; then
+  die "--target-model $target_model requires --flavor http (no cli multi-target)"
 fi
+
+# Validate the instance label (a Prometheus label name) and register its
+# substitution. It appears only in the multi-instance main; the sed rule is a
+# harmless no-op for every other model.
+case "$instance_label" in
+  ''|[!a-zA-Z_]*|*[!a-zA-Z0-9_]*) die "invalid --instance-label '$instance_label'; must be a valid Prometheus label name (letters, digits, underscore; not starting with a digit)" ;;
+esac
+printf 's/@@INSTANCE_LABEL@@/%s/g\n' "$(sed_escape_repl "$instance_label")" >> "$sedscript"
 
 # Reject any --flavor that is not a single path component. Below, $flavor is
 # spliced verbatim into real filesystem paths against both $src and $dst
@@ -282,6 +305,11 @@ if [ "$target_model" != multi ]; then
   rm -rf "$dst/internal/probe"
 fi
 
+# internal/instance/ is multi-instance-only: no other model ships it.
+if [ "$target_model" != multi-instance ]; then
+  rm -rf "$dst/internal/instance"
+fi
+
 # client_model is a direct dependency ONLY for a multi-target scaffold:
 # internal/probe imports "github.com/prometheus/client_model/go" directly,
 # but nothing under a single-target tree does (client_golang itself needs it
@@ -324,6 +352,28 @@ if [ "$target_model" = multi ] && [ -f "$dst/go.mod.tmpl" ]; then
     "$dst/go.mod.tmpl" > "$dst/go.mod.tmpl.scaffoldtmp"
   mv "$dst/go.mod.tmpl.scaffoldtmp" "$dst/go.mod.tmpl"
   rm -f "$clientmodelfrag"
+fi
+
+# Multi-instance requires the BACKGROUND collector as its starter: a scrape must
+# never block on a slow or dead machine (see the design doc's background
+# mandate). Swap the synchronous starter for the background variant, and ship
+# the shared test declarations the background test file relies on. Runs BEFORE
+# the variants/ removal below (which drops the staging dir for every model) and
+# before the @@VAR@@ substitution pass (so these files are templated like any
+# other).
+if [ "$target_model" = multi-instance ] && [ -d "$dst/internal/collector/variants" ]; then
+  if [ -f "$dst/internal/collector/variants/background_collector.go.tmpl" ]; then
+    mv "$dst/internal/collector/variants/background_collector.go.tmpl" "$dst/internal/collector/collector.go.tmpl"
+  fi
+  if [ -f "$dst/internal/collector/variants/background_collector_test.go.tmpl" ]; then
+    mv "$dst/internal/collector/variants/background_collector_test.go.tmpl" "$dst/internal/collector/collector_test.go.tmpl"
+  fi
+  if [ -f "$dst/internal/collector/variants/collector_shared_test.go.tmpl" ]; then
+    mv "$dst/internal/collector/variants/collector_shared_test.go.tmpl" "$dst/internal/collector/collector_shared_test.go.tmpl"
+  fi
+  if [ -f "$dst/internal/collector/variants/metrics.md.tmpl" ]; then
+    mv "$dst/internal/collector/variants/metrics.md.tmpl" "$dst/internal/collector/metrics.md.tmpl"
+  fi
 fi
 
 # variants/ (the background_collector.go.tmpl + test that /add-collector adds,
@@ -417,9 +467,12 @@ done < "$pathlist"
 # Flavor wiring-marker injection: fill main.go's structural markers
 # (// @@CLIENT_INIT@@, // @@CLIENT_BUILD@@, // @@COLLECTOR_REGISTRY@@,
 # single-target markers; // @@PROBE_FACTORIES@@, multi-target's own marker,
-# see mains/multi/main.go.tmpl) with the selected flavor's wiring snippets, if
-# it shipped any. Flavor snippets stage under code/<flavor>/wiring/
-# {client_init.frag,client_build.frag,registry.frag,probe_factory.frag}
+# see mains/multi/main.go.tmpl; // @@INSTANCE_FACTORIES@@, multi-instance's
+# own marker, see mains/multi-instance/main.go.tmpl) with the selected
+# flavor's wiring snippets, if it shipped any. Flavor snippets stage under
+# code/<flavor>/wiring/
+# {client_init.frag,client_build.frag,registry.frag,probe_factory.frag,
+# instance_factory.frag}
 # (mirror-layout, exactly like every other
 # flavor file) and so land at internal/collector/wiring/ after the
 # flavor-selection move earlier in this script. By this point they are also
@@ -436,8 +489,8 @@ done < "$pathlist"
 # /add-collector can find and reuse the same marker later to insert
 # additional collectors. That is also why the residual-sentinel guard below
 # still needs (and already has) its CLIENT_INIT/CLIENT_BUILD/
-# COLLECTOR_REGISTRY/PROBE_FACTORIES exemption after this step runs, not just
-# before it.
+# COLLECTOR_REGISTRY/PROBE_FACTORIES/INSTANCE_FACTORIES exemption after this
+# step runs, not just before it.
 if [ -d "$dst/internal/collector/wiring" ]; then
   mainfile=""
   for f in "$dst"/cmd/*/main.go; do
@@ -458,10 +511,12 @@ if [ -d "$dst/internal/collector/wiring" ]; then
   # which breaks the build with "non-declaration statement outside function
   # body", caught empirically while implementing this, not a hypothetical.
   # A frag whose marker is absent from the SELECTED main model is skipped, not
-  # fatal: each main model (mains/single/, mains/multi/) carries only its own
-  # markers now (single has no // @@PROBE_FACTORIES@@; multi has no
-  # // @@CLIENT_INIT@@ / // @@CLIENT_BUILD@@ / // @@COLLECTOR_REGISTRY@@), so
-  # a flavor shipping a
+  # fatal: each main model (mains/single/, mains/multi/, mains/multi-instance/)
+  # carries only its own markers now (single has no // @@PROBE_FACTORIES@@ or
+  # // @@INSTANCE_FACTORIES@@; multi has no // @@CLIENT_INIT@@ /
+  # // @@CLIENT_BUILD@@ / // @@COLLECTOR_REGISTRY@@ / // @@INSTANCE_FACTORIES@@;
+  # multi-instance has no // @@CLIENT_INIT@@ / // @@CLIENT_BUILD@@ /
+  # // @@COLLECTOR_REGISTRY@@ / // @@PROBE_FACTORIES@@), so a flavor shipping a
   # frag the chosen main doesn't use is the expected, common case, not a
   # broken scaffold. This is still a hardcoded, fixed set of pairs, not a
   # discovered/growing registry, same precedent as --forge github|none.
@@ -469,7 +524,8 @@ if [ -d "$dst/internal/collector/wiring" ]; then
     "client_init.frag:@@CLIENT_INIT@@" \
     "client_build.frag:@@CLIENT_BUILD@@" \
     "registry.frag:@@COLLECTOR_REGISTRY@@" \
-    "probe_factory.frag:@@PROBE_FACTORIES@@"; do
+    "probe_factory.frag:@@PROBE_FACTORIES@@" \
+    "instance_factory.frag:@@INSTANCE_FACTORIES@@"; do
     fragfile="$dst/internal/collector/wiring/${pair%%:*}"
     marker="${pair##*:}"
     [ -f "$fragfile" ] || continue
@@ -523,8 +579,8 @@ case "$grep_rc" in
 esac
 
 # main.go's structural markers (@@CLIENT_INIT@@, @@CLIENT_BUILD@@,
-# @@COLLECTOR_REGISTRY@@, single-target; @@PROBE_FACTORIES@@, multi-target)
-# are deliberately left as
+# @@COLLECTOR_REGISTRY@@, single-target; @@PROBE_FACTORIES@@, multi-target;
+# @@INSTANCE_FACTORIES@@, multi-instance) are deliberately left as
 # literal comments for a later flavor-specific scaffold.sh step to replace:
 # they are not --var data placeholders, so their survival is expected, not a
 # forgotten substitution. Filter exactly these named sentinels out before
@@ -539,7 +595,7 @@ esac
 # @@FOO@@ sharing a line with one of these markers would be swallowed too.
 # Fine today because each marker sits alone on its own line in main.go.
 filtered_rc=0
-grep -v -E '@@(CLIENT_INIT|CLIENT_BUILD|COLLECTOR_REGISTRY|PROBE_FACTORIES)@@' "$sentinels" > "$pathlist" || filtered_rc=$?
+grep -v -E '@@(CLIENT_INIT|CLIENT_BUILD|COLLECTOR_REGISTRY|PROBE_FACTORIES|INSTANCE_FACTORIES)@@' "$sentinels" > "$pathlist" || filtered_rc=$?
 case "$filtered_rc" in
   0)
     echo "$prog: error: residual @@VAR@@ sentinel(s) left in $dst" >&2

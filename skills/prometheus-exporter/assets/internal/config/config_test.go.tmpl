@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/alecthomas/kingpin/v2"
+	promconfig "github.com/prometheus/common/config"
 )
 
 // testFlags is a flag set shaped like a real exporter's: an enum, a bool, a
@@ -256,9 +257,66 @@ func TestValidateAcceptsRealBooleanFlagValue(t *testing.T) {
 }
 
 func TestLoadRejectsUnknownTopLevelKey(t *testing.T) {
-	path := writeConfig(t, "instances:\n  - name: lib01\n")
+	path := writeConfig(t, "nonsense_section: true\n")
 	if _, err := Load(path); err == nil {
 		t.Fatal("Load accepted an unknown top-level key; parsing must be strict")
+	}
+}
+
+func TestLoadParsesModulesAndInstances(t *testing.T) {
+	path := writeConfig(t, `
+modules:
+  default:
+    http_client_config:
+      basic_auth: { username: monitor, password: hunter2 }
+instances:
+  - { name: lib-a, address: https://a.example.net, labels: { site: paris } }
+  - { name: lib-b, address: https://b.example.net, module: default }
+`)
+	c, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(c.Modules) != 1 {
+		t.Fatalf("Modules = %v, want exactly one", c.Modules)
+	}
+	if len(c.Instances) != 2 {
+		t.Fatalf("Instances = %d, want 2", len(c.Instances))
+	}
+	if c.Instances[0].Name != "lib-a" || c.Instances[0].Labels["site"] != "paris" {
+		t.Errorf("instance 0 = %+v, want name lib-a with site=paris", c.Instances[0])
+	}
+	if c.Instances[1].Module != "default" {
+		t.Errorf("instance 1 module = %q, want default", c.Instances[1].Module)
+	}
+}
+
+func TestLoadValidatesModuleHTTPClientConfig(t *testing.T) {
+	path := writeConfig(t, `
+modules:
+  broken:
+    http_client_config:
+      basic_auth: { username: monitor, password: inline, password_file: /etc/pw }
+`)
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load accepted a module whose basic_auth sets both password and password_file")
+	}
+}
+
+func TestLoadResolvesModulePathsAgainstTheFile(t *testing.T) {
+	path := writeConfig(t, `
+modules:
+  tls:
+    http_client_config:
+      tls_config: { ca_file: certs/corp.pem }
+`)
+	c, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := filepath.Join(filepath.Dir(path), "certs/corp.pem")
+	if got := c.Modules["tls"].HTTPClientConfig.TLSConfig.CAFile; got != want {
+		t.Errorf("module ca_file = %q, want %q (relative to the config file)", got, want)
 	}
 }
 
@@ -356,5 +414,114 @@ func TestModelIsReadableBeforeParse(t *testing.T) {
 	}
 	if *f.level != "debug" {
 		t.Errorf("log.level = %q, want debug: reading Model() must not disturb parsing", *f.level)
+	}
+}
+
+func TestResolveInstancesRejectsEmptyList(t *testing.T) {
+	if _, err := (&Config{}).ResolveInstances("target"); err == nil {
+		t.Fatal("ResolveInstances accepted an empty instance list")
+	}
+}
+
+func TestResolveInstancesRejectsDuplicateNames(t *testing.T) {
+	c := &Config{Instances: []Instance{
+		{Name: "a", Address: "https://a.example.net"},
+		{Name: "a", Address: "https://b.example.net"},
+	}}
+	if _, err := c.ResolveInstances("target"); err == nil {
+		t.Fatal("ResolveInstances accepted two instances named the same")
+	}
+}
+
+func TestResolveInstancesRejectsNonHTTPAddress(t *testing.T) {
+	c := &Config{Instances: []Instance{{Name: "a", Address: "ftp://a.example.net"}}}
+	if _, err := c.ResolveInstances("target"); err == nil {
+		t.Fatal("ResolveInstances accepted a non-http address")
+	}
+}
+
+func TestResolveInstancesRejectsLabelCollidingWithIdentifier(t *testing.T) {
+	c := &Config{Instances: []Instance{
+		{Name: "a", Address: "https://a.example.net", Labels: map[string]string{"target": "x"}},
+	}}
+	if _, err := c.ResolveInstances("target"); err == nil {
+		t.Fatal("ResolveInstances accepted an instance label reusing the identifying label")
+	}
+}
+
+func TestResolveInstancesRejectsLabelCollidingWithCollectorLabel(t *testing.T) {
+	c := &Config{Instances: []Instance{
+		{Name: "a", Address: "https://a.example.net", Labels: map[string]string{"collector": "x"}},
+	}}
+	if _, err := c.ResolveInstances("target", "collector"); err == nil {
+		t.Fatal("ResolveInstances accepted an instance label reusing a collector-emitted label")
+	}
+}
+
+func TestResolveInstancesResolvesDefaultModuleFromTopLevel(t *testing.T) {
+	// v0.4 compat: no modules: section, top-level http_client_config is default.
+	hc := &promconfig.HTTPClientConfig{}
+	c := &Config{
+		HTTPClientConfig: hc,
+		Instances:        []Instance{{Name: "a", Address: "https://a.example.net"}},
+	}
+	got, err := c.ResolveInstances("target")
+	if err != nil {
+		t.Fatalf("ResolveInstances: %v", err)
+	}
+	if got[0].ClientConfig != hc {
+		t.Error("the default module did not resolve to the top-level http_client_config")
+	}
+}
+
+func TestResolveInstancesRejectsUnknownModule(t *testing.T) {
+	c := &Config{
+		Modules:   map[string]Module{"known": {}},
+		Instances: []Instance{{Name: "a", Address: "https://a.example.net", Module: "ghost"}},
+	}
+	if _, err := c.ResolveInstances("target"); err == nil {
+		t.Fatal("ResolveInstances accepted a reference to an undeclared module")
+	}
+}
+
+func TestResolveInstancesRejectsModuleCollectorsSubset(t *testing.T) {
+	c := &Config{
+		Modules:   map[string]Module{"m": {Collectors: []string{"example"}}},
+		Instances: []Instance{{Name: "a", Address: "https://a.example.net", Module: "m"}},
+	}
+	if _, err := c.ResolveInstances("target"); err == nil {
+		t.Fatal("ResolveInstances accepted a module with a collectors: subset under multi-instance")
+	}
+}
+
+func TestResolveInstancesRejectsHeterogeneousLabelKeys(t *testing.T) {
+	c := &Config{Instances: []Instance{
+		{Name: "a", Address: "https://a.example.net", Labels: map[string]string{"rack": "r1"}},
+		{Name: "b", Address: "https://b.example.net"},
+	}}
+	if _, err := c.ResolveInstances("target"); err == nil {
+		t.Fatal("ResolveInstances accepted instances with different label key sets (would panic at registry registration)")
+	}
+}
+
+func TestResolveInstancesAcceptsUniformLabelKeys(t *testing.T) {
+	c := &Config{Instances: []Instance{
+		{Name: "a", Address: "https://a.example.net", Labels: map[string]string{"rack": "r1"}},
+		{Name: "b", Address: "https://b.example.net", Labels: map[string]string{"rack": "r2"}},
+	}}
+	if _, err := c.ResolveInstances("target"); err != nil {
+		t.Fatalf("ResolveInstances rejected uniform label keys: %v", err)
+	}
+}
+
+func TestRejectModulesAndInstances(t *testing.T) {
+	if err := (&Config{}).RejectModulesAndInstances(); err != nil {
+		t.Errorf("errored on an empty config: %v", err)
+	}
+	if err := (&Config{Modules: map[string]Module{"x": {}}}).RejectModulesAndInstances(); err == nil {
+		t.Error("accepted a modules: section")
+	}
+	if err := (&Config{Instances: []Instance{{Name: "a"}}}).RejectModulesAndInstances(); err == nil {
+		t.Error("accepted an instances: section")
 	}
 }

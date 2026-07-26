@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A third target model, `multi-instance`** (`--target-model multi-instance`,
+  http flavor only): one process watches a fixed list of machines declared in
+  `--config.file`, each polled in the background on its own schedule and
+  re-served from a cache on every scrape, so the scrape itself never waits on
+  a live fetch. `--config.file` is required for this target model (the one
+  place multi-instance departs from the "absent file changes nothing" rule);
+  single-target and multi-target builds are unchanged.
+- **`modules:` and `instances:` configuration schema.** `modules:` names
+  reusable `http_client_config:` bundles; `instances:` lists the machines a
+  multi-instance exporter watches, each with a `name`, an `address`, an
+  optional `module`, and optional extra `labels`. A plain v0.4.0 config file
+  (no `modules:`/`instances:`) keeps working unchanged.
+- **`scaffold.sh --instance-label`** (default `target`): the identifying
+  label a multi-instance scaffold applies to every series of every watched
+  instance, fixed at scaffold time rather than a runtime flag.
+
 ## [0.4.0] - 2026-07-22
 
 ### Changed

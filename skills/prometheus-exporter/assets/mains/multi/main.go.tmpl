@@ -116,6 +116,11 @@ func main() {
 		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
 		os.Exit(1) //nolint:gocritic // stop() called explicitly above
 	}
+	if len(cfg.Instances) > 0 {
+		fmt.Fprintln(os.Stderr, "config file: \"instances:\" is only used by the multi-instance target model; this is a multi-target (/probe) exporter")
+		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+		os.Exit(1) //nolint:gocritic // stop() called explicitly above
+	}
 	// The logger does not exist yet (it is built from flags, below), so a
 	// failure here goes to stderr.
 	kingpin.MustParse(kingpin.CommandLine.Parse(

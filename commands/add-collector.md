@@ -36,10 +36,20 @@ v0.1 flavors.
 Detect the target model from what is on disk. Never ask what you can check:
 
 ```sh
-[ -d internal/probe ] && echo multi || echo single
+if [ -d internal/instance ]; then echo multi-instance
+elif [ -d internal/probe ]; then echo multi
+else echo single; fi
 ```
 
-For a **multi-target** repository, check the seam's shape before touching
+Three models now exist, and the two multi ones ship different seams:
+`multi` (`internal/probe/`) and `multi-instance` (`internal/instance/`) are
+not interchangeable. If detection printed `multi-instance`, skip past the
+`multi`-only seam-shape check and `v0.3.0` migration immediately below (both
+are specific to `internal/probe`'s `NamedFactory` and do not apply to
+`internal/instance`) straight to "Multi-instance wiring" near the end of
+this section.
+
+For a **multi** repository, check the seam's shape before touching
 anything:
 
 ```sh
@@ -195,6 +205,45 @@ a goroutine per probe is an unbounded leak, and the cache it fills would
 never be read twice. Say exactly that, and offer the standard variant
 instead.
 
+**On a multi-instance scaffold, the mirror rule holds: refuse the SYNCHRONOUS
+variant.** Every collector there is a background poller by construction (a
+scrape serves N instances through one /metrics and must never block on a dead
+machine). A synchronous collector would reintroduce exactly that coupling. Say
+so and use the background variant.
+
+**Multi-instance wiring.** Read the collector's identity (step 2) and
+materialize the BACKGROUND collector file and its test (step 3-4, background
+templates) exactly as for a single-target background collector. Then, at the
+`// @@INSTANCE_FACTORIES@@` marker in `cmd/*/main.go`, append (after the last
+existing `factories = append(...)` block, never replacing the marker):
+
+```go
+	<name>Timeout := kingpin.Flag("collector.<name>.timeout", "Per-request timeout for the <name> collector.").Default("5s").Duration()
+	<name>Interval := kingpin.Flag("collector.<name>.interval", "Background refresh interval for the <name> collector.").Default("5m").Duration()
+	<name>Enabled := kingpin.Flag("collector.<name>", "Enable the <name> collector.").Default("true").Bool()
+	factories = append(factories, instance.Factory{
+		Name:    "<name>",
+		Enabled: <name>Enabled,
+		New: func(addr string, hcfg *promconfig.HTTPClientConfig) (instance.BackgroundCollector, error) {
+			var client *collector.Client
+			if hcfg != nil {
+				var err error
+				client, err = collector.NewClientWithConfig(addr, *<name>Timeout, *hcfg)
+				if err != nil {
+					return nil, err
+				}
+			} else {
+				client = collector.NewClient(addr, *<name>Timeout)
+			}
+			return collector.New<Name>Collector(log, client, *<name>Interval), nil
+		},
+	})
+```
+
+There is no `@@CLIENT_INIT@@`/`@@CLIENT_BUILD@@`/`@@COLLECTOR_REGISTRY@@` in a
+multi-instance main (it carries only `@@INSTANCE_FACTORIES@@`), and no
+`--collector.<name>.target` flag (the target is each instance's address).
+
 ## 1. Read this repo's real values
 
 A scaffolded repo has no `@@VAR@@` sentinels left. Every value below is read
@@ -255,6 +304,16 @@ If either is true, **stop and refuse**: tell the user a collector named
 `<name>` already exists (naming the colliding file/registration) and do not
 overwrite or double-register it. Pick a different name, or this is the wrong
 command if the goal is to *change* an existing collector.
+
+The `register("<name>"` grep above only matches the **single** target
+model's registry call. Neither multi model calls `register(` at all: `multi`
+appends a `probe.NamedFactory{Name: "<name>", ...}` and `multi-instance`
+appends an `instance.Factory{Name: "<name>", ...}`, the same struct-literal
+shape in both. On either multi model, replace that grep with:
+
+```sh
+grep -q 'Name: *"<name>"' cmd/*/main.go
+```
 
 **Derive `<Name>`** (PascalCase) from `<name>` mechanically: uppercase the
 first letter and the first letter following each underscore, then drop the

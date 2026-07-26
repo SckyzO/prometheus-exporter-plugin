@@ -1,0 +1,68 @@
+# Metrics
+
+> Back to [README](../README.md)
+
+Every metric `@@EXPORTER_NAME@@` can emit, grouped by collector. This file is kept
+truthful by `make docs-check` (part of `make check`, see
+[CONTRIBUTING.md](../CONTRIBUTING.md)'s Definition of Done): any metric or label
+listed below that the code cannot actually produce fails the build. A metric the
+code emits but this file doesn't document is only a warning: see
+`internal/collector/docs_check_test.go`.
+
+<!--
+docs-check parses this file as a sequence of markdown tables, one metric per
+row, in this exact 4-cell shape:
+
+| `metric_name` | Type | `label1`, `label2` | Description |
+
+- Metric name: backtick-quoted, matching the fqName passed to
+  prometheus.NewDesc / HistogramOpts.Name in internal/collector/*.go.
+- Type: Gauge, Counter, Histogram, or Summary (informational only, not
+  itself verified by docs-check).
+- Labels: each backtick-quoted, comma-separated; a literal `-` when the
+  metric has none.
+- Description: free text. Avoid a literal `|` character in this cell (it
+  breaks table parsing).
+
+Standard Go runtime, process, and build-info metrics (from
+`prometheus/client_golang/prometheus/collectors`, registered in
+`cmd/@@EXPORTER_NAME@@/main.go`, disable with `--web.disable-exporter-metrics`)
+are intentionally not listed here.
+-->
+
+## ExampleCollector
+
+Defined in `internal/collector/collector.go`, the background-refresh variant: a
+goroutine polls the target on `--collector.example.interval` and every scrape
+serves the last cached result. Replace this section's rows when you adapt
+`ExampleCollector` into your real collector.
+
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `@@NAMESPACE@@_items` | Gauge | - | Number of items reported by the example target. |
+| `@@NAMESPACE@@_healthy` | Gauge | - | Whether the example target reports itself healthy (1) or not (0). |
+| `@@NAMESPACE@@_example_last_refresh_timestamp_seconds` | Gauge | - | Unix time of the last successful example refresh. Alert if time() minus this exceeds 2x the collector's configured interval. |
+
+## Self-instrumentation
+
+Emitted regardless of which `--collector.*` flags are set: see
+[docs/configuration.md](configuration.md).
+
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `@@NAMESPACE@@_exporter_request_duration_seconds` | Histogram | `outcome` | Duration in seconds of HTTP requests issued by this exporter's collectors, by outcome (`success` or `error`). Defined in `internal/collector/client.go`. |
+| `@@NAMESPACE@@_exporter_collector_success` | Gauge | `collector` | Whether the last scrape of the collector succeeded (1=success, 0=failure). Defined in `internal/collector/status_tracker.go`. |
+| `@@NAMESPACE@@_exporter_collector_duration_seconds` | Gauge | `collector` | Duration of the last scrape for the collector, in seconds. Defined in `internal/collector/status_tracker.go`. |
+
+## The instance label
+
+This exporter watches every instance listed in its `--config.file` and serves
+them all through one `/metrics`. The ExampleCollector metrics and the
+per-collector health metrics (`@@NAMESPACE@@_exporter_collector_success` /
+`_duration_seconds`) additionally carry the `@@INSTANCE_LABEL@@` label (plus any
+per-instance labels you declare), applied by the exporter per instance rather
+than by the collector, so it is not part of the collector's own descriptor and
+`make docs-check` does not see it. The one exception is
+`@@NAMESPACE@@_exporter_request_duration_seconds`: a single process-wide
+histogram shared across every instance, so it is labeled only by `outcome`,
+never by `@@INSTANCE_LABEL@@`. See [docs/configuration.md](configuration.md).

@@ -96,7 +96,7 @@ groups:
           component: exporter
         annotations:
           summary: '@@EXPORTER_NAME@@ collector {{ $labels.collector }} failing'
-          description: 'Collector {{ $labels.collector }} on {{ $labels.instance }} has failed its last scrape for at least 10 minutes. Check the exporter logs for the underlying error.'
+          description: 'Collector {{ $labels.collector }} on {{ $labels.@@COLLECTOR_LOCATION@@ }} has failed its last scrape for at least 10 minutes. Check the exporter logs for the underlying error.'
 
       # Scrape duration creeping up toward scrape_timeout is an early
       # warning of an overloaded or slow-to-respond target, ahead of
@@ -111,7 +111,7 @@ groups:
           component: exporter
         annotations:
           summary: '@@EXPORTER_NAME@@ collector {{ $labels.collector }} slow'
-          description: 'Collector {{ $labels.collector }} on {{ $labels.instance }} took {{ printf "%.1f" $value }}s on its last scrape (threshold: 5s).'
+          description: 'Collector {{ $labels.collector }} on {{ $labels.@@COLLECTOR_LOCATION@@ }} took {{ printf "%.1f" $value }}s on its last scrape (threshold: 5s).'
 
       - alert: ExporterCollectorDurationHigh
         expr: @@NAMESPACE@@_exporter_collector_duration_seconds > 20
@@ -121,7 +121,7 @@ groups:
           component: exporter
         annotations:
           summary: '@@EXPORTER_NAME@@ collector {{ $labels.collector }} critically slow'
-          description: 'Collector {{ $labels.collector }} on {{ $labels.instance }} took {{ printf "%.1f" $value }}s on its last scrape (threshold: 20s). Approaching a typical scrape_timeout. The next scrape may fail outright.'
+          description: 'Collector {{ $labels.collector }} on {{ $labels.@@COLLECTOR_LOCATION@@ }} took {{ printf "%.1f" $value }}s on its last scrape (threshold: 20s). Approaching a typical scrape_timeout. The next scrape may fail outright.'
 
       # ──────────────────────────────────────────────────────────────────
       # EXAMPLE: business alert (commented out: not loaded by Prometheus)
