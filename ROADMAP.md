@@ -117,11 +117,40 @@ it points to.
   instance names, valid addresses, resolvable modules, no label collisions).
 - **Sequenced follow-up: per-target credentials for `multi` (volet A).** The
   `multi` (`?target=`) model still authenticates every target through one
-  shared `http_client_config:`. Next on this epic: let it select a module
-  per `?target=` request, the same thing multi-instance already does per
-  instance. Not part of this drop.
-- Also not in this drop: reload on SIGHUP (pushed to v0.6) and per-instance
-  flag overrides (not planned unless a real consumer needs one).
+  shared `http_client_config:`, so it cannot probe two targets that
+  authenticate differently. It gains per-request module selection
+  (`/probe?target=...&module=...`), the same thing multi-instance already
+  does per instance, with one rule settling the collision between
+  combinable modules and credentials: at most one selected module may carry
+  credentials. That single mechanism expresses both the Blackbox convention
+  (a module is a complete bundle) and the SNMP one (credentials and
+  collector subsets as independent axes), so the developer picks a
+  convention in the configuration file rather than in code. Designed in
+  [`docs/design/2026-07-27-multi-target-module-credentials-design.md`](docs/design/2026-07-27-multi-target-module-credentials-design.md).
+- Also not in this drop: per-instance flag overrides (not planned unless a
+  real consumer needs one).
+
+## v0.6
+
+- **Reload on SIGHUP.** Deferred from v0.5: reloading the instance list into
+  a running process, while its pollers are mid-flight, is a concurrency
+  problem worth its own version. Per-module credentials inherit the same
+  deferral, so a credential rotation currently needs a restart.
+- **Retire `--probe.module`.** Deprecated in v0.5 in favour of the
+  configuration file's `modules:` section, removed here under the two-phase
+  rule.
+- **A project journal that survives a cleared context.** Today only step 0
+  hands anything durable to a later step: `/design-exporter` writes an
+  architecture brief that `/new-prometheus-exporter` reads. Everything after
+  that (which collectors are left to build, the cardinality budget, which
+  ones need the background variant, the credential convention chosen) lives
+  only in the conversation, so a compaction or a `/clear` between two
+  collectors loses decisions that are already recorded on disk two metres
+  away. Promote the brief into a journal every command reads on entry and
+  appends to on exit, making each step resumable from a cold start and
+  turning the file into the reference base for building a complete exporter.
+  Sequenced after v0.5 because it reshapes the contract of all four commands
+  at once and deserves its own design.
 - Budget the combinatorial cost in the design rather than discovering it in
   flight. Three target models against two flavors and two collector variants
   multiply both `scaffold.sh` and the `golden-smoke` matrix, now six
