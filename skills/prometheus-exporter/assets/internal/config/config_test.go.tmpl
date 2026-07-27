@@ -539,7 +539,7 @@ func TestResolveModulesReturnsNilWithNoSection(t *testing.T) {
 func TestResolveModulesKeepsCollectorsAndClientConfig(t *testing.T) {
 	hc := &promconfig.HTTPClientConfig{}
 	c := &Config{Modules: map[string]Module{
-		"prod": {HTTPClientConfig: hc},
+		"prod":  {HTTPClientConfig: hc},
 		"disks": {Collectors: []string{"disks"}},
 	}}
 	got, err := c.ResolveModules()
