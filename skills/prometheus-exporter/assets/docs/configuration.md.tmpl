@@ -185,6 +185,39 @@ curl 'http://localhost:@@DEFAULT_PORT@@/probe?target=http://some-host:9100'
   work this way): see [SECURITY.md](../SECURITY.md) before exposing this
   endpoint beyond a trusted network.
 
+### Selecting a module
+
+`?module=` names one or more modules declared in `--config.file`'s `modules:`
+section. It is repeatable and comma-separated, so `?module=a&module=b,c`
+selects a, b and c.
+
+- **Collectors combine.** The probe runs the union of the selected modules'
+  `collectors:` lists, always in the exporter's own declared order. A module
+  that lists none contributes none.
+- **Credentials do not combine.** A request makes one connection, so it needs
+  one set of credentials. They resolve in this order, first hit wins: the
+  unique selected module carrying an `http_client_config:`, then a module
+  named `default`, then the top-level `http_client_config:`. Selecting two
+  modules that both carry credentials returns **400**.
+- **A probe that resolves no credentials against a file that declares some
+  returns 400.** Probing in the clear would return 200 with series nobody
+  questions; the 400 makes `up` go to 0 and shows in your monitoring.
+- **An unknown module returns 400**, and a request naming no module at all
+  runs every collector.
+
+A matching scrape config carries the module as a label and relabels it:
+
+```yaml
+  - job_name: '@@EXPORTER_NAME@@-probe'
+    metrics_path: /probe
+    file_sd_configs: [{ files: ['targets/*.yml'] }]   # each entry carries a `module` label
+    relabel_configs:
+      - { source_labels: [__address__],    target_label: __param_target }
+      - { source_labels: [module],         target_label: __param_module }
+      - { source_labels: [__param_target], target_label: instance }
+      - { target_label: __address__, replacement: 'exporter-host:@@DEFAULT_PORT@@' }
+```
+
 ## The multi-instance target model (multi-instance builds only)
 
 A multi-instance build (scaffolded with `--target-model multi-instance`, http

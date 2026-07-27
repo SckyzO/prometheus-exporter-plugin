@@ -72,6 +72,12 @@ so treat that file as a secret.
   `http_client_config:` block is commented out, so it holds no credentials as
   shipped.
 
+Credentials declared in `--config.file`, whether in the top-level
+`http_client_config:` or in a `modules:` entry, are read once at startup.
+There is no reload on SIGHUP, so rotating a credential means restarting the
+process. A module name is a request parameter, never a metric label: it does
+not reach any series this exporter exposes.
+
 See [docs/configuration.md](docs/configuration.md) for the file's format and
 the precedence rules.
 

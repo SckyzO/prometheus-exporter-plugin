@@ -86,3 +86,55 @@ flags:
 #     key_file: /etc/@@EXPORTER_NAME@@/client.key
 #     server_name: example.internal
 #     insecure_skip_verify: false
+
+# modules: named credential/TLS bundles a multi-target (/probe) exporter can
+# select per request with /probe?target=...&module=... Only a multi-target
+# build reads this section; single-target and multi-instance builds refuse it.
+#
+# A module carries an optional collectors: subset and an optional
+# http_client_config:. Credentials never combine: at most one of the modules a
+# request selects may carry an http_client_config:, and naming two is refused
+# with a 400 rather than resolved by a precedence nobody wrote. A module that
+# lists no collectors contributes only its credentials, which is what lets a
+# credentials module be combined with collector modules.
+#
+# This section and the top-level http_client_config: above cannot both be set:
+# with modules declared, nothing reads the top-level one.
+#
+# Commented out for the same reason as http_client_config: above, an active
+# block pointing at files that do not exist on your machine would fail to load.
+#
+# Two conventions work, and the choice is yours to make here rather than in
+# code, so it is reversible without regenerating anything.
+#
+# Convention 1, one module per group of targets, each a complete bundle:
+#
+# modules:
+#   prod:
+#     collectors: [example]
+#     http_client_config:
+#       basic_auth:
+#         username: monitoring
+#         password_file: /etc/@@EXPORTER_NAME@@/prod_password
+#   staging:
+#     collectors: [example]
+#     http_client_config:
+#       basic_auth:
+#         username: monitoring
+#         password_file: /etc/@@EXPORTER_NAME@@/staging_password
+#
+#   Scraped with: /probe?target=...&module=prod
+#
+# Convention 2, credentials and collector subsets as independent axes:
+#
+# modules:
+#   default:
+#     http_client_config:
+#       basic_auth:
+#         username: monitoring
+#         password_file: /etc/@@EXPORTER_NAME@@/password
+#   quick:
+#     collectors: [example]
+#
+#   Scraped with: /probe?target=...&module=quick
+#   (the default module supplies the credentials; naming it is optional)
