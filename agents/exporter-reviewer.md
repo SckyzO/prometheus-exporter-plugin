@@ -297,10 +297,14 @@ a target URL or command argument built from a credential-bearing flag
 should never be echoed back through a label.
 
 If the exporter ships `internal/config/` and a `--config.file` flag, widen
-this pass to that file. Its `http_client_config:` section is the one place
-in a generated repository designed to hold a password, a bearer token or a
-key path, so check that nothing logs the parsed configuration, echoes it in
-an HTTP response body, or copies a value out of it into a label. Note that
+this pass to that file. Its `http_client_config:` sections are where a
+generated repository is designed to hold a password, a bearer token or a key
+path: the top-level one, and one more per entry of a `modules:` section if
+the repository declares any. Check every one of them, and check that nothing
+logs the parsed configuration, echoes it in an HTTP response body, or copies
+a value out of it into a label. On a multi-target build, the module names
+themselves are worth a look too: an error body that enumerates them tells any
+caller which environments and tenants this exporter holds credentials for. Note that
 `prometheus/common`'s `Secret` type redacts itself when marshalled back to
 YAML or JSON, but not when formatted with `%v`. A `%v` on one of those fields
 therefore prints the credential in clear, so report it.

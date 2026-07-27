@@ -135,7 +135,7 @@ func main() {
 	}
 
 	warnIfExposedAndUnauthenticated(log, *toolkitFlags.WebListenAddresses, *toolkitFlags.WebConfigFile)
-	warnIfProbeUnrestricted(log, *probeTargetAllowlist)
+	warnIfProbeUnrestricted(log, *probeTargetAllowlist, cfg)
 
 	// factories holds one entry per probed collector, in declaration order.
 	// The // @@PROBE_FACTORIES@@ marker below is where scaffold.sh injects the
@@ -274,9 +274,29 @@ func main() {
 // no allowlist: it then accepts any http/https target, so anyone who can reach
 // this exporter can make it issue requests to arbitrary hosts. Never blocks
 // startup (same posture as warnIfExposedAndUnauthenticated).
-func warnIfProbeUnrestricted(log *logger.Logger, allowlist []string) {
-	if len(allowlist) == 0 {
-		log.Warn("/probe accepts any target: anyone who can reach this exporter can make it " +
-			"issue HTTP requests to arbitrary hosts; set --probe.target-allowlist to restrict, and see SECURITY.md")
+//
+// A second warning follows when the configuration also declares credentials.
+// An unrestricted /probe then hands the caller both the destination and the
+// credentials presented there, which is a wider exposure than SSRF alone. It
+// stays a warning: allow-any is the ecosystem's default and changing it under
+// a running deployment would be the breaking change, not the fix.
+func warnIfProbeUnrestricted(log *logger.Logger, allowlist []string, cfg *config.Config) {
+	if len(allowlist) > 0 {
+		return
+	}
+	log.Warn("/probe accepts any target: anyone who can reach this exporter can make it " +
+		"issue HTTP requests to arbitrary hosts; set --probe.target-allowlist to restrict, and see SECURITY.md")
+
+	credentialed := cfg.HTTPClientConfig != nil
+	for _, m := range cfg.Modules {
+		if m.HTTPClientConfig != nil {
+			credentialed = true
+			break
+		}
+	}
+	if credentialed {
+		log.Warn("/probe is unrestricted and this exporter holds credentials: an outbound probe presents " +
+			"the credentials of the module it resolved to whatever target the caller names; " +
+			"--probe.target-allowlist is what bounds which hosts can receive them, see SECURITY.md")
 	}
 }

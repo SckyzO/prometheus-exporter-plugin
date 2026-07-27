@@ -79,7 +79,7 @@ type Handler struct {
 	timeoutOffset time.Duration // --probe.timeout-offset: answer before Prometheus gives up
 	modules       map[string]Module
 	defaultClient *http.Client // top-level http_client_config; nil unless it was set
-	credentialed  []string     // sorted names of modules carrying credentials
+	credentialed  []string     // sorted names of modules carrying credentials; logged, never served
 }
 
 // NewHandler builds a /probe handler. An empty allowlist accepts any target
@@ -90,8 +90,8 @@ type Handler struct {
 // configuration layer allows only when no modules: section exists: that is
 // what keeps credential resolution unambiguous.
 func NewHandler(log *logger.Logger, factories []NamedFactory, allowlist []string, maxTimeout, timeoutOffset time.Duration, modules map[string]Module, defaultClient *http.Client) *Handler {
-	// Precomputed for the message rule 5 emits, and sorted so a probe that
-	// resolves no credentials names the candidates in the same order every
+	// Precomputed for the guard rule 5 applies, and sorted so the log line a
+	// credential-less probe emits names the candidates in the same order every
 	// time.
 	var credentialed []string
 	for name, m := range modules {
@@ -220,10 +220,17 @@ func (h *Handler) selectFactories(vals []string) ([]NamedFactory, *http.Client, 
 	// The anti-silent-unauthenticated guard: probing in the clear against a
 	// target the operator gave credentials for returns 200 with series nobody
 	// questions, while this 400 drives up to 0 and shows in the monitoring.
+	//
+	// The candidate module names go to the exporter's log, never into the
+	// response: /probe answers whoever can reach it, and a module name is
+	// topology (which environments and which tenants this exporter holds
+	// credentials for). The caller is told what to do about it instead, which
+	// is all it needs and all it is entitled to.
 	if client == nil && len(h.credentialed) > 0 {
+		h.log.Warn("probe resolved no credentials while modules declare some",
+			"candidates", strings.Join(h.credentialed, ", "))
 		return nil, nil, fmt.Errorf(
-			"no credentials selected: module(s) %s declare credentials but this request selected none; name one with &module=, or declare a \"default\" module",
-			strings.Join(h.credentialed, ", "))
+			"no credentials selected: this exporter is configured with credentials but this request selected none; name a module with &module=, or ask the operator to declare a \"default\" module")
 	}
 
 	if len(wanted) == 0 {
