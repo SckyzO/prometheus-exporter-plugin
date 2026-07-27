@@ -151,6 +151,26 @@ it points to.
   turning the file into the reference base for building a complete exporter.
   Sequenced after v0.5 because it reshapes the contract of all four commands
   at once and deserves its own design.
+- **A migration harness for `/add-collector`.** That command is the only part
+  of this plugin that writes into a repository somebody else already owns,
+  and it is the only part with no gate at all. `golden-smoke`'s
+  second-collector splice exercises the *append* path onto an already-current
+  seam; no gate has ever executed a *migration* path. v0.5 found two defects
+  of that exact class by hand, both of which would have rewritten four files
+  in a user's repository and left it not building: a migration describing a
+  six-argument call against a seam that had become seven, and a chain into
+  wiring that referenced a configuration package the older repository does
+  not contain. Both were invisible to every gate. The fix is a fixture
+  repository per historical seam shape, run through the migration and then
+  through `make build`. Until that exists, every seam change obliges a manual
+  re-audit of every migration that points at it, which is a discipline, not a
+  guarantee.
+- **Teach `multi-instance` in the references.** The target model shipped in
+  v0.5 but appears in none of the eleven reference documents and not in
+  `SKILL.md`'s step 0 walkthrough, so a session that learns from
+  `references/` alone still believes there are two target models. v0.5's
+  per-module credentials work added it in two places as a side effect; the
+  rest is an unpaid documentation debt from the model's own drop.
 - Budget the combinatorial cost in the design rather than discovering it in
   flight. Three target models against two flavors and two collector variants
   multiply both `scaffold.sh` and the `golden-smoke` matrix, now six
