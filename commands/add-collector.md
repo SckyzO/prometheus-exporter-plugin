@@ -64,51 +64,48 @@ else echo v0.3.0; fi
   `http_client_config:`. Migrate with the `pre-modules` steps below.
 - **`v0.3.0`**: the seam holds exactly one `factory Factory` field and the
   `NamedFactory` type does not exist at all. Run the `v0.3.0` migration
-  first, which lands the repository on `modules` directly, since both
-  rewrites replace the same two files.
+  first: it runs its own steps and then chains straight into the
+  `pre-modules` migration's wiring steps, and together they land the
+  repository on `modules`.
 
 **If the shape is `v0.3.0`** (the seam holds exactly one `factory Factory`
 field; the `NamedFactory` type does not exist in the file at all), this
 repository predates the N-collector seam and cannot hold a second collector
-yet. Migrate it first, then proceed. Exactly three files are in scope:
+yet. Migrate it first, then proceed.
 
-- `internal/probe/probe.go` — rewrite wholesale from
-  `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/assets/internal/probe/probe.go.tmpl`,
-  substituting the repository's real `@@NAMESPACE@@` and `@@MODULE_PATH@@`.
-  This file is generic, shipped plumbing: the scaffold writes it verbatim and
-  a user has no reason to have hand-edited it.
-- `internal/probe/probe_test.go` — same treatment, from
-  `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/assets/internal/probe/probe_test.go.tmpl`
-  (substituting only `@@MODULE_PATH@@`; this file has no `@@NAMESPACE@@`).
-  Skipping it leaves a test still calling the old 4-argument
-  `NewHandler(log, factory, allowlist, maxTimeout)`, which no longer compiles
-  against a migrated `probe.go` — `make test` is where that surfaces.
-- `cmd/*/main.go`'s probe-wiring block only, **not the whole file**: unlike
-  `probe.go`, this file already carries the repository's real substituted
-  `@@NAMESPACE@@`/`@@EXPORTER_NAME@@`/`@@DEFAULT_PORT@@` (and possibly other
-  hand-added flags), so only the probe-specific block changes shape, matching
-  `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/assets/mains/multi/main.go.tmpl`:
-  - the single `exampleTimeout := kingpin.Flag("collector.example.timeout",
-    ...)` flag (or whatever it was renamed to) becomes three flags:
-    `probeTimeout` (`--probe.timeout`), `probeTimeoutOffset`
-    (`--probe.timeout-offset`), and `probeModules` (`--probe.module`,
-    repeatable) — copy their `Default`/help text from the template verbatim;
-  - `var factories []probe.NamedFactory` is declared right before the
-    `// @@PROBE_FACTORIES@@` marker;
-  - after the marker, `probe.ParseModules`/`probe.ValidateModules` run
-    (both fail fast to `os.Exit(1)` on error, exactly like the template)
-    before the handler is built;
-  - `probeHandler := probe.NewHandler(log, factory, *probeTargetAllowlist,
-    *exampleTimeout)` becomes `probe.NewHandler(log, factories,
-    *probeTargetAllowlist, *probeTimeout, *probeTimeoutOffset, modules)`.
+This migration shares its file rewrites with the `pre-modules` migration
+below: `internal/probe/probe.go`, `internal/probe/probe_test.go`,
+`internal/config/config.go`, and `internal/config/config_test.go` all get
+the same wholesale rewrite described there, for the same reasons. What is
+unique to a `v0.3.0` repository is `cmd/*/main.go`'s probe-wiring block:
+unlike the files above, this one already carries the repository's real
+substituted `@@NAMESPACE@@`/`@@EXPORTER_NAME@@`/`@@DEFAULT_PORT@@` (and
+possibly other hand-added flags), so only the probe-specific block changes
+shape, matching
+`${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/assets/mains/multi/main.go.tmpl`:
+
+- the single `exampleTimeout := kingpin.Flag("collector.example.timeout",
+  ...)` flag (or whatever it was renamed to) becomes three flags:
+  `probeTimeout` (`--probe.timeout`), `probeTimeoutOffset`
+  (`--probe.timeout-offset`), and `probeModules` (`--probe.module`,
+  repeatable); copy their `Default`/help text from the template verbatim;
+- `var factories []probe.NamedFactory` is declared right before the
+  `// @@PROBE_FACTORIES@@` marker;
+- right after the marker, delete the old `probeHandler :=
+  probe.NewHandler(log, factory, *probeTargetAllowlist, *exampleTimeout)`
+  call entirely: a `v0.3.0` repository has no module concept yet, so there is
+  nothing in it to adapt. Continue straight into the `pre-modules`
+  migration's wiring sequence below, which builds `modules` from scratch and
+  ends in the same seven-argument `probe.NewHandler` call; do not stop until
+  that sequence is in place.
 
 **Do not let the existing collector disappear.** Right after the marker, the
 pre-migration file has a `factory := func(target string, timeout
 time.Duration) prometheus.Collector { return
-collector.New<ExistingName>Collector(...) }` block — that is the
+collector.New<ExistingName>Collector(...) }` block: that is the
 repository's real, already-running collector, not scaffold boilerplate.
 Convert it into the first `factories = append(...)` call (same shape as the
-one below), keyed on whatever that collector is actually named — read the
+one below), keyed on whatever that collector is actually named: read the
 name from its registration/file, never assume `"example"`. Only then append
 the new collector's own block. Deleting it instead of converting it would
 still compile, and would silently stop serving that collector's metrics on
@@ -120,7 +117,7 @@ The pre-existing collector's own constructor may still predate the
 `NewExampleCollector(ctx context.Context, log *logger.Logger, client
 *Client)`): a v0.3.0 scaffold's starter collector was built before that
 signature existed. Match the call to what that constructor **actually**
-declares — passing `ctx` to a constructor that never declared it is a
+declares: passing `ctx` to a constructor that never declared it is a
 compile error, not a style choice. Leave that one call exactly as it already
 was if its constructor has no `ctx` parameter: it keeps compiling and
 behaving exactly as before, it simply does not gain the new per-probe
@@ -133,13 +130,17 @@ templates, which do declare `ctx`, and gets that deadline for free.
    anyone already running that exporter. Say so plainly.
 2. If the user declines, stop and hand them the diff. Do not add the new
    collector to a seam that cannot hold it.
-3. If the user accepts, apply it, then proceed.
+3. If the user accepts, apply this section's steps, then continue
+   immediately into the `pre-modules` migration below and apply its steps
+   too, in the same pass: a `v0.3.0` repository is not fully migrated until
+   both are done.
 
 **If the shape is `modules`**, proceed directly.
 
-**If the shape is `pre-modules`**, the repository has the N-collector seam
-but not per-module credentials. Exactly three files are in scope, the same
-three the `v0.3.0` migration touches and for the same reasons:
+**If the shape is `pre-modules`** (or you just finished the `v0.3.0` steps
+above and are continuing straight into this one), the repository has the
+N-collector seam but not per-module credentials: every collector is still
+probed with the one global `http_client_config:`. Four files are in scope:
 
 - `internal/probe/probe.go` and `internal/probe/probe_test.go`: rewrite
   wholesale from
@@ -147,19 +148,104 @@ three the `v0.3.0` migration touches and for the same reasons:
   and `probe_test.go.tmpl`, substituting the repository's real
   `@@NAMESPACE@@` and `@@MODULE_PATH@@` (`probe_test.go.tmpl` has no
   `@@NAMESPACE@@`). Generic shipped plumbing; a user has no reason to have
-  hand-edited either.
+  hand-edited either. Skipping `probe_test.go` leaves a test still calling an
+  older `NewHandler` signature, which no longer compiles once `probe.go` is
+  migrated. `make test` is where that surfaces.
+- `internal/config/config.go` and `internal/config/config_test.go`: rewrite
+  wholesale from
+  `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/assets/internal/config/config.go.tmpl`
+  and `config_test.go.tmpl`, with no substitution at all: neither file names
+  the repository's namespace or module path (`config_test.go.tmpl` is an
+  in-package test with no cross-package import to substitute). Skipping this
+  pair is what leaves a migrated `main.go` calling `cfg.ResolveModules()`, a
+  method the pre-migration `config.go` does not declare at all: a compile
+  error at step 8, after the consent gate below has already rewritten the
+  other files.
 - `cmd/*/main.go`'s probe-wiring block only, **not the whole file**, matching
-  `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/assets/mains/multi/main.go.tmpl`:
-  - `"sort"` joins the import block;
-  - every existing `factories = append(...)` closure gains the fourth
-    parameter `hc *http.Client` and, in its body, the
-    `if hc != nil { ... NewClientFor(target, hc) ... }` branch;
-  - every per-collector `var <name>HTTP *http.Client` build block is
-    **deleted**: main builds the clients now, so those N identical clients
-    collapse into one per module;
-  - the module resolution block and the
-    `probe.NewHandler(..., modules, defaultClient)` call replace the old
-    `ParseModules`/`ValidateModules`/`NewHandler` sequence.
+  `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/assets/mains/multi/main.go.tmpl`.
+  `"sort"` joins the import block. Every existing `factories = append(...)`
+  closure gains the fourth parameter `hc *http.Client` and, in its body, the
+  `if hc != nil { ... NewClientFor(target, hc) ... }` branch (see the append
+  block below for the exact shape); every per-collector `var <name>HTTP
+  *http.Client` build block is **deleted**, since main builds the clients
+  now. The block right after the `// @@PROBE_FACTORIES@@` marker (in a
+  `pre-modules` repository this is the existing `probe.ParseModules`/
+  `probe.ValidateModules`/`probe.NewHandler` sequence; in a repository that
+  just finished the `v0.3.0` steps above, it is empty) becomes, in full:
+
+```go
+	// Modules come from exactly one source. --probe.module is the deprecated
+	// flag form, which can only express collector subsets; the configuration
+	// file's modules: section can also carry per-module authentication. Both at
+	// once would give one module name two definitions, so it is refused rather
+	// than resolved by a precedence nobody documented.
+	if len(cfg.Modules) > 0 && len(*probeModules) > 0 {
+		log.Error("--probe.module and a \"modules:\" section in the config file cannot both be used; --probe.module is deprecated, prefer the configuration file")
+		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+		os.Exit(1) //nolint:gocritic // stop() called explicitly above
+	}
+
+	modules, err := probe.ParseModules(*probeModules)
+	if err != nil {
+		log.Error("Invalid --probe.module", "err", err)
+		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+		os.Exit(1) //nolint:gocritic // stop() called explicitly above
+	}
+
+	resolved, err := cfg.ResolveModules()
+	if err != nil {
+		log.Error("Invalid \"modules:\" section", "err", err)
+		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+		os.Exit(1) //nolint:gocritic // stop() called explicitly above
+	}
+
+	// One client per credential-bearing module, built ONCE here rather than per
+	// probe or per collector: NewClientFromConfig mints a fresh transport on
+	// every call and caches nothing. An unreadable CA or credentials file is a
+	// configuration fault, so it stops the exporter here rather than surfacing
+	// on the first probe. Sorted so a file with two broken modules always fails
+	// on the same one.
+	moduleNames := make([]string, 0, len(resolved))
+	for name := range resolved {
+		moduleNames = append(moduleNames, name)
+	}
+	sort.Strings(moduleNames)
+	for _, name := range moduleNames {
+		rm := resolved[name]
+		m := probe.Module{Collectors: rm.Collectors}
+		if rm.ClientConfig != nil {
+			hc, cerr := collector.NewHTTPClient(*rm.ClientConfig, *probeTimeout)
+			if cerr != nil {
+				log.Error("Failed to build HTTP client for module", "module", name, "err", cerr)
+				stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+				os.Exit(1) //nolint:gocritic // stop() called explicitly above
+			}
+			m.Client = hc
+		}
+		modules[name] = m
+	}
+
+	// The top-level http_client_config, which the configuration layer accepts
+	// only when no modules: section exists. It is what a probe falls back to,
+	// and it is what keeps a pre-modules configuration behaving identically.
+	var defaultClient *http.Client
+	if cfg.HTTPClientConfig != nil {
+		defaultClient, err = collector.NewHTTPClient(*cfg.HTTPClientConfig, *probeTimeout)
+		if err != nil {
+			log.Error("Failed to build HTTP client from http_client_config", "err", err)
+			stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+			os.Exit(1) //nolint:gocritic // stop() called explicitly above
+		}
+	}
+
+	if err := probe.ValidateModules(factories, modules); err != nil {
+		log.Error("Invalid module definition", "err", err)
+		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+		os.Exit(1) //nolint:gocritic // stop() called explicitly above
+	}
+
+	probeHandler := probe.NewHandler(log, factories, *probeTargetAllowlist, *probeTimeout, *probeTimeoutOffset, modules, defaultClient)
+```
 
 **Show the diff before writing any of it.** Unlike the `v0.3.0` migration,
 this one renames no flag and changes no URL: every existing
