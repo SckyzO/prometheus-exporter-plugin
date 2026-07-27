@@ -87,19 +87,34 @@ flags:
 #     server_name: example.internal
 #     insecure_skip_verify: false
 
-# modules: named credential/TLS bundles a multi-target (/probe) exporter can
-# select per request with /probe?target=...&module=... Only a multi-target
-# build reads this section; single-target and multi-instance builds refuse it.
+# modules: named credential/TLS bundles this exporter can select. What reads
+# this section, and how a module gets picked, depends on the target model
+# this exporter was scaffolded with:
 #
-# A module carries an optional collectors: subset and an optional
-# http_client_config:. Credentials never combine: at most one of the modules a
-# request selects may carry an http_client_config:, and naming two is refused
-# with a 400 rather than resolved by a precedence nobody wrote. A module that
-# lists no collectors contributes only its credentials, which is what lets a
-# credentials module be combined with collector modules.
+# - single-target builds refuse this section outright at boot: it does not
+#   apply there at all.
+# - multi-target builds (/probe) select a module per request with
+#   /probe?target=...&module=...; there, a module may carry both a
+#   collectors: subset and an http_client_config:.
+# - multi-instance builds have each instances: entry reference a module by
+#   name in its own module: key (see instances: further down this file, or
+#   docs/configuration.md), resolved once at boot rather than per request.
+#   There, a module's collectors: key is refused: collector enablement is
+#   global via --[no-]collector.<name> instead, so a per-module subset would
+#   be meaningless.
 #
-# This section and the top-level http_client_config: above cannot both be set:
-# with modules declared, nothing reads the top-level one.
+# On a multi-target build specifically, credentials never combine: at most
+# one of the modules a request selects may carry an http_client_config:, and
+# naming two is refused with a 400 rather than resolved by a precedence
+# nobody wrote. A module that lists no collectors contributes only its
+# credentials, which is what lets a credentials module be combined with
+# collector modules.
+#
+# On a multi-target build, this section and the top-level http_client_config:
+# above cannot both be set: with modules declared, nothing reads the
+# top-level one. (Multi-instance tolerates both present, but then the
+# top-level section goes unread too, since every instance resolves its module
+# by name; a known asymmetry, not something to rely on.)
 #
 # Commented out for the same reason as http_client_config: above, an active
 # block pointing at files that do not exist on your machine would fail to load.

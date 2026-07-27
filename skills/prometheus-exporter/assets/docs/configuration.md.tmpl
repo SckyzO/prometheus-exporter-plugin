@@ -193,7 +193,10 @@ selects a, b and c.
 
 - **Collectors combine.** The probe runs the union of the selected modules'
   `collectors:` lists, always in the exporter's own declared order. A module
-  that lists none contributes none.
+  that lists none contributes none, and if the union ends up empty, for
+  example because the only module selected was a credentials-only one such as
+  `default`, every registered collector runs: the same fallback an absent
+  `module=` parameter takes.
 - **Credentials do not combine.** A request makes one connection, so it needs
   one set of credentials. They resolve in this order, first hit wins: the
   unique selected module carrying an `http_client_config:`, then a module
