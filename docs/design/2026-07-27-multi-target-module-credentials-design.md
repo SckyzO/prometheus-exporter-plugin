@@ -98,9 +98,18 @@ Evaluated per `/probe` request.
    file carries an `http_client_config:`, the request is refused:
 
    ```
-   no credentials selected: modules "prod", "staging" declare credentials but this
-   request selected none; name one with &module=, or declare a "default" module
+   no credentials selected: this exporter is configured with credentials but this
+   request selected none; name a module with &module=, or ask the operator to
+   declare a "default" module
    ```
+
+   The candidate module names go to the exporter's log, never into the
+   response. `/probe` answers whoever can reach it, and a module name is
+   topology: which environments and which tenants this exporter holds
+   credentials for. The caller is told what to do about it instead, which is
+   all it needs and all it is entitled to. (An earlier draft of this design
+   put the list in the response body; the final whole-branch review took it
+   out, and this paragraph exists so the next epic does not put it back.)
 
    This is the anti-silent-unauthenticated guard, and it covers two distinct
    mistakes with one rule: a scrape config that forgot `&module=` entirely,
