@@ -298,18 +298,27 @@ untouched:
 
 1. `config.Load` (unchanged), `cfg.Validate` (unchanged), the `instances:`
    refusal (unchanged, `:119-123`).
-2. **New:** refuse `--probe.module` together with a `modules:` section
-   (rule 8).
-3. `kingpin.MustParse`, logger, warnings (unchanged).
-4. The `// @@PROBE_FACTORIES@@` marker and the factories it fills
+2. `kingpin.MustParse`, logger, warnings (unchanged).
+3. The `// @@PROBE_FACTORIES@@` marker and the factories it fills
    (unchanged in position; the closures gain the fourth parameter).
+4. **New:** refuse `--probe.module` together with a `modules:` section
+   (rule 8).
 5. **New:** `cfg.ResolveModules()`, then one `*http.Client` per
    credential-bearing module, then merge with the flag-declared modules
    (only one source can be non-empty).
 6. `probe.ValidateModules` (unchanged in role, new map type).
 7. `probe.NewHandler(...)` with the module map.
 
-Every failure in steps 2 and 5 exits non-zero before the server binds,
+Rule 8's refusal cannot sit before `kingpin.MustParse`: it reads
+`*probeModules`, and a kingpin flag pointer holds its zero value until the
+parse runs. An earlier revision of this section placed it at step 2, ahead of
+the parse, where it would have compared `cfg.Modules` against an always-empty
+flag slice and never fired. It is written after the parse instead, which is
+also where the logger exists, so the refusal can be reported with `log.Error`
+like every other boot failure in this block rather than with a bare
+`fmt.Fprintln`.
+
+Every failure in steps 4 and 5 exits non-zero before the server binds,
 matching the `os.Exit(1)` posture the file already uses throughout.
 
 ## 7. Accompanying the developer

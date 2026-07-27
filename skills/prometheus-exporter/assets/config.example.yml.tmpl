@@ -97,8 +97,8 @@ flags:
 #   /probe?target=...&module=...; there, a module may carry both a
 #   collectors: subset and an http_client_config:.
 # - multi-instance builds have each instances: entry reference a module by
-#   name in its own module: key (see instances: further down this file, or
-#   docs/configuration.md), resolved once at boot rather than per request.
+#   name in its own module: key (see docs/configuration.md), resolved once
+#   at boot rather than per request.
 #   There, a module's collectors: key is refused: collector enablement is
 #   global via --[no-]collector.<name> instead, so a per-module subset would
 #   be meaningless.

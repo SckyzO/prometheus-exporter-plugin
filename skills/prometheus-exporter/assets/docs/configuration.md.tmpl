@@ -189,7 +189,12 @@ curl 'http://localhost:@@DEFAULT_PORT@@/probe?target=http://some-host:9100'
 
 `?module=` names one or more modules declared in `--config.file`'s `modules:`
 section. It is repeatable and comma-separated, so `?module=a&module=b,c`
-selects a, b and c.
+selects a, b and c. For the YAML shape of that section, see the commented
+`modules:` block in `config.example.yml` at the repository root, which spells
+out both conventions (one complete bundle per group of targets, or
+credentials and collector subsets as independent axes); the `modules:` sample
+further down this page is the multi-instance variant, where a module is
+resolved once at boot rather than per request.
 
 - **Collectors combine.** The probe runs the union of the selected modules'
   `collectors:` lists, always in the exporter's own declared order. A module
