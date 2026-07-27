@@ -213,7 +213,8 @@ run --src "$realassets" --dst "$work/wiring-dst" --flavor http --forge none \
   --var EXPORTER_NAME=demo_exporter --var NAMESPACE=demo \
   --var MODULE_PATH=example.com/demo_exporter \
   --var DATA_SOURCE=http://localhost:9999 --var DATA_SOURCE_PATH=/api/example \
-  --var DEFAULT_PORT=9999 --var OWNER=acme --var LICENSE=apache-2.0
+  --var DEFAULT_PORT=9999 --var OWNER=acme --var LICENSE=apache-2.0 \
+  --var COLLECTOR_HEALTH_BY=job --var COLLECTOR_LOCATION=instance
 [ "$rc" -eq 0 ] || fail "real-assets http scaffold (for wiring-injection check) failed, rc=$rc: $(cat "$err")"
 mainfile="$work/wiring-dst/cmd/demo_exporter/main.go"
 [ -f "$mainfile" ] || fail "scaffolded main.go missing at $mainfile"
@@ -263,7 +264,8 @@ run --src "$realassets" --dst "$work/metricsdoc-dst" --flavor cli --forge none \
   --var EXPORTER_NAME=demo_exporter --var NAMESPACE=demo \
   --var MODULE_PATH=example.com/demo_exporter \
   --var DATA_SOURCE=demo_cli --var DATA_SOURCE_PATH=unused \
-  --var DEFAULT_PORT=9999 --var OWNER=acme --var LICENSE=apache-2.0
+  --var DEFAULT_PORT=9999 --var OWNER=acme --var LICENSE=apache-2.0 \
+  --var COLLECTOR_HEALTH_BY=job --var COLLECTOR_LOCATION=instance
 [ "$rc" -eq 0 ] || fail "real-assets cli scaffold (for metrics.md relocation check) failed, rc=$rc: $(cat "$err")"
 metricsdoc="$work/metricsdoc-dst/docs/metrics.md"
 [ -f "$metricsdoc" ] || fail "docs/metrics.md missing after a cli-flavor scaffold"
