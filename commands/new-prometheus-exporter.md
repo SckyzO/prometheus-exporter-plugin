@@ -254,3 +254,12 @@ If this exporter was scaffolded with `--target-model multi`, `/add-collector`
 detects that and appends a factory at `// @@PROBE_FACTORIES@@` in
 `cmd/*/main.go` rather than a `register(...)` call into a single-target
 registry.
+
+If the architecture brief recorded a credential convention
+(`Credential convention: a|b|c` under `## Architecture decisions`), point the
+user at the matching commented block in `config.example.yml`: `a` is the
+plain `http_client_config:` block (or nothing at all, if no target needs
+credentials), `b` is the block marked "Convention 1", `c` is the block marked
+"Convention 2". Point them at `docs/configuration.md`'s `### Selecting a
+module` section either way, for the scrape config that goes with whichever
+block they uncomment.

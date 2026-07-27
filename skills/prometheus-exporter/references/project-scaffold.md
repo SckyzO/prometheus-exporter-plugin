@@ -401,6 +401,13 @@ either this registry or that `/probe` handler, never both. `/add-collector`
 handles both models: against a multi-target scaffold it appends a factory at
 `// @@PROBE_FACTORIES@@` instead of a `register(...)` call.
 
+Each factory in that slice has the shape
+`func(ctx context.Context, target string, timeout time.Duration, hc *http.Client) (prometheus.Collector, error)`.
+`hc` is resolved per request, from the module the request named (or the
+top-level `http_client_config:`, or nil), but built only once, at boot in
+`main`, and shared by every collector: nothing about handling one more probe
+rebuilds it.
+
 ## Checklist
 
 - [ ] Every collector (bundled example, self-instrumentation, anything

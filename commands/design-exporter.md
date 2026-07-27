@@ -81,6 +81,25 @@ Whatever the ladder grounded, and whatever gaps it left, run
    than Prometheus's 5-minute staleness window, or that carry per-machine
    credentials). All three are produced by `/new-prometheus-exporter`; both
    multi models require the `http` flavor.
+
+   If the answer is `multi`, ask one follow-up before moving on, because it
+   decides what the generated `config.example.yml` should demonstrate, not
+   what code gets produced (the code is identical either way):
+
+   > How do your targets authenticate?
+   >
+   > **a.** All the same, or not at all. No `modules:` section is needed;
+   > one `http_client_config:` covers every target.
+   > **b.** By group: prod and staging, two sites, two tenants. One module
+   > per group, each carrying its own credentials, and the scrape config
+   > names one with `&module=`.
+   > **c.** Credentials and collector subsets vary independently.
+   > Credentials-only modules combined with collector modules in one
+   > request.
+
+   Record the answer under `## Architecture decisions` in the brief, as
+   `Credential convention: a|b|c`, so it survives on disk rather than in
+   this conversation.
 3. **I/O flavor** (`http` or `cli`), following directly from the data
    source.
 4. **Collector list**, one resource per collector, in the order they will

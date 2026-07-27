@@ -130,6 +130,30 @@ unit's commented `ExecStart` example (`packaging-and-ops.md`) and
 **documented, not imposed**: an operator who needs it turns it on
 explicitly, on their own schedule.
 
+## Rule 5: per-target credentials fail closed, never silently unauthenticated
+
+Two target models let credentials vary by target instead of one
+`http_client_config:` section covering every request: `multi`'s `modules:`
+section, selected per probe with `&module=`, and `multi-instance`'s
+per-instance `module:` reference, resolved once at boot. In both, a
+module's credentials live only in the configuration file, never inline on a
+request or on an instance's own entry, and are turned into an
+`*http.Client` once, at boot, never rebuilt per scrape.
+
+The failure mode this closes is a target that was meant to carry
+credentials ending up probed, or watched, without them: a typo in
+`&module=`, two modules both claiming the same probe, a `default` module
+that doesn't exist. Neither model lets that happen quietly. `multi` refuses
+the individual probe with `400` when it cannot resolve credentials
+unambiguously against a configuration that declares some, rather than
+returning `200` with metrics nobody questions
+(`internal/probe/probe.go`'s `selectFactories`); `multi-instance` refuses to
+start at all when an instance's `module:` reference doesn't resolve
+(`internal/config/config.go`'s `ResolveInstances`), the same fail-fast
+posture it already applies to every other malformed instance. Single-target
+builds have nothing to resolve here: a `modules:` section is refused at boot
+as meaningless for one fixed target.
+
 ## What `make lint`'s `gosec` pass covers here, concretely
 
 Two gosec-caught patterns are worth knowing by name, because they're the
@@ -183,6 +207,9 @@ documents this one doesn't duplicate:
 - [ ] `/metrics` stays unauthenticated by default; `--web.config.file`
       (TLS/Basic Auth) stays opt-in, documented in `docs/configuration.md`,
       never forced.
+- [ ] On a target model that supports per-target credentials (`multi`,
+      `multi-instance`), an unresolved module reference refuses the probe or
+      the boot rather than falling back to an unauthenticated request.
 - [ ] Anything that could carry a secret gets a dedicated read-the-match
       audit pass (`exporter-reviewer`'s Step 8): gosec's static rules are
       not expected to catch this class of finding on their own.

@@ -82,7 +82,12 @@ Prometheus documents two distinct exporter shapes:
   the probed target into the resulting series' `instance` label. The
   exporter process itself is not "the thing being monitored." It is a
   fan-out proxy in front of however many real targets Prometheus asks it to
-  probe.
+  probe. A multi-target exporter can also authenticate per target: declaring
+  a `modules:` section in its configuration file and having the scrape
+  config name one with `&module=` lets one target's credentials differ from
+  another's. Without that section every target authenticates the same way,
+  or not at all, which is the right answer when one credential covers all
+  of them.
 
 This is a structural fork, not a later refinement: it dictates the shape of
 `main.go` (a `/probe` handler that builds a fresh set of collectors per
