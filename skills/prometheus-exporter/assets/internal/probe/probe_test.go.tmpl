@@ -19,14 +19,16 @@ type recordingFactory struct {
 	calls   int
 	target  string
 	timeout time.Duration
-	panics  bool   // when true, the returned collector panics on Collect
-	metric  string // the stub series this factory's collector emits
+	client  *http.Client // the client the handler resolved for this probe
+	panics  bool
+	metric  string
 }
 
-func (f *recordingFactory) make(ctx context.Context, target string, timeout time.Duration) (prometheus.Collector, error) {
+func (f *recordingFactory) make(ctx context.Context, target string, timeout time.Duration, hc *http.Client) (prometheus.Collector, error) {
 	f.calls++
 	f.target = target
 	f.timeout = timeout
+	f.client = hc
 	if f.panics {
 		return panicCollector{}, nil
 	}
@@ -82,7 +84,7 @@ func serve(h *Handler, rawurl string) *httptest.ResponseRecorder {
 }
 
 func newTestHandler(f *recordingFactory, allowlist []string) *Handler {
-	return NewHandler(logger.NewTextLogger("error"), []NamedFactory{f.named("example")}, allowlist, 5*time.Second, 0, nil)
+	return NewHandler(logger.NewTextLogger("error"), []NamedFactory{f.named("example")}, allowlist, 5*time.Second, 0, nil, nil)
 }
 
 func TestFloorRejectsNonHTTPScheme(t *testing.T) {
@@ -174,7 +176,7 @@ func TestAllFactoriesAreGathered(t *testing.T) {
 	a := &recordingFactory{metric: "stub_a"}
 	b := &recordingFactory{metric: "stub_b"}
 	h := NewHandler(logger.NewTextLogger("error"),
-		[]NamedFactory{a.named("alpha"), b.named("beta")}, nil, 5*time.Second, 0, nil)
+		[]NamedFactory{a.named("alpha"), b.named("beta")}, nil, 5*time.Second, 0, nil, nil)
 
 	rec := serve(h, "/probe?target=http://node1:9100")
 
@@ -199,11 +201,11 @@ func TestAllFactoriesAreGathered(t *testing.T) {
 func TestProbeFailsLoudlyWhenAFactoryFails(t *testing.T) {
 	bad := NamedFactory{
 		Name: "bad",
-		New: func(ctx context.Context, target string, timeout time.Duration) (prometheus.Collector, error) {
+		New: func(ctx context.Context, target string, timeout time.Duration, hc *http.Client) (prometheus.Collector, error) {
 			return nil, errors.New("unreadable CA file")
 		},
 	}
-	h := NewHandler(logger.NewTextLogger("error"), []NamedFactory{bad}, nil, 5*time.Second, 0, nil)
+	h := NewHandler(logger.NewTextLogger("error"), []NamedFactory{bad}, nil, 5*time.Second, 0, nil, nil)
 
 	rec := serve(h, "/probe?target=http://example.invalid")
 
@@ -223,11 +225,11 @@ func TestProbeFailsLoudlyWhenAFactoryFails(t *testing.T) {
 func TestProbeDeadlineAbortsHangingCollector(t *testing.T) {
 	hang := NamedFactory{
 		Name: "hang",
-		New: func(ctx context.Context, target string, timeout time.Duration) (prometheus.Collector, error) {
+		New: func(ctx context.Context, target string, timeout time.Duration, hc *http.Client) (prometheus.Collector, error) {
 			return &blockingCollector{ctx: ctx, desc: prometheus.NewDesc("stub_hang", "stub", nil, nil)}, nil
 		},
 	}
-	h := NewHandler(logger.NewTextLogger("error"), []NamedFactory{hang}, nil, 100*time.Millisecond, 0, nil)
+	h := NewHandler(logger.NewTextLogger("error"), []NamedFactory{hang}, nil, 100*time.Millisecond, 0, nil, nil)
 
 	start := time.Now()
 	rec := serve(h, "/probe?target=http://hangs.internal:9100")
@@ -243,7 +245,7 @@ func TestProbeDeadlineAbortsHangingCollector(t *testing.T) {
 
 func TestClampTimeoutHonoursHeaderCeilingAndOffset(t *testing.T) {
 	h := NewHandler(logger.NewTextLogger("error"),
-		[]NamedFactory{(&recordingFactory{}).named("example")}, nil, 5*time.Second, 500*time.Millisecond, nil)
+		[]NamedFactory{(&recordingFactory{}).named("example")}, nil, 5*time.Second, 500*time.Millisecond, nil, nil)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/probe?target=http://x:9100", nil)
 
@@ -281,7 +283,7 @@ func TestClampTimeoutHonoursHeaderCeilingAndOffset(t *testing.T) {
 // empty-header and parse-error paths.
 func TestClampTimeoutRejectsNonFiniteAndOverflowingHeaders(t *testing.T) {
 	h := NewHandler(logger.NewTextLogger("error"),
-		[]NamedFactory{(&recordingFactory{}).named("example")}, nil, 5*time.Second, 500*time.Millisecond, nil)
+		[]NamedFactory{(&recordingFactory{}).named("example")}, nil, 5*time.Second, 500*time.Millisecond, nil, nil)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/probe?target=http://x:9100", nil)
 
@@ -302,10 +304,10 @@ func TestParseModules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got := mods["basic"]; len(got) != 2 || got[0] != "disks" || got[1] != "pools" {
+	if got := mods["basic"].Collectors; len(got) != 2 || got[0] != "disks" || got[1] != "pools" {
 		t.Errorf("basic = %v, want [disks pools]", got)
 	}
-	if got := mods["full"]; len(got) != 3 {
+	if got := mods["full"].Collectors; len(got) != 3 {
 		t.Errorf("full = %v, want 3 collectors", got)
 	}
 }
@@ -331,11 +333,11 @@ func TestParseModulesRejectsMalformed(t *testing.T) {
 func TestValidateModulesRejectsUnknownCollector(t *testing.T) {
 	factories := []NamedFactory{(&recordingFactory{}).named("disks")}
 
-	if err := ValidateModules(factories, map[string][]string{"basic": {"disks"}}); err != nil {
+	if err := ValidateModules(factories, map[string]Module{"basic": {Collectors: []string{"disks"}}}); err != nil {
 		t.Fatalf("a module naming a registered collector was rejected: %v", err)
 	}
 
-	err := ValidateModules(factories, map[string][]string{"basic": {"disks", "typo"}})
+	err := ValidateModules(factories, map[string]Module{"basic": {Collectors: []string{"disks", "typo"}}})
 	if err == nil {
 		t.Fatal("a module naming an unregistered collector was accepted, want an error")
 	}
@@ -358,11 +360,11 @@ func threeFactoryHandler(t *testing.T) (*Handler, map[string]*recordingFactory) 
 		fs["beta"].named("beta"),
 		fs["gamma"].named("gamma"),
 	}
-	modules := map[string][]string{
-		"ab": {"alpha", "beta"},
-		"bc": {"beta", "gamma"},
+	modules := map[string]Module{
+		"ab": {Collectors: []string{"alpha", "beta"}},
+		"bc": {Collectors: []string{"beta", "gamma"}},
 	}
-	h := NewHandler(logger.NewTextLogger("error"), factories, nil, 5*time.Second, 0, modules)
+	h := NewHandler(logger.NewTextLogger("error"), factories, nil, 5*time.Second, 0, modules, nil)
 	return h, fs
 }
 
@@ -451,5 +453,171 @@ func TestUnknownModuleRejected(t *testing.T) {
 		if f.calls != 0 {
 			t.Errorf("collector %q ran for a rejected module, want 0 calls", name)
 		}
+	}
+}
+
+// credModuleHandler registers alpha and beta, with prod and staging each
+// carrying their own client, and disks selecting a collector subset with no
+// credentials of its own.
+func credModuleHandler(t *testing.T, defaultModuleClient *http.Client) (*Handler, map[string]*recordingFactory) {
+	t.Helper()
+	fs := map[string]*recordingFactory{
+		"alpha": {metric: "stub_alpha"},
+		"beta":  {metric: "stub_beta"},
+	}
+	factories := []NamedFactory{fs["alpha"].named("alpha"), fs["beta"].named("beta")}
+	modules := map[string]Module{
+		"prod":    {Client: &http.Client{}},
+		"staging": {Client: &http.Client{}},
+		"disks":   {Collectors: []string{"alpha"}},
+	}
+	if defaultModuleClient != nil {
+		modules["default"] = Module{Client: defaultModuleClient}
+	}
+	h := NewHandler(logger.NewTextLogger("error"), factories, nil, 5*time.Second, 0, modules, nil)
+	return h, fs
+}
+
+// Rule 2 step 1: the selected module's client is the one the factory gets.
+func TestSelectedModuleSuppliesItsClient(t *testing.T) {
+	h, fs := credModuleHandler(t, nil)
+	want := h.modules["prod"].Client
+
+	rec := serve(h, "/probe?target=http://n:9100&module=prod")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200", rec.Code)
+	}
+	if fs["alpha"].client != want {
+		t.Errorf("factory received client %p, want prod's %p", fs["alpha"].client, want)
+	}
+}
+
+// Rule 3: two credential-bearing modules in one request is ambiguous.
+func TestTwoCredentialBearingModulesRejected(t *testing.T) {
+	h, fs := credModuleHandler(t, nil)
+
+	rec := serve(h, "/probe?target=http://n:9100&module=prod,staging")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("two credential-bearing modules: got %d, want 400", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "both carry credentials") {
+		t.Errorf("body does not explain the ambiguity: %s", rec.Body.String())
+	}
+	for name, f := range fs {
+		if f.calls != 0 {
+			t.Errorf("collector %q ran %d times for a rejected probe, want 0", name, f.calls)
+		}
+	}
+}
+
+// Rule 1: a module carrying only credentials must not widen the selection,
+// which is what makes the SNMP convention (credential module combined with
+// collector modules) expressible.
+func TestCredentialsOnlyModuleDoesNotWidenSelection(t *testing.T) {
+	h, fs := credModuleHandler(t, nil)
+
+	rec := serve(h, "/probe?target=http://n:9100&module=prod,disks")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200", rec.Code)
+	}
+	if fs["alpha"].calls != 1 {
+		t.Errorf("alpha ran %d times, want 1", fs["alpha"].calls)
+	}
+	if fs["beta"].calls != 0 {
+		t.Errorf("beta ran %d times: a credentials-only module widened the selection", fs["beta"].calls)
+	}
+	if fs["alpha"].client != h.modules["prod"].Client {
+		t.Errorf("alpha did not receive prod's client")
+	}
+}
+
+// Rule 2 step 2: a request naming only a collector module falls back to the
+// default module's credentials.
+func TestCollectorOnlyModuleFallsBackToDefaultCredentials(t *testing.T) {
+	def := &http.Client{}
+	h, fs := credModuleHandler(t, def)
+
+	rec := serve(h, "/probe?target=http://n:9100&module=disks")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200", rec.Code)
+	}
+	if fs["alpha"].client != def {
+		t.Errorf("factory received %p, want the default module's client %p", fs["alpha"].client, def)
+	}
+}
+
+// Rule 5: probing in the clear against a configuration that declares
+// credentials is refused, both when the request names no module at all and
+// when it names only a collector module.
+func TestUnresolvedCredentialsRejected(t *testing.T) {
+	for _, rawurl := range []string{
+		"/probe?target=http://n:9100",              // forgot &module= entirely
+		"/probe?target=http://n:9100&module=disks", // named only a collector module
+	} {
+		t.Run(rawurl, func(t *testing.T) {
+			h, fs := credModuleHandler(t, nil) // no default module
+			rec := serve(h, rawurl)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("got %d, want 400", rec.Code)
+			}
+			if !strings.Contains(rec.Body.String(), "no credentials selected") {
+				t.Errorf("body does not explain what is missing: %s", rec.Body.String())
+			}
+			for name, f := range fs {
+				if f.calls != 0 {
+					t.Errorf("collector %q ran %d times for a rejected probe, want 0", name, f.calls)
+				}
+			}
+		})
+	}
+}
+
+// Rule 5's other half: a configuration that declares no credentials anywhere
+// keeps probing on the default transport, which is what it already does.
+func TestNoCredentialsAnywhereStillProbes(t *testing.T) {
+	h, fs := threeFactoryHandler(t)
+
+	rec := serve(h, "/probe?target=http://n:9100&module=ab")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200", rec.Code)
+	}
+	if fs["alpha"].client != nil {
+		t.Errorf("factory received a client %p, want nil (default transport)", fs["alpha"].client)
+	}
+}
+
+// Rule 2 step 3, the v0.4.0 path: flag-declared modules carry no credentials,
+// so the top-level http_client_config still applies to every request. This is
+// the guarantee that an existing deployment behaves identically.
+func TestFlagModulesFallBackToTopLevelClient(t *testing.T) {
+	top := &http.Client{}
+	f := &recordingFactory{metric: "stub_alpha"}
+	h := NewHandler(logger.NewTextLogger("error"), []NamedFactory{f.named("alpha")}, nil,
+		5*time.Second, 0, map[string]Module{"basic": {Collectors: []string{"alpha"}}}, top)
+
+	rec := serve(h, "/probe?target=http://n:9100&module=basic")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200", rec.Code)
+	}
+	if f.client != top {
+		t.Errorf("factory received %p, want the top-level client %p", f.client, top)
+	}
+}
+
+// A repeated module name must not look like two credential-bearing modules.
+func TestRepeatedModuleNameIsNotAnAmbiguity(t *testing.T) {
+	h, _ := credModuleHandler(t, nil)
+
+	rec := serve(h, "/probe?target=http://n:9100&module=prod,prod")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("module=prod,prod: got %d, want 200", rec.Code)
 	}
 }
