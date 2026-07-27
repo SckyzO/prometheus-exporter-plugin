@@ -632,6 +632,110 @@ if [ "$target_model" = multi ]; then
   echo "confirmed: http-multi live-probe check PASSED ($flavor/$forge)"
 fi
 
+# http-multi modules sub-check (volet A): a scaffolded multi-target exporter
+# must boot with a modules: section, serve a probe that names one, and refuse
+# the two ambiguous cases with a 400. It probes its OWN /metrics as the
+# target, so no authenticated backend exists here: this proves the boot, the
+# refusals and the status codes, NOT authentication end to end. That claim is
+# carried by internal/probe's Go tests and by nothing else.
+#
+# Same trap discipline as the live-probe block above: that block killed its
+# server and ran `trap - EXIT` before returning, so nothing is installed here.
+if [ "$target_model" = multi ]; then
+  echo "== http-multi: modules: section sub-check ($flavor/$forge) =="
+  bin="$work/bin/demo_exporter"
+
+  mods_config="$work/.golden-smoke-modules-config.yml"
+  cat > "$mods_config" <<'EOF'
+modules:
+  default:
+    http_client_config:
+      basic_auth: { username: monitor, password: hunter2 }
+  other:
+    http_client_config:
+      basic_auth: { username: other, password: sesame }
+  onlyexample:
+    collectors: [example]
+EOF
+
+  # Rule 9: modules: alongside a top-level http_client_config: must fail the
+  # boot rather than silently ignore one of them. This refusal lives in
+  # ResolveModules, which the design spec's own step order (kingpin.MustParse
+  # is step 3, ResolveModules is step 5, see the multi-target-module-
+  # credentials design doc) places AFTER kingpin parses, exactly like rule 8
+  # below. That means --help exits before ever reaching it and returns 0
+  # regardless of this conflict, confirmed empirically while writing this
+  # check: --help against this exact config exits 0 while a real start exits
+  # 1. So this starts the process for real too, same as rule 8; nothing here
+  # ever binds a listener, since ResolveModules runs before the HTTP server
+  # starts.
+  both_config="$work/.golden-smoke-modules-both.yml"
+  cat > "$both_config" <<'EOF'
+http_client_config:
+  basic_auth: { username: monitor, password: hunter2 }
+modules:
+  prod:
+    http_client_config:
+      basic_auth: { username: prod, password: hunter2 }
+EOF
+  if "$bin" --config.file="$both_config" --web.listen-address=127.0.0.1:9998 >/dev/null 2>&1; then
+    die "http-multi modules: a modules: section alongside a top-level http_client_config: was accepted ($flavor/$forge)"
+  fi
+  echo "confirmed: modules: plus a top-level http_client_config: is refused ($flavor/$forge)"
+
+  # Rule 8: --probe.module and a modules: section cannot both be used. This
+  # one is refused AFTER kingpin parses, so --help would exit first; start the
+  # process for real and require a non-zero exit.
+  if "$bin" --config.file="$mods_config" --probe.module=x:example --web.listen-address=127.0.0.1:9998 >/dev/null 2>&1; then
+    die "http-multi modules: --probe.module together with a modules: section was accepted ($flavor/$forge)"
+  fi
+  echo "confirmed: --probe.module plus a modules: section is refused ($flavor/$forge)"
+
+  mods_port=9999
+  mods_log="$work/.golden-smoke-server-modules.log"
+  "$bin" --config.file="$mods_config" --web.listen-address="127.0.0.1:$mods_port" --log.level=info >"$mods_log" 2>&1 &
+  server_pid=$!
+  trap 'kill "$server_pid" >/dev/null 2>&1 || true' EXIT
+
+  ready=0
+  i=0
+  while [ "$i" -lt 15 ]; do
+    if curl -fsS -o /dev/null "http://127.0.0.1:$mods_port/healthz" 2>/dev/null; then
+      ready=1
+      break
+    fi
+    kill -0 "$server_pid" 2>/dev/null || die "http-multi modules: server exited before becoming ready, see $mods_log ($flavor/$forge)"
+    i=$((i + 1))
+    sleep 1
+  done
+  [ "$ready" -eq 1 ] || die "http-multi modules: server did not become ready on 127.0.0.1:$mods_port within 15s, see $mods_log ($flavor/$forge)"
+  echo "confirmed: server ready with a 3-module configuration ($flavor/$forge)"
+
+  mods_target="http://127.0.0.1:$mods_port/metrics"
+  probe_code() {
+    curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$mods_port/probe?target=$mods_target&module=$1"
+  }
+
+  code=$(probe_code default)
+  [ "$code" = 200 ] || die "http-multi modules: ?module=default returned $code, want 200 ($flavor/$forge)"
+
+  # Rule 2 step 2: a module that carries only a collector subset falls back to
+  # the default module's credentials rather than probing in the clear.
+  code=$(probe_code onlyexample)
+  [ "$code" = 200 ] || die "http-multi modules: ?module=onlyexample returned $code, want 200 ($flavor/$forge)"
+
+  # Rule 3: two credential-bearing modules in one request is ambiguous.
+  code=$(probe_code default,other)
+  [ "$code" = 400 ] || die "http-multi modules: ?module=default,other returned $code, want 400 ($flavor/$forge)"
+
+  echo "confirmed: module selection serves 200 and refuses an ambiguous credential pair with 400 ($flavor/$forge)"
+
+  kill "$server_pid" >/dev/null 2>&1 || true
+  wait "$server_pid" 2>/dev/null || true
+  trap - EXIT
+  echo "confirmed: http-multi modules sub-check PASSED ($flavor/$forge)"
+fi
+
 # http-multi-instance live check (Task 12, multi-instance target model): a
 # scaffolded multi-instance exporter must actually SERVE every configured
 # instance's health series on /metrics, not just build and pass its own unit
@@ -784,7 +888,10 @@ if [ "$target_model" = multi ]; then
   cat > "$second_factory_frag" <<'EOF'
 	factories = append(factories, probe.NamedFactory{
 		Name: "second",
-		New: func(ctx context.Context, target string, timeout time.Duration) (prometheus.Collector, error) {
+		New: func(ctx context.Context, target string, timeout time.Duration, hc *http.Client) (prometheus.Collector, error) {
+			if hc != nil {
+				return collector.NewSecondCollector(ctx, log, collector.NewClientFor(target, hc)), nil
+			}
 			return collector.NewSecondCollector(ctx, log, collector.NewClient(target, timeout)), nil
 		},
 	})
