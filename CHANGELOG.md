@@ -24,6 +24,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`scaffold.sh --instance-label`** (default `target`): the identifying
   label a multi-instance scaffold applies to every series of every watched
   instance, fixed at scaffold time rather than a runtime flag.
+- **Per-target credentials for the `multi` target model.** A `/probe` request
+  selects credentials by name with `?module=`, so one multi-target exporter
+  can probe targets that authenticate differently. Credentials resolve in a
+  fixed order (the unique selected module carrying them, then a `default`
+  module, then the top-level `http_client_config:`) and never combine:
+  selecting two credential-bearing modules returns 400, and so does a probe
+  that resolves no credentials against a configuration that declares some.
+  The same mechanism expresses both ecosystem conventions, a module as a
+  complete bundle or credentials as an independent axis, so the choice lives
+  in the configuration file rather than in code.
+
+### Changed
+
+- **`probe.Factory` gains a fourth `hc *http.Client` parameter.** Affects
+  repositories scaffolded with `--target-model multi`; `/add-collector`
+  detects the older shape and migrates it, diff first. No flag is renamed and
+  no URL changes. Per-collector HTTP clients collapse into one client per
+  module, built once at boot.
+
+### Deprecated
+
+- **`--probe.module`.** Superseded by the configuration file's `modules:`
+  section, which can also carry credentials. Both at once is refused at boot.
+  Removal no earlier than v0.6.0.
 
 ## [0.4.0] - 2026-07-22
 
