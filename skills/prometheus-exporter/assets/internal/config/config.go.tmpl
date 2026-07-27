@@ -476,6 +476,47 @@ func (c *Config) resolveModule(name string) (*promconfig.HTTPClientConfig, error
 	return m.HTTPClientConfig, nil
 }
 
+// ResolvedModule is one validated module: the collector subset it selects and
+// the client config its probes authenticate with, nil meaning the default
+// transport.
+type ResolvedModule struct {
+	Collectors   []string
+	ClientConfig *promconfig.HTTPClientConfig
+}
+
+// ResolveModules validates the modules section for the multi target model.
+// Unlike multi-instance, multi HONOURS a module's "collectors:" key: there it
+// selects the probe's collector subset, which is the job the deprecated
+// --probe.module flag does today.
+//
+// A modules: section alongside a top-level http_client_config: is refused.
+// With modules declared, nothing reads the top-level section, so accepting
+// both would silently ignore one of the two places an operator wrote
+// credentials. That refusal is also what makes credential resolution
+// unambiguous in internal/probe: the top-level client is reachable only when
+// no module is.
+//
+// It builds no *http.Client. This package stays a parsing and validation
+// layer with no I/O, exactly as ResolveInstances leaves it; the caller builds
+// the clients so a failure there can name the module it came from.
+func (c *Config) ResolveModules() (map[string]ResolvedModule, error) {
+	if len(c.Modules) == 0 {
+		return nil, nil
+	}
+	if c.HTTPClientConfig != nil {
+		return nil, fmt.Errorf("config file: \"modules:\" and a top-level \"http_client_config:\" cannot both be set; with modules declared the top-level section has no reader, so move it into a module (a module named \"default\" is the one a probe gets when it names none)")
+	}
+
+	out := make(map[string]ResolvedModule, len(c.Modules))
+	for name, m := range c.Modules {
+		out[name] = ResolvedModule{
+			Collectors:   m.Collectors,
+			ClientConfig: m.HTTPClientConfig,
+		}
+	}
+	return out, nil
+}
+
 // validateInstanceAddress enforces that an address parses as an http/https URL,
 // the same floor a /probe target must clear.
 func validateInstanceAddress(addr string) error {

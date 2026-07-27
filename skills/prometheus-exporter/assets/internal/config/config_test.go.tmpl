@@ -525,3 +525,51 @@ func TestRejectModulesAndInstances(t *testing.T) {
 		t.Error("accepted an instances: section")
 	}
 }
+
+func TestResolveModulesReturnsNilWithNoSection(t *testing.T) {
+	got, err := (&Config{}).ResolveModules()
+	if err != nil {
+		t.Fatalf("ResolveModules: %v", err)
+	}
+	if got != nil {
+		t.Errorf("ResolveModules() = %v, want nil when no modules: section is declared", got)
+	}
+}
+
+func TestResolveModulesKeepsCollectorsAndClientConfig(t *testing.T) {
+	hc := &promconfig.HTTPClientConfig{}
+	c := &Config{Modules: map[string]Module{
+		"prod": {HTTPClientConfig: hc},
+		"disks": {Collectors: []string{"disks"}},
+	}}
+	got, err := c.ResolveModules()
+	if err != nil {
+		t.Fatalf("ResolveModules: %v", err)
+	}
+	if got["prod"].ClientConfig != hc {
+		t.Errorf("module prod lost its client config")
+	}
+	if len(got["disks"].Collectors) != 1 || got["disks"].Collectors[0] != "disks" {
+		t.Errorf("module disks collectors = %v, want [disks]", got["disks"].Collectors)
+	}
+	if got["disks"].ClientConfig != nil {
+		t.Errorf("module disks invented a client config")
+	}
+}
+
+// Rule 9: with modules declared, nothing reads the top-level section, so
+// accepting both would silently ignore one of two places an operator wrote
+// credentials.
+func TestResolveModulesRejectsTopLevelClientConfigAlongsideModules(t *testing.T) {
+	c := &Config{
+		HTTPClientConfig: &promconfig.HTTPClientConfig{},
+		Modules:          map[string]Module{"prod": {}},
+	}
+	_, err := c.ResolveModules()
+	if err == nil {
+		t.Fatal("ResolveModules accepted a modules: section alongside a top-level http_client_config:")
+	}
+	if !strings.Contains(err.Error(), "http_client_config") {
+		t.Errorf("error does not name the offending section: %v", err)
+	}
+}
