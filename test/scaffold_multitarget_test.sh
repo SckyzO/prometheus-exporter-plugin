@@ -55,6 +55,7 @@ grep -q '// @@PROBE_FACTORIES@@' "$mainfile" || fail "multi scaffold's main.go l
 
 probefile="$work/multi/internal/probe/probe.go"
 grep -q 'factories \[\]NamedFactory' "$probefile" || fail "multi scaffold's probe.go does not hold N named factories"
+grep -q 'hc \*http\.Client' "$probefile" || fail "multi scaffold's probe.go lost the 'hc *http.Client' parameter that /add-collector's seam detection greps for"
 
 # The multi main model carries only its own marker (// @@PROBE_FACTORIES@@);
 # it must never retain the single-target markers verbatim as dead comments.

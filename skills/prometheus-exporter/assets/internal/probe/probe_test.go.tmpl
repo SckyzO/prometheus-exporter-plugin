@@ -20,8 +20,8 @@ type recordingFactory struct {
 	target  string
 	timeout time.Duration
 	client  *http.Client // the client the handler resolved for this probe
-	panics  bool
-	metric  string
+	panics  bool         // when true, the returned collector panics on Collect
+	metric  string       // the stub series this factory's collector emits
 }
 
 func (f *recordingFactory) make(ctx context.Context, target string, timeout time.Duration, hc *http.Client) (prometheus.Collector, error) {
@@ -490,6 +490,12 @@ func TestSelectedModuleSuppliesItsClient(t *testing.T) {
 	}
 	if fs["alpha"].client != want {
 		t.Errorf("factory received client %p, want prod's %p", fs["alpha"].client, want)
+	}
+	// prod carries credentials and no collectors, so the selection is empty and
+	// every registered collector must run. Checking only alpha above would miss
+	// a regression that returned a strict subset instead of the full set.
+	if fs["beta"].calls != 1 {
+		t.Errorf("beta ran %d times: a credentials-only selection must run every collector", fs["beta"].calls)
 	}
 }
 
