@@ -644,6 +644,7 @@ fi
 if [ "$target_model" = multi ]; then
   echo "== http-multi: modules: section sub-check ($flavor/$forge) =="
   bin="$work/bin/demo_exporter"
+  [ -x "$bin" ] || die "http-multi modules: $bin missing or not executable after make build ($flavor/$forge)"
 
   mods_config="$work/.golden-smoke-modules-config.yml"
   cat > "$mods_config" <<'EOF'
@@ -666,9 +667,16 @@ EOF
   # below. That means --help exits before ever reaching it and returns 0
   # regardless of this conflict, confirmed empirically while writing this
   # check: --help against this exact config exits 0 while a real start exits
-  # 1. So this starts the process for real too, same as rule 8; nothing here
-  # ever binds a listener, since ResolveModules runs before the HTTP server
-  # starts.
+  # 1. So this starts the process for real too, same as rule 8.
+  #
+  # If this refusal is ever silently removed, main() proceeds past
+  # ResolveModules and blocks forever in web.ListenAndServe on
+  # 127.0.0.1:9998 instead of exiting. A plain foreground
+  # `if "$bin" ...; then die; fi` would hang right here instead of catching
+  # that regression, so this backgrounds the process and bounds the wait to
+  # 10s, the same idiom the live-probe block above uses: still running after
+  # 10s means the boot did NOT refuse (the regression this check exists to
+  # catch), a non-zero exit means the refusal fired (the pass).
   both_config="$work/.golden-smoke-modules-both.yml"
   cat > "$both_config" <<'EOF'
 http_client_config:
@@ -678,15 +686,44 @@ modules:
     http_client_config:
       basic_auth: { username: prod, password: hunter2 }
 EOF
-  if "$bin" --config.file="$both_config" --web.listen-address=127.0.0.1:9998 >/dev/null 2>&1; then
+  "$bin" --config.file="$both_config" --web.listen-address=127.0.0.1:9998 >/dev/null 2>&1 &
+  refusal_pid=$!
+  i=0
+  while [ "$i" -lt 10 ]; do
+    kill -0 "$refusal_pid" 2>/dev/null || break
+    i=$((i + 1))
+    sleep 1
+  done
+  if kill -0 "$refusal_pid" 2>/dev/null; then
+    kill "$refusal_pid" >/dev/null 2>&1 || true
+    wait "$refusal_pid" 2>/dev/null || true
+    die "http-multi modules: a modules: section alongside a top-level http_client_config: did not fail the boot within 10s; the refusal did not fire and the process is serving ($flavor/$forge)"
+  fi
+  if wait "$refusal_pid"; then
     die "http-multi modules: a modules: section alongside a top-level http_client_config: was accepted ($flavor/$forge)"
   fi
   echo "confirmed: modules: plus a top-level http_client_config: is refused ($flavor/$forge)"
 
   # Rule 8: --probe.module and a modules: section cannot both be used. This
   # one is refused AFTER kingpin parses, so --help would exit first; start the
-  # process for real and require a non-zero exit.
-  if "$bin" --config.file="$mods_config" --probe.module=x:example --web.listen-address=127.0.0.1:9998 >/dev/null 2>&1; then
+  # process for real and require a non-zero exit. Same background-plus-
+  # bounded-wait shape as rule 9 above and for the same reason: if this
+  # refusal were ever silently removed, a plain foreground `if` would hang
+  # forever on the bound listener instead of catching the regression.
+  "$bin" --config.file="$mods_config" --probe.module=x:example --web.listen-address=127.0.0.1:9998 >/dev/null 2>&1 &
+  refusal_pid=$!
+  i=0
+  while [ "$i" -lt 10 ]; do
+    kill -0 "$refusal_pid" 2>/dev/null || break
+    i=$((i + 1))
+    sleep 1
+  done
+  if kill -0 "$refusal_pid" 2>/dev/null; then
+    kill "$refusal_pid" >/dev/null 2>&1 || true
+    wait "$refusal_pid" 2>/dev/null || true
+    die "http-multi modules: --probe.module together with a modules: section did not fail the boot within 10s; the refusal did not fire and the process is serving ($flavor/$forge)"
+  fi
+  if wait "$refusal_pid"; then
     die "http-multi modules: --probe.module together with a modules: section was accepted ($flavor/$forge)"
   fi
   echo "confirmed: --probe.module plus a modules: section is refused ($flavor/$forge)"
