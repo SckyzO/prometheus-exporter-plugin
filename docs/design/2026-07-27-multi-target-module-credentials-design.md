@@ -78,25 +78,40 @@ Evaluated per `/probe` request.
    widen the selection. If no selected module contributed any collector,
    every registered collector runs, which is what an absent `module`
    parameter already does.
-2. **Credentials.** At most one selected module may carry an
-   `http_client_config:`. That module supplies the client for the whole
-   request. Selection is deduplicated by name first, so `module=a,a` selects
-   one module, not two, and never trips rule 3.
+2. **Credentials resolve in a fixed order**, first hit wins. Selection is
+   deduplicated by name first, so `module=a,a` selects one module, not two.
+   1. The unique selected module carrying an `http_client_config:`.
+   2. Otherwise the `default` module's, if a `default` module is declared.
+   3. Otherwise the top-level `http_client_config:`, reachable only when the
+      file declares no `modules:` section at all (rule 9). This is the
+      v0.4.0 path, and it is what keeps an existing deployment identical.
+   4. Otherwise the default transport.
 3. **Ambiguity is a 400, never a precedence.** Two selected modules both
    carrying an `http_client_config:` is refused:
    `modules "a" and "b" both carry credentials; a probe can only use one`.
+   Step 2.1 is therefore never a choice between two candidates.
 4. **Replacement, not merge.** A selected module's client config is taken
    whole. There is no field-level merge with the top-level section
    (volet B's §3 rule 3, unchanged).
-5. **An absent `module` parameter.** With no `modules:` section, behaviour is
-   v0.4.0 verbatim: the top-level `http_client_config:` applies, or the
-   default transport when there is none. With a `modules:` section, the
-   request uses the `default` module; if the operator declared modules but no
-   `default`, the request is refused with
-   `no module selected and no "default" module is declared`. Serving that
-   request over an unauthenticated transport instead would silently probe
-   without the credentials the operator went to the trouble of declaring:
-   the one outcome worse than a 400.
+5. **Resolving no credentials against a configuration that declares some is a
+   400.** When every step of rule 2 misses and at least one module in the
+   file carries an `http_client_config:`, the request is refused:
+
+   ```
+   no credentials selected: modules "prod", "staging" declare credentials but this
+   request selected none; name one with &module=, or declare a "default" module
+   ```
+
+   This is the anti-silent-unauthenticated guard, and it covers two distinct
+   mistakes with one rule: a scrape config that forgot `&module=` entirely,
+   and one that named only a collector-subset module. Probing in the clear
+   against a target the operator went to the trouble of giving credentials
+   for is the one outcome worse than a failed scrape, because a 400 makes
+   `up` go to 0 and shows up in the monitoring, while a silent unauthenticated
+   probe returns 200 and empty or wrong series that nobody notices.
+
+   A configuration that declares no credentials anywhere is untouched by this
+   rule: the probe runs on the default transport, exactly as it does today.
 6. **Unknown module is a 400.** Unchanged (`selectFactories`,
    `probe.go.tmpl:149-151`).
 7. **Flag-declared modules carry no credentials.** When the modules come from
@@ -109,6 +124,13 @@ Evaluated per `/probe` request.
    exclusive**, refused at boot with a clear message; the flag is documented
    as deprecated, for removal in a later version. Volet B's §3 rule, applied
    here for the first time.
+9. **A `modules:` section and a top-level `http_client_config:` are mutually
+   exclusive**, refused at boot. With modules declared, the top-level section
+   has no reader, so accepting both would silently ignore one of two places
+   an operator wrote credentials. This is what makes rule 2's step 3
+   unambiguous: the top-level section is reachable only when no module is.
+   No deployment can depend on the combination, because `multi` ignores
+   `modules:` entirely until this change lands.
 
 ### 3.3 One mechanism, two conventions
 
@@ -192,7 +214,9 @@ It applies the v0.4.0 compatibility rule the same way `resolveModule`
 top-level `http_client_config:` is the `default` module. **A declared
 `modules:` section with no `default` key is not a boot failure**: it is
 legitimate for an operator to require every scrape config to name its module
-explicitly, and rule 5 turns the omission into a per-request 400 instead.
+explicitly, and rule 5 turns an unresolved request into a per-request 400
+instead. What `ResolveModules` does refuse at boot is rule 9's combination, a
+`modules:` section alongside a top-level `http_client_config:`.
 `internal/config` builds no `*http.Client`: it stays a parsing and validation
 layer with no I/O, exactly as volet B left it, and the caller builds the
 clients (§5.3).
@@ -243,8 +267,11 @@ at boot (rule 8), so the map never has two origins. `ValidateModules`
 module's collector names must match a registered factory, checked at boot,
 failing sorted so the same module fails every time.
 
-`selectFactories` gains rules 1, 2, 3 and 5, and returns the selected
-factories plus the resolved client.
+`selectFactories` gains rules 1, 2, 3, 5 and 6, and returns the selected
+factories plus the resolved client. `NewHandler` gains one parameter, the
+top-level client of rule 2 step 3: it is non-nil only when the file declared
+a `http_client_config:` and no `modules:` section, which rule 9 guarantees is
+the only way both can be spelled.
 
 ### 5.3 What leaves the fragment
 
@@ -348,7 +375,9 @@ migration, and their credentials are carried by the `default` module.
 | The selected module's client is the one used | `internal/probe/probe_test.go.tmpl`: two modules, two `httptest.Server`s, assertion on the `Authorization` header the server actually received |
 | Two credential-bearing modules produce a 400 | `probe_test.go.tmpl` and the golden `http-multi` cell |
 | A module with no `collectors:` does not widen the selection | `probe_test.go.tmpl` |
-| An absent `module` with modules declared and no `default` produces a 400 | `probe_test.go.tmpl` |
+| A request resolving no credentials against a file that declares some produces a 400, both when `module` is absent and when it names only a collector-subset module | `probe_test.go.tmpl` |
+| A file declaring no credentials at all still probes on the default transport | `probe_test.go.tmpl` |
+| A `modules:` section alongside a top-level `http_client_config:` fails the boot | `config_test.go.tmpl` |
 | `ResolveModules`: v0.4.0 compatibility, unknown module, sorted deterministic errors | `internal/config/config_test.go.tmpl`, mirroring the `ResolveInstances` tests |
 | The binary boots with a `modules:` section | golden `http-multi` cell |
 | The binary refuses to boot with both `--probe.module` and `modules:` | golden `http-multi` cell (this lives in `main`, so no unit test can reach it) |
@@ -406,6 +435,12 @@ Taught by the plugin:
 
 - **Removing `--probe.module`.** Deprecated by rule 8, removed no earlier
   than v0.6.0, per the plugin's two-phase rule.
+- **`ResolveInstances` does not enforce rule 9.** Under `multi-instance`, a
+  `modules:` section alongside a top-level `http_client_config:` silently
+  ignores the latter (`resolveModule` consults it only when `len(c.Modules)`
+  is zero, `config.go.tmpl:466-471`). That is shipped v0.5.0 behaviour, so
+  aligning it is a two-phase change of its own rather than a drive-by edit
+  here. Recorded for v0.6.0.
 - **The default transport is still built per request.** The `hc == nil` path
   calls `collector.NewClient(target, timeout)` inside the closure, once per
   probe, as it already does today. Hoisting it to boot would mean pinning a
