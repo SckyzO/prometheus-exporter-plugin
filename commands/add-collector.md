@@ -68,6 +68,42 @@ else echo v0.3.0; fi
   `pre-modules` migration's wiring steps, and together they land the
   repository on `modules`.
 
+Either migration reaches the same `cfg`-reading wiring block, so run the
+configuration-layer check immediately below before either of them, and
+before rewriting anything.
+
+### Before either migration: does this repository have the configuration layer?
+
+Both migrations below end in the same wiring sequence, and that sequence
+reads `cfg`: `cfg.Modules`, `cfg.ResolveModules()`, `cfg.HTTPClientConfig`.
+That variable exists only in a repository scaffolded with the `--config.file`
+configuration layer, which shipped in v0.4.0. A `v0.3.0` repository has no
+`cfg` and no `internal/config/` package at all. Check this **before touching
+a single file**, on the `v0.3.0` path and the `pre-modules` path alike:
+
+```sh
+grep -q 'cfg, err := config.Load(' cmd/*/main.go && echo has-config || echo pre-config-layer
+```
+
+**`pre-config-layer`: refuse, and do not rewrite anything.** Say plainly
+that this repository predates the `--config.file` configuration layer, and
+that per-module credentials are built on top of it: the wiring these
+migrations install reads `cfg.Modules`, `cfg.ResolveModules()` and
+`cfg.HTTPClientConfig`, none of which a repository without
+`internal/config/` declares. Adding that layer is a second migration in its
+own right, with its own design (a `--config.file` flag, an `internal/config`
+package, `config.Load`/`cfg.Validate`, the restructure that feeds the file's
+values back through the flag parser, and the module dependencies that come
+with it), and **this command will not attempt that upgrade for them**:
+half-applying it would leave `cmd/*/main.go` reading a package the
+repository does not have, which is worse than the shape it started from.
+Hand them the diff the migration would have written, so they can see what
+they are being asked to reach, and stop there. Do not add the new collector
+either: the seam still cannot hold it.
+
+**`has-config`**: continue with whichever migration the shape detection
+selected.
+
 **If the shape is `v0.3.0`** (the seam holds exactly one `factory Factory`
 field; the `NamedFactory` type does not exist in the file at all), this
 repository predates the N-collector seam and cannot hold a second collector
@@ -128,12 +164,27 @@ templates, which do declare `ctx`, and gets that deadline for free.
    `--collector.example.timeout` to `--probe.timeout` (and adds
    `--probe.timeout-offset`/`--probe.module`), a breaking flag change for
    anyone already running that exporter. Say so plainly.
-2. If the user declines, stop and hand them the diff. Do not add the new
-   collector to a seam that cannot hold it.
-3. If the user accepts, apply this section's steps, then continue
+2. **Ask once, for both halves, and be explicit that this is one ask.** A
+   `v0.3.0` repository goes through this section's steps *and* the
+   `pre-modules` migration's steps below, which carries a consent gate of
+   its own. On this path the two are **one migration presented in two
+   parts**, not two independent decisions: show the combined diff (this
+   section's rewrites plus the wiring block below), state the combined blast
+   radius (the flag rename above, and the wiring change described at the
+   `pre-modules` gate), and take a single yes or no. Say which files each
+   part touches, so the user can see they are being asked about the whole
+   thing exactly once.
+3. If the user declines, stop and hand them the diff. Do not add the new
+   collector to a seam that cannot hold it, and do not apply just the first
+   half: a repository stopped between the two parts compiles against neither
+   seam.
+4. If the user accepts, apply this section's steps, then continue
    immediately into the `pre-modules` migration below and apply its steps
-   too, in the same pass: a `v0.3.0` repository is not fully migrated until
-   both are done.
+   too, in the same pass, **without asking again**: that gate was already
+   answered by the combined ask in step 2. A `v0.3.0` repository is not
+   fully migrated until both are done. (A repository detected as
+   `pre-modules` in the first place never passes through here, so its own
+   gate below is the only ask it ever sees.)
 
 **If the shape is `modules`**, proceed directly.
 
@@ -255,6 +306,12 @@ become one, so the exporter opens one connection pool where it opened N. Say
 that plainly, then apply it only if the user accepts. If they decline, stop
 and hand them the diff; do not append a collector to a seam whose shape you
 were not allowed to fix.
+
+**Arriving here from the `v0.3.0` section above? This gate is already
+answered.** That section's step 2 asks once, for both halves, precisely so a
+`v0.3.0` repository is never stopped half-migrated. State what you are
+applying and continue; do not ask a second time. The gate above is the only
+ask for a repository that was detected as `pre-modules` in the first place.
 
 Then materialize the collector exactly as for single-target (the five-piece
 shape, the test triad, the `docs/metrics.md` entry, the proposed business
