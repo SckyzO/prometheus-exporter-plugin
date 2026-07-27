@@ -87,7 +87,7 @@ rm -rf /tmp/vA && skills/prometheus-exporter/assets/scaffold.sh \
   --flavor http --forge none --target-model multi \
   --var EXPORTER_NAME=demo_exporter --var NAMESPACE=demo \
   --var MODULE_PATH=example.com/demo --var DEFAULT_PORT=9999 \
-  --var OWNER=someone --var LICENSE=Apache-2.0
+  --var OWNER=demo --var LICENSE=apache-2.0 --var DATA_SOURCE=http://localhost:9999 --var DATA_SOURCE_PATH=/api/example --var COLLECTOR_HEALTH_BY=job --var COLLECTOR_LOCATION=instance
 ```
 
 Re-run that command after every template edit in this task; it is how the
@@ -150,7 +150,7 @@ func TestResolveModulesRejectsTopLevelClientConfigAlongsideModules(t *testing.T)
 - [ ] **Step 2: Run the tests to verify they fail**
 
 ```sh
-rm -rf /tmp/vA && skills/prometheus-exporter/assets/scaffold.sh --src skills/prometheus-exporter/assets --dst /tmp/vA --flavor http --forge none --target-model multi --var EXPORTER_NAME=demo_exporter --var NAMESPACE=demo --var MODULE_PATH=example.com/demo --var DEFAULT_PORT=9999 --var OWNER=someone --var LICENSE=Apache-2.0
+rm -rf /tmp/vA && skills/prometheus-exporter/assets/scaffold.sh --src skills/prometheus-exporter/assets --dst /tmp/vA --flavor http --forge none --target-model multi --var EXPORTER_NAME=demo_exporter --var NAMESPACE=demo --var MODULE_PATH=example.com/demo --var DEFAULT_PORT=9999 --var OWNER=demo --var LICENSE=apache-2.0 --var DATA_SOURCE=http://localhost:9999 --var DATA_SOURCE_PATH=/api/example --var COLLECTOR_HEALTH_BY=job --var COLLECTOR_LOCATION=instance
 cd /tmp/vA && go test ./internal/config/ -run TestResolveModules -v
 ```
 
@@ -206,7 +206,7 @@ func (c *Config) ResolveModules() (map[string]ResolvedModule, error) {
 - [ ] **Step 4: Run the tests to verify they pass**
 
 ```sh
-rm -rf /tmp/vA && skills/prometheus-exporter/assets/scaffold.sh --src skills/prometheus-exporter/assets --dst /tmp/vA --flavor http --forge none --target-model multi --var EXPORTER_NAME=demo_exporter --var NAMESPACE=demo --var MODULE_PATH=example.com/demo --var DEFAULT_PORT=9999 --var OWNER=someone --var LICENSE=Apache-2.0
+rm -rf /tmp/vA && skills/prometheus-exporter/assets/scaffold.sh --src skills/prometheus-exporter/assets --dst /tmp/vA --flavor http --forge none --target-model multi --var EXPORTER_NAME=demo_exporter --var NAMESPACE=demo --var MODULE_PATH=example.com/demo --var DEFAULT_PORT=9999 --var OWNER=demo --var LICENSE=apache-2.0 --var DATA_SOURCE=http://localhost:9999 --var DATA_SOURCE_PATH=/api/example --var COLLECTOR_HEALTH_BY=job --var COLLECTOR_LOCATION=instance
 cd /tmp/vA && go test ./internal/config/ -v
 ```
 
@@ -506,7 +506,7 @@ func TestRepeatedModuleNameIsNotAnAmbiguity(t *testing.T) {
 - [ ] **Step 2: Run the tests to verify they fail**
 
 ```sh
-rm -rf /tmp/vA && skills/prometheus-exporter/assets/scaffold.sh --src skills/prometheus-exporter/assets --dst /tmp/vA --flavor http --forge none --target-model multi --var EXPORTER_NAME=demo_exporter --var NAMESPACE=demo --var MODULE_PATH=example.com/demo --var DEFAULT_PORT=9999 --var OWNER=someone --var LICENSE=Apache-2.0
+rm -rf /tmp/vA && skills/prometheus-exporter/assets/scaffold.sh --src skills/prometheus-exporter/assets --dst /tmp/vA --flavor http --forge none --target-model multi --var EXPORTER_NAME=demo_exporter --var NAMESPACE=demo --var MODULE_PATH=example.com/demo --var DEFAULT_PORT=9999 --var OWNER=demo --var LICENSE=apache-2.0 --var DATA_SOURCE=http://localhost:9999 --var DATA_SOURCE_PATH=/api/example --var COLLECTOR_HEALTH_BY=job --var COLLECTOR_LOCATION=instance
 cd /tmp/vA && go test ./internal/probe/ 2>&1 | head -30
 ```
 
@@ -756,7 +756,7 @@ At `:209-213` and `:228`:
 - [ ] **Step 7: Run the tests to verify they pass**
 
 ```sh
-rm -rf /tmp/vA && skills/prometheus-exporter/assets/scaffold.sh --src skills/prometheus-exporter/assets --dst /tmp/vA --flavor http --forge none --target-model multi --var EXPORTER_NAME=demo_exporter --var NAMESPACE=demo --var MODULE_PATH=example.com/demo --var DEFAULT_PORT=9999 --var OWNER=someone --var LICENSE=Apache-2.0
+rm -rf /tmp/vA && skills/prometheus-exporter/assets/scaffold.sh --src skills/prometheus-exporter/assets --dst /tmp/vA --flavor http --forge none --target-model multi --var EXPORTER_NAME=demo_exporter --var NAMESPACE=demo --var MODULE_PATH=example.com/demo --var DEFAULT_PORT=9999 --var OWNER=demo --var LICENSE=apache-2.0 --var DATA_SOURCE=http://localhost:9999 --var DATA_SOURCE_PATH=/api/example --var COLLECTOR_HEALTH_BY=job --var COLLECTOR_LOCATION=instance
 cd /tmp/vA && go test ./internal/probe/ -v
 ```
 
@@ -923,7 +923,7 @@ Also update `--probe.module`'s help text at `:96-99` to mark it deprecated:
 - [ ] **Step 3: Verify the multi scaffold builds and its own gate passes**
 
 ```sh
-rm -rf /tmp/vA && skills/prometheus-exporter/assets/scaffold.sh --src skills/prometheus-exporter/assets --dst /tmp/vA --flavor http --forge none --target-model multi --var EXPORTER_NAME=demo_exporter --var NAMESPACE=demo --var MODULE_PATH=example.com/demo --var DEFAULT_PORT=9999 --var OWNER=someone --var LICENSE=Apache-2.0
+rm -rf /tmp/vA && skills/prometheus-exporter/assets/scaffold.sh --src skills/prometheus-exporter/assets --dst /tmp/vA --flavor http --forge none --target-model multi --var EXPORTER_NAME=demo_exporter --var NAMESPACE=demo --var MODULE_PATH=example.com/demo --var DEFAULT_PORT=9999 --var OWNER=demo --var LICENSE=apache-2.0 --var DATA_SOURCE=http://localhost:9999 --var DATA_SOURCE_PATH=/api/example --var COLLECTOR_HEALTH_BY=job --var COLLECTOR_LOCATION=instance
 cd /tmp/vA && make build && make check
 ```
 
@@ -963,11 +963,11 @@ module's credentials), `ambiguous=400` with a body naming both modules.
 cd /home/sckyzo/Dev/work/apps_repo/exporters/prometheus-exporter-plugin
 for tm in single multi-instance; do
   rm -rf "/tmp/vA-$tm-head" "/tmp/vA-$tm-base"
-  skills/prometheus-exporter/assets/scaffold.sh --src skills/prometheus-exporter/assets --dst "/tmp/vA-$tm-head" --flavor http --forge none --target-model "$tm" --var EXPORTER_NAME=demo_exporter --var NAMESPACE=demo --var MODULE_PATH=example.com/demo --var DEFAULT_PORT=9999 --var OWNER=someone --var LICENSE=Apache-2.0
+  skills/prometheus-exporter/assets/scaffold.sh --src skills/prometheus-exporter/assets --dst "/tmp/vA-$tm-head" --flavor http --forge none --target-model "$tm" --var EXPORTER_NAME=demo_exporter --var NAMESPACE=demo --var MODULE_PATH=example.com/demo --var DEFAULT_PORT=9999 --var OWNER=demo --var LICENSE=apache-2.0 --var DATA_SOURCE=http://localhost:9999 --var DATA_SOURCE_PATH=/api/example --var COLLECTOR_HEALTH_BY=job --var COLLECTOR_LOCATION=instance
 done
 git stash push --include-untracked
 for tm in single multi-instance; do
-  skills/prometheus-exporter/assets/scaffold.sh --src skills/prometheus-exporter/assets --dst "/tmp/vA-$tm-base" --flavor http --forge none --target-model "$tm" --var EXPORTER_NAME=demo_exporter --var NAMESPACE=demo --var MODULE_PATH=example.com/demo --var DEFAULT_PORT=9999 --var OWNER=someone --var LICENSE=Apache-2.0
+  skills/prometheus-exporter/assets/scaffold.sh --src skills/prometheus-exporter/assets --dst "/tmp/vA-$tm-base" --flavor http --forge none --target-model "$tm" --var EXPORTER_NAME=demo_exporter --var NAMESPACE=demo --var MODULE_PATH=example.com/demo --var DEFAULT_PORT=9999 --var OWNER=demo --var LICENSE=apache-2.0 --var DATA_SOURCE=http://localhost:9999 --var DATA_SOURCE_PATH=/api/example --var COLLECTOR_HEALTH_BY=job --var COLLECTOR_LOCATION=instance
 done
 git stash pop
 for tm in single multi-instance; do
