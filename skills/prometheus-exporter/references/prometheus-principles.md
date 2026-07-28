@@ -177,6 +177,18 @@ one added later at the Prometheus-server level silently shadows it. `le` and
 `quantile` are reserved for Histogram buckets and Summary quantiles
 specifically and should not be reused for anything else.
 
+A `multi-instance` build (`exporter-architecture.md`) has a label-collision
+hazard of its own, applied at registration time rather than by Prometheus's
+scrape-time relabeling: every series a watched instance emits carries an
+identifying label (`--instance-label`, default `target`) plus that
+instance's own `labels:` from the configuration file, both folded in as
+`ConstLabels` via `prometheus.WrapRegistererWith`. An instance's `labels:`
+may not reuse the identifying label, or a label a collector already emits
+(`internal/config/config.go`'s `ResolveInstances` refuses either at boot),
+and every instance must declare the same set of label keys, since two
+collectors sharing a metric name but differing in label-key dimension is an
+opaque registration-time panic, not a graceful degradation.
+
 Cardinality is controlled the same way at runtime as it is at design time
 (`exporter-architecture.md`'s budget): a flag. `--[no-]collector.<name>`
 removes an entire collector's series; a narrower `--collector.<name>.<x>`

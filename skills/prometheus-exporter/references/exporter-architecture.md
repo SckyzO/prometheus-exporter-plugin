@@ -2,11 +2,11 @@
 
 This is step 0 of the workflow: a design pass that runs *before* the first
 line of Go is written and before `/new-prometheus-exporter` is invoked. It
-produces four decisions (the data source, the single- vs. multi-target
-model, the I/O flavor, and the collector list with its cardinality budget)
-that everything downstream (the scaffold, the per-collector loop, the
-alerting) is built from. Getting this phase right is cheaper than
-re-architecting a repository that already builds.
+produces four decisions: the data source; the target model (`single`,
+`multi`, or `multi-instance`); the I/O flavor; and the collector list with
+its cardinality budget. Everything downstream (the scaffold, the
+per-collector loop, the alerting) is built from these. Getting this phase
+right is cheaper than re-architecting a repository that already builds.
 
 This document teaches the decision process itself. The concrete shape a
 collector's code takes once the flavor is chosen is `collector-pattern.md`;
@@ -64,38 +64,48 @@ verifies Prometheus's own conventions instead of the target's API. See
 `discovery-inputs.md` for the full input ladder and per-source extraction
 method.
 
-## 2. Single-target vs. multi-target
+## 2. Three target models: single, multi, multi-instance
 
-Prometheus documents two distinct exporter shapes:
+`/new-prometheus-exporter --target-model` scaffolds exactly one of three
+mutually exclusive shapes: `single` (the default), `multi`, or
+`multi-instance`. This is a structural fork, not a later refinement: it
+dictates the shape of `main.go` (a fixed registry built once at startup, a
+`/probe` handler that builds a fresh set of collectors per request, or a
+boot-time fan-out over a configured instance list) and changes what "a
+collector" even means (process-lifetime, per-request constructed, or
+built once per watched instance and refreshed on its own schedule). Decide
+the model now: retrofitting a different one onto an already-scaffolded
+`main.go` later touches the entry point, the registry, and every
+collector's constructor signature at once.
 
-- **Single-target**: the exporter runs alongside (or embedded in) the one
-  thing it monitors and always reports on that one target. This is what
-  every collector this scaffold ships assumes: `main.go`'s registry, flags,
-  and `/metrics` endpoint all describe exactly one target.
-- **Multi-target**: the exporter itself queries *N* other instances over the
-  network and is queried, per-target, via a `/probe` endpoint carrying a
-  `target` (and often `module`) query parameter: Prometheus's own
-  [multi-target exporter pattern](https://prometheus.io/docs/guides/multi-target-exporter/).
-  The canonical example is the Blackbox exporter: a `scrape_configs` entry
-  points `metrics_path: /probe` at the exporter's own address, with
-  `params: {module: [http_2xx], target: [some-host]}`, and relabeling turns
-  the probed target into the resulting series' `instance` label. The
-  exporter process itself is not "the thing being monitored." It is a
-  fan-out proxy in front of however many real targets Prometheus asks it to
-  probe. A multi-target exporter can also authenticate per target: declaring
-  a `modules:` section in its configuration file and having the scrape
-  config name one with `&module=` lets one target's credentials differ from
-  another's. Without that section every target authenticates the same way,
-  or not at all, which is the right answer when one credential covers all
-  of them.
+### `single` (the default)
 
-This is a structural fork, not a later refinement: it dictates the shape of
-`main.go` (a `/probe` handler that builds a fresh set of collectors per
-request, scoped to the `target` parameter, instead of a fixed registry built
-once at startup) and changes what "a collector" even means (per-request
-constructed, not process-lifetime).
+The exporter runs alongside (or embedded in) the one thing it monitors and
+always reports on that one target. This is what every collector this
+scaffold ships assumes: `main.go`'s registry, flags, and `/metrics` endpoint
+all describe exactly one target. The rest of this skill's references
+describe this model unless a section says otherwise.
 
-**Multi-target is scaffolded, opt-in, via `--target-model multi` (http flavor
+### `multi`
+
+The exporter itself queries *N* other instances over the network and is
+queried, per-target, via a `/probe` endpoint carrying a `target` (and often
+`module`) query parameter: Prometheus's own
+[multi-target exporter pattern](https://prometheus.io/docs/guides/multi-target-exporter/).
+The canonical example is the Blackbox exporter: a `scrape_configs` entry
+points `metrics_path: /probe` at the exporter's own address, with
+`params: {module: [http_2xx], target: [some-host]}`, and relabeling turns
+the probed target into the resulting series' `instance` label. The
+exporter process itself is not "the thing being monitored." It is a
+fan-out proxy in front of however many real targets Prometheus asks it to
+probe. A multi-target exporter can also authenticate per target: declaring
+a `modules:` section in its configuration file and having the scrape
+config name one with `&module=` lets one target's credentials differ from
+another's. Without that section every target authenticates the same way,
+or not at all, which is the right answer when one credential covers all
+of them.
+
+**Multi is scaffolded, opt-in, via `--target-model multi` (http flavor
 only).** If your target is one of many identical instances Prometheus should
 poll on demand (a fleet of identical network devices, a protocol prober,
 anything shaped like the Blackbox exporter), `/new-prometheus-exporter
@@ -116,21 +126,90 @@ is the only channel available to hand one in. The shared `StatusTracker`
 collects every scoped collector sequentially, so a probe costs the SUM of
 its collectors' durations, not the slowest one alone; the deadline above is
 what keeps that sum bounded instead of letting a probe run long after
-Prometheus gave up on it. `--probe.module` selects a subset of collectors
-per probe (`/probe?target=…&module=…`, repeatable and comma-separated,
-named modules combine); an absent `module` runs every registered collector,
-so an existing scrape config that only sets `target` keeps working
-untouched. `/add-collector` understands both models: it appends a
-`probe.NamedFactory` at the multi-target scaffold's own marker the same way
-it appends a `register(...)` call at the single-target one (see
-`project-scaffold.md`). Decide the model now, because retrofitting it onto
-an already-scaffolded single-target `main.go` later touches the entry point,
-the registry, and every collector's constructor signature at once.
+Prometheus gave up on it. Collector-subset selection lives in the
+configuration file, not in a flag: a `modules:` section names one or more
+modules, each with its own `collectors:` list (and, optionally, its own
+`http_client_config:`), and a probe selects one or more by name with
+`?module=…` (repeatable and comma-separated; the selected modules'
+collector lists combine). An absent `module` parameter runs every
+registered collector, so an existing scrape config that only sets `target`
+keeps working untouched. `/add-collector` understands this model: it
+appends a `probe.NamedFactory` at the multi-target scaffold's own marker
+the same way it appends a `register(...)` call at the single-target one
+(see `project-scaffold.md`).
 
 Multi-target's own self-metrics, `probe_success`, `probe_duration_seconds`,
 and `probe_timeout_seconds`, are a deliberate, documented exception to this
 scaffold's usual `namespace_subsystem_name` metric-naming rule. See
 `prometheus-principles.md`'s naming-exception note.
+
+### `multi-instance`
+
+The exporter watches a fixed list of machines, declared under `instances:`
+in its configuration file, each polled on its own schedule by a dedicated
+background goroutine and re-served from a cache on every scrape, all
+through one `/metrics` that Prometheus scrapes as a single target. Unlike
+`multi`, Prometheus never names the target at scrape time: the instance
+list is fixed at boot, from `--config.file`, which this model requires
+(there is nothing to watch without it, and the exporter refuses to start
+rather than serve an empty `/metrics`).
+
+**The reason this model exists is the staleness window, not slow targets,**
+and it is the one thing about it that is not obvious from "polls things in
+the background." Prometheus assigns a value to a timestamp from the newest
+sample within a lookback period that defaults to five minutes ([PromQL
+basics, Gotchas > Staleness](https://prometheus.io/docs/prometheus/3.13/querying/basics)).
+A datum you only want to refresh every fifteen minutes, or once a night,
+cannot be obtained by simply lengthening `scrape_interval` to match: the
+series would be queryable for a few minutes right after each refresh and
+then age out of range queries and dashboards until the next one, flickering
+in and out of existence instead of settling into a stable value. It has to
+be re-served from a cache at scrape cadence instead, decoupled from how
+often the underlying value actually changes, which needs a background
+poller, which needs its target at startup: this is exactly why `multi`'s
+per-request `?target=` cannot host it (a `/probe` handler has no target
+until the request naming one arrives). The same reasoning generalizes past
+slow network devices to any application API whose call is expensive, any
+batch job whose state changes hourly, any inventory collected once a night.
+
+**Multi-instance is scaffolded, opt-in, via `--target-model multi-instance`
+(http flavor only, and `--config.file` is required at runtime, not merely
+optional).** `/new-prometheus-exporter --target-model multi-instance` ships
+`internal/instance/` instead of `internal/probe/`: an `instance.Factory` per
+collector, appended at the scaffold's own marker, that `main` calls once per
+configured instance at boot, producing one `instance.BackgroundCollector`
+per instance per collector. `/add-collector` understands this model too: it
+appends an `instance.Factory` at the multi-instance scaffold's own marker
+(see `project-scaffold.md`).
+
+Every collector on a multi-instance build **must** be the background
+variant (`/add-collector --variant background`; see
+`collector-pattern.md`'s "Collector variants" section): a synchronous
+collector has no place to sit in this model at all, since `main` never
+calls it per scrape, only `Start`s it once at boot and reads its cache
+afterward. Shipping a synchronous collector here anyway would make the one
+shared `/metrics` response stall on whichever watched machine is slowest,
+or dead, on every single scrape, since Prometheus would then be waiting on
+live I/O to every instance instead of reading an already-refreshed value.
+
+Like `multi`, credentials can vary per instance: a `modules:` section names
+credential bundles, and each instance names one by `module:`, resolved once
+at boot rather than per request. Unlike `multi`, a module's `collectors:`
+key is meaningless here, because collector enablement under
+multi-instance is global, via `--[no-]collector.<name>`, not selected per
+instance or per module, and is refused at boot if set.
+
+### Choosing between the three
+
+Does this exporter monitor one fixed thing it runs alongside, with nothing
+else to pick between at scrape time? `single`. Does Prometheus instead need
+to name the target on demand, per scrape, from a fleet of otherwise
+interchangeable targets? `multi`. Is the target list fixed ahead of time,
+and does at least one collector need to refresh slower than Prometheus's
+own five-minute staleness window can tolerate by simply widening
+`scrape_interval`? `multi-instance`, whether or not per-instance credentials
+are also a factor. `/design-exporter` asks this explicitly and records the
+answer in the architecture brief; see `discovery-inputs.md`.
 
 ## 3. The mockable I/O boundary: choosing a flavor
 
@@ -254,16 +333,18 @@ Before `/new-prometheus-exporter` runs, this phase should have produced:
 - [ ] **Data source** chosen, in preference order (REST/API, gRPC, or CLI
       as a last resort, a database-only target is out of scope; see step 1),
       confirmed against the target's own docs via context7.
-- [ ] **Single- vs. multi-target** decided, and if multi-target, confirmed
-      that the flavor is (or will be) `http`, since `--target-model multi`
-      requires it.
+- [ ] **Target model** decided: `single`, `multi`, or `multi-instance`, and
+      if `multi` or `multi-instance`, confirmed that the flavor is (or will
+      be) `http`, since both require it; `multi-instance` additionally
+      requires `--config.file` at runtime.
 - [ ] **I/O flavor** chosen (`http` or `cli`), following directly from the
       data source.
 - [ ] **Collector list**, one resource per collector, in the order
       `/add-collector` will work through them.
 - [ ] **Background-refresh candidates** flagged, per collector, if any
       backend is slow/expensive enough that a scrape should never wait on
-      it directly.
+      it directly; on a `multi-instance` build every collector is this
+      variant by construction, not an optional flag.
 - [ ] **Cardinality budget** per collector: labels, worst-case series count,
       and any reduction flag needed.
 - [ ] **Candidate business alert(s)** per collector, even as a one-line note.
