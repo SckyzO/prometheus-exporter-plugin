@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -320,6 +321,39 @@ func TestTransportSetIsVisibleToExistingClients(t *testing.T) {
 		t.Fatalf("first fetch returned %q, want %q", got, "first")
 	}
 
+	// atomic.Pointer exists precisely so a reload's Set can land while a
+	// poller's Fetch is already reading the pointer: that is the race the
+	// type is FOR, not an accident it merely survives. The block above and
+	// the one below only prove a swap made strictly BETWEEN two sequential
+	// Fetch calls is visible, a much weaker property that a plain field would
+	// also satisfy under a mutex. Hammer Set and Fetch from separate
+	// goroutines with no ordering between them and run the whole test under
+	// -race to prove the concurrent case, the one that actually needs the
+	// atomic, is safe too.
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				_, _ = c.Fetch(context.Background(), "/")
+			}
+		}
+	}()
+	for i := 0; i < 200; i++ {
+		if i%2 == 0 {
+			tr.Set(&http.Client{})
+		} else {
+			tr.Set(&http.Client{Transport: refusingRoundTripper{}})
+		}
+	}
+	close(stop)
+	wg.Wait()
+
 	// Swap the transport for one that refuses every request, and prove the
 	// SAME Client now uses it.
 	tr.Set(&http.Client{Transport: refusingRoundTripper{}})
@@ -374,5 +408,23 @@ func TestNewClientKeepsItsPrivateTimeout(t *testing.T) {
 	}
 	if _, err := c.Fetch(context.Background(), "/"); err == nil {
 		t.Fatal("NewClient's 20ms timeout did not fire")
+	}
+}
+
+// TestNewHTTPClientLeavesZeroTimeoutForASharedTransport pins the other half
+// of the timeout contract that TestNewClientKeepsItsPrivateTimeout pins for
+// NewClient: a *http.Client built to back a Transport shared by more than one
+// NewClientOn call must carry no Timeout of its own, or that single shared
+// value silently overrides every collector's own per-Client deadline the
+// moment it is shorter (see NewHTTPClient's and NewClientOn's own doc
+// comments for why). NewHTTPClient must return timeout exactly as passed,
+// never substituting a default when it is 0.
+func TestNewHTTPClientLeavesZeroTimeoutForASharedTransport(t *testing.T) {
+	hc, err := NewHTTPClient(promconfig.HTTPClientConfig{}, 0)
+	if err != nil {
+		t.Fatalf("NewHTTPClient: %v", err)
+	}
+	if hc.Timeout != 0 {
+		t.Fatalf("NewHTTPClient(cfg, 0).Timeout = %v, want 0: a *http.Client meant to back a shared Transport must carry no deadline of its own", hc.Timeout)
 	}
 }

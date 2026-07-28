@@ -2,8 +2,10 @@ package collector
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -101,5 +103,116 @@ func TestNewClientForSharesOneTransport(t *testing.T) {
 	}
 	if a.baseURL == b.baseURL {
 		t.Errorf("both clients bound to %s; each target must keep its own base URL", a.baseURL)
+	}
+}
+
+// TestTransportSetIsVisibleToExistingClients proves the reload seam: a Client
+// built on a Transport picks up a replacement *http.Client without being
+// rebuilt. This is what lets a multi-instance reload rotate credentials
+// without stopping the poller and dropping its cache. Duplicated from
+// code/http/collector_test.go.tmpl rather than shared: this file exists
+// specifically because the background collector's own test file replaces
+// collector_test.go.tmpl wholesale for --target-model multi-instance, so
+// NewClientOn and Transport need a caller here too, in the model this
+// reload work is actually for, or `deadcode -test ./...` (see
+// Makefile.tmpl's make deadcode target) finds them unreachable.
+func TestTransportSetIsVisibleToExistingClients(t *testing.T) {
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("first"))
+	}))
+	defer first.Close()
+
+	tr := NewTransport(&http.Client{})
+	c := NewClientOn(tr, first.URL, time.Second)
+
+	got, err := c.Fetch(context.Background(), "/")
+	if err != nil {
+		t.Fatalf("first fetch: %v", err)
+	}
+	if string(got) != "first" {
+		t.Fatalf("first fetch returned %q, want %q", got, "first")
+	}
+
+	// atomic.Pointer exists precisely so a reload's Set can land while a
+	// poller's Fetch is already reading the pointer: hammer both concurrently
+	// with no ordering between them and run under -race to prove that race is
+	// safe, not just that a swap made between two sequential Fetch calls is
+	// visible (the weaker property the block below also shows).
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				_, _ = c.Fetch(context.Background(), "/")
+			}
+		}
+	}()
+	for i := 0; i < 200; i++ {
+		if i%2 == 0 {
+			tr.Set(&http.Client{})
+		} else {
+			tr.Set(&http.Client{Transport: refusingRoundTripper{}})
+		}
+	}
+	close(stop)
+	wg.Wait()
+
+	// Swap the transport for one that refuses every request, and prove the
+	// SAME Client now uses it.
+	tr.Set(&http.Client{Transport: refusingRoundTripper{}})
+	if _, err := c.Fetch(context.Background(), "/"); err == nil {
+		t.Fatal("fetch succeeded after Transport.Set installed a refusing client")
+	}
+}
+
+// refusingRoundTripper fails every request, so a test can prove which
+// transport a Client actually used.
+type refusingRoundTripper struct{}
+
+func (refusingRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("refused by test transport")
+}
+
+// TestNewClientOnAppliesItsOwnTimeout proves two collectors can share one
+// transport and still carry different per-collector deadlines, which
+// http.Client.Timeout cannot express because it lives on the shared client.
+func TestNewClientOnAppliesItsOwnTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(200 * time.Millisecond)
+		_, _ = w.Write([]byte("slow"))
+	}))
+	defer srv.Close()
+
+	tr := NewTransport(&http.Client{})
+	quick := NewClientOn(tr, srv.URL, 20*time.Millisecond)
+	patient := NewClientOn(tr, srv.URL, 5*time.Second)
+
+	if _, err := quick.Fetch(context.Background(), "/"); err == nil {
+		t.Fatal("the 20ms client did not time out against a 200ms handler")
+	}
+	if _, err := patient.Fetch(context.Background(), "/"); err != nil {
+		t.Fatalf("the 5s client failed against a 200ms handler: %v", err)
+	}
+}
+
+// TestNewHTTPClientLeavesZeroTimeoutForASharedTransport pins the other half
+// of the timeout contract: a *http.Client built to back a Transport shared by
+// more than one NewClientOn call must carry no Timeout of its own, or that
+// single shared value silently overrides every collector's own per-Client
+// deadline the moment it is shorter (see NewHTTPClient's and NewClientOn's
+// own doc comments for why). NewHTTPClient must return timeout exactly as
+// passed, never substituting a default when it is 0.
+func TestNewHTTPClientLeavesZeroTimeoutForASharedTransport(t *testing.T) {
+	hc, err := NewHTTPClient(promconfig.HTTPClientConfig{}, 0)
+	if err != nil {
+		t.Fatalf("NewHTTPClient: %v", err)
+	}
+	if hc.Timeout != 0 {
+		t.Fatalf("NewHTTPClient(cfg, 0).Timeout = %v, want 0: a *http.Client meant to back a shared Transport must carry no deadline of its own", hc.Timeout)
 	}
 }

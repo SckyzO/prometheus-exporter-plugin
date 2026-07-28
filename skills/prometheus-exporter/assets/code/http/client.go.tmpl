@@ -117,6 +117,14 @@ func NewClient(target string, timeout time.Duration) *Client {
 // here without one would hang its poller forever. Callers that take the
 // timeout from a flag should reject a non-positive value at boot; see
 // instance.Handle.ClientFor, which returns an error for exactly this.
+//
+// "The shared http.Client carries no Timeout of its own" is a precondition
+// NewClientOn trusts, not one it can check: tr may be reused by later Set
+// calls with a client built anywhere. It holds only because whoever built
+// that *http.Client did so through NewHTTPClient with timeout 0, exactly as
+// NewHTTPClient's own doc comment requires for a client meant to back a
+// Transport shared by more than one NewClientOn. Build it any other way and
+// this Client's own timeout stops being the only deadline in play, silently.
 func NewClientOn(tr *Transport, target string, timeout time.Duration) *Client {
 	return &Client{tr: tr, baseURL: target, timeout: timeout}
 }
@@ -131,13 +139,22 @@ func NewClientOn(tr *Transport, target string, timeout time.Duration) *Client {
 // idle connections until IdleConnTimeout. An *http.Client and the transport
 // inside it are safe for concurrent use, which is what makes sharing correct.
 //
-// timeout of 0 is accepted on purpose, not a bug: a Client built with
-// NewClientOn shares the *http.Client returned here through a Transport with
-// other collectors that each carry their own deadline in Client.timeout
-// instead. Setting hc.Timeout to anything but 0 in that case would cap every
-// collector on the Transport to whichever one happened to build it first, so
-// the caller that shares this client passes 0 here and lets Fetch apply the
-// per-collector deadline as a context instead.
+// Pass 0 for timeout when the *http.Client built here is going to back a
+// Transport shared by more than one NewClientOn call: that is not a missing
+// deadline, it is the ONLY way to keep a single deadline from applying to
+// every collector on the Transport. A Client built with NewClientOn carries
+// its own deadline in Client.timeout, applied per request by Fetch as a
+// context, precisely so collectors sharing one Transport can disagree on how
+// long to wait. Pass anything but 0 in that case and hc.Timeout still wins
+// underneath every one of them: http.Client.Timeout fires regardless of the
+// context deadline Fetch also set, whichever is shorter, so the failure is
+// silent rather than a build error. There is no check here that catches a
+// caller getting this wrong, because by the time NewClientOn runs, the
+// *http.Client already exists; this comment, and
+// TestNewHTTPClientLeavesZeroTimeoutForASharedTransport in this package's own
+// test file, are the contract. Reserve a non-zero timeout for a *http.Client
+// this function's caller keeps entirely to itself and never hands to
+// NewTransport more than once, such as NewClientWithConfig below.
 //
 // NewClientFromConfig's own transport already sizes its idle connection pool
 // for many callers sharing one host, not one: it sets MaxIdleConnsPerHost to
