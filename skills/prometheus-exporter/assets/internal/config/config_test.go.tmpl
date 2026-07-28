@@ -576,7 +576,7 @@ func TestResolveModulesRejectsTopLevelClientConfigAlongsideModules(t *testing.T)
 
 func TestDiffFlagsNamesEveryChangedKey(t *testing.T) {
 	boot := &Config{Flags: map[string]interface{}{
-		"log.level":         "info",
+		"log.level":          "info",
 		"web.listen-address": []interface{}{":9999"},
 	}}
 	next := &Config{Flags: map[string]interface{}{
