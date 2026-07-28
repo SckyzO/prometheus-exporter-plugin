@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -86,6 +87,8 @@ func serve(h *Handler, rawurl string) *httptest.ResponseRecorder {
 func newTestHandler(f *recordingFactory, allowlist []string) *Handler {
 	return NewHandler(logger.NewTextLogger("error"), []NamedFactory{f.named("example")}, allowlist, 5*time.Second, 0, nil, nil)
 }
+
+func testLogger() *logger.Logger { return logger.NewTextLogger("error") }
 
 func TestFloorRejectsNonHTTPScheme(t *testing.T) {
 	f := &recordingFactory{}
@@ -450,7 +453,7 @@ func credModuleHandler(t *testing.T, defaultModuleClient *http.Client) (*Handler
 // Rule 2 step 1: the selected module's client is the one the factory gets.
 func TestSelectedModuleSuppliesItsClient(t *testing.T) {
 	h, fs := credModuleHandler(t, nil)
-	want := h.modules["prod"].Client
+	want := h.cfg.Load().modules["prod"].Client
 
 	rec := serve(h, "/probe?target=http://n:9100&module=prod")
 
@@ -504,7 +507,7 @@ func TestCredentialsOnlyModuleDoesNotWidenSelection(t *testing.T) {
 	if fs["beta"].calls != 0 {
 		t.Errorf("beta ran %d times: a credentials-only module widened the selection", fs["beta"].calls)
 	}
-	if fs["alpha"].client != h.modules["prod"].Client {
+	if fs["alpha"].client != h.cfg.Load().modules["prod"].Client {
 		t.Errorf("alpha did not receive prod's client")
 	}
 }
@@ -597,5 +600,73 @@ func TestRepeatedModuleNameIsNotAnAmbiguity(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("module=prod,prod: got %d, want 200", rec.Code)
+	}
+}
+
+// TestSetConfigIsVisibleToTheNextProbe proves a reload reaches /probe without
+// rebuilding the handler.
+func TestSetConfigIsVisibleToTheNextProbe(t *testing.T) {
+	h := NewHandler(testLogger(), nil, nil, time.Second, 0,
+		map[string]Module{"prod": {}}, nil)
+
+	if _, _, err := h.selectFactories([]string{"staging"}); err == nil {
+		t.Fatal("an unknown module was accepted before the swap")
+	}
+
+	h.SetConfig(map[string]Module{"prod": {}, "staging": {}}, nil)
+
+	if _, _, err := h.selectFactories([]string{"staging"}); err != nil {
+		t.Fatalf("the module added by SetConfig is not visible: %v", err)
+	}
+}
+
+// TestSelectFactoriesUsesOneSnapshot proves an in-flight probe keeps a coherent
+// table even if a reload lands mid-request: it must not see half of one
+// configuration and half of another.
+func TestSelectFactoriesUsesOneSnapshot(t *testing.T) {
+	h := NewHandler(testLogger(), nil, nil, time.Second, 0,
+		map[string]Module{"a": {}, "b": {}}, nil)
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if i%2 == 0 {
+				h.SetConfig(map[string]Module{"a": {}, "b": {}}, nil)
+			} else {
+				h.SetConfig(map[string]Module{"a": {}, "b": {}, "c": {}}, nil)
+			}
+		}
+	}()
+
+	for i := 0; i < 2000; i++ {
+		if _, _, err := h.selectFactories([]string{"a", "b"}); err != nil {
+			close(stop)
+			wg.Wait()
+			t.Fatalf("a probe naming two always-present modules failed during a swap: %v", err)
+		}
+	}
+	close(stop)
+	wg.Wait()
+}
+
+// TestSetConfigRecomputesTheCredentialedList proves the derived state travels
+// with the table, so the anti-silent-unauthenticated guard cannot go stale.
+func TestSetConfigRecomputesTheCredentialedList(t *testing.T) {
+	h := NewHandler(testLogger(), nil, nil, time.Second, 0, map[string]Module{"plain": {}}, nil)
+	if _, _, err := h.selectFactories(nil); err != nil {
+		t.Fatalf("a probe with no modules declaring credentials must succeed: %v", err)
+	}
+
+	h.SetConfig(map[string]Module{"plain": {}, "creds": {Client: &http.Client{}}}, nil)
+	if _, _, err := h.selectFactories(nil); err == nil {
+		t.Fatal("after a module carrying credentials was added, a credential-less probe must be refused")
 	}
 }

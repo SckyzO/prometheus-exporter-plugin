@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -70,6 +71,18 @@ type Module struct {
 	Client     *http.Client
 }
 
+// handlerConfig is everything about a Handler that a configuration reload can
+// replace. Kept together and IMMUTABLE behind an atomic pointer rather than
+// under a mutex: /probe is the hot path, it reads this on every request and
+// never writes it, so a pointer load costs no lock. It also makes "a reader
+// observed a half-replaced table" impossible by construction rather than by
+// discipline, since the value is never mutated in place, only swapped.
+type handlerConfig struct {
+	modules       map[string]Module
+	defaultClient *http.Client // top-level http_client_config; nil unless it was set
+	credentialed  []string     // sorted names of modules carrying credentials; logged, never served
+}
+
 // Handler serves /probe?target=… .
 type Handler struct {
 	log           *logger.Logger
@@ -77,9 +90,12 @@ type Handler struct {
 	allowlist     []string      // empty => allow-any (ecosystem default; see SECURITY.md)
 	maxTimeout    time.Duration // --probe.timeout: ceiling on each probe's deadline
 	timeoutOffset time.Duration // --probe.timeout-offset: answer before Prometheus gives up
-	modules       map[string]Module
-	defaultClient *http.Client // top-level http_client_config; nil unless it was set
-	credentialed  []string     // sorted names of modules carrying credentials; logged, never served
+
+	// cfg is replaced wholesale by SetConfig on every configuration reload.
+	// allowlist, maxTimeout and timeoutOffset are NOT in here: they come from
+	// flags, which are parsed once at startup and which a reload refuses to
+	// change (see internal/config's DiffFlags).
+	cfg atomic.Pointer[handlerConfig]
 }
 
 // NewHandler builds a /probe handler. An empty allowlist accepts any target
@@ -90,9 +106,26 @@ type Handler struct {
 // configuration layer allows only when no modules: section exists: that is
 // what keeps credential resolution unambiguous.
 func NewHandler(log *logger.Logger, factories []NamedFactory, allowlist []string, maxTimeout, timeoutOffset time.Duration, modules map[string]Module, defaultClient *http.Client) *Handler {
-	// Precomputed for the guard rule 5 applies, and sorted so the log line a
-	// credential-less probe emits names the candidates in the same order every
-	// time.
+	h := &Handler{
+		log:           log,
+		factories:     factories,
+		allowlist:     allowlist,
+		maxTimeout:    maxTimeout,
+		timeoutOffset: timeoutOffset,
+	}
+	h.SetConfig(modules, defaultClient)
+	return h
+}
+
+// SetConfig installs a new module table, atomically. A probe already in flight
+// finishes against the table it started with; the next one sees this.
+//
+// The caller is responsible for calling CloseIdleConnections on any
+// *http.Client this replaces. Doing it here would be wrong: this Handler cannot
+// know whether the caller still references the old clients elsewhere.
+func (h *Handler) SetConfig(modules map[string]Module, defaultClient *http.Client) {
+	// Precomputed for the guard rule 5 applies, and sorted so a credential-less
+	// probe names the candidates in the same order every time.
 	var credentialed []string
 	for name, m := range modules {
 		if m.Client != nil {
@@ -101,16 +134,11 @@ func NewHandler(log *logger.Logger, factories []NamedFactory, allowlist []string
 	}
 	sort.Strings(credentialed)
 
-	return &Handler{
-		log:           log,
-		factories:     factories,
-		allowlist:     allowlist,
-		maxTimeout:    maxTimeout,
-		timeoutOffset: timeoutOffset,
+	h.cfg.Store(&handlerConfig{
 		modules:       modules,
 		defaultClient: defaultClient,
 		credentialed:  credentialed,
-	}
+	})
 }
 
 // moduleNames flattens the module parameter, which is both repeatable and
@@ -151,13 +179,16 @@ func moduleNames(vals []string) []string {
 // http_client_config. Two selected modules carrying credentials is refused
 // rather than resolved by precedence nobody documented.
 func (h *Handler) selectFactories(vals []string) ([]NamedFactory, *http.Client, error) {
+	// ONE snapshot for this whole request: a reload landing mid-probe must not
+	// let this function see half of one configuration and half of another.
+	cfg := h.cfg.Load()
 	names := moduleNames(vals)
 
 	wanted := make(map[string]bool)
 	var client *http.Client
 	credsFrom := ""
 	for _, name := range names {
-		m, ok := h.modules[name]
+		m, ok := cfg.modules[name]
 		if !ok {
 			return nil, nil, fmt.Errorf("unknown module %q", name)
 		}
@@ -174,10 +205,10 @@ func (h *Handler) selectFactories(vals []string) ([]NamedFactory, *http.Client, 
 	}
 
 	if client == nil {
-		client = h.modules["default"].Client // zero Module when absent: nil client
+		client = cfg.modules["default"].Client // zero Module when absent: nil client
 	}
 	if client == nil {
-		client = h.defaultClient
+		client = cfg.defaultClient
 	}
 	// The anti-silent-unauthenticated guard: probing in the clear against a
 	// target the operator gave credentials for returns 200 with series nobody
@@ -188,9 +219,9 @@ func (h *Handler) selectFactories(vals []string) ([]NamedFactory, *http.Client, 
 	// topology (which environments and which tenants this exporter holds
 	// credentials for). The caller is told what to do about it instead, which
 	// is all it needs and all it is entitled to.
-	if client == nil && len(h.credentialed) > 0 {
+	if client == nil && len(cfg.credentialed) > 0 {
 		h.log.Warn("probe resolved no credentials while modules declare some",
-			"candidates", strings.Join(h.credentialed, ", "))
+			"candidates", strings.Join(cfg.credentialed, ", "))
 		return nil, nil, fmt.Errorf(
 			"no credentials selected: this exporter is configured with credentials but this request selected none; name a module with &module=, or ask the operator to declare a \"default\" module")
 	}
