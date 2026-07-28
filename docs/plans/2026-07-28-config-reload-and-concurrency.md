@@ -1184,6 +1184,11 @@ type Reloader struct {
 	// the same problem.
 	requests chan chan error
 
+	// inline serializes callers of Reload when Run is not consuming, which is
+	// the case in unit tests. With Run consuming, its single goroutine is the
+	// serialization and this is never taken.
+	inline sync.Mutex
+
 	successful  prometheus.Gauge
 	successTime prometheus.Gauge
 }
@@ -1257,23 +1262,22 @@ func (r *Reloader) Run(ctx context.Context) {
 }
 
 // Reload performs one reload and returns its outcome. It is what Handler calls
-// and what a test drives directly. When Run is executing, the work happens on
-// Run's goroutine so it stays serialized with SIGHUP; when it is not (a test
-// that never started Run), it runs inline.
+// and what a test drives directly.
+//
+// When Run is consuming, the work happens on Run's goroutine, which is what
+// keeps it serialized with SIGHUP and lets each caller receive the error of the
+// reload IT asked for. When Run is not consuming (a unit test that never
+// started it), the send finds no receiver and falls through to an inline
+// reload, serialized by the same mutex Run's single goroutine would otherwise
+// have provided.
 func (r *Reloader) Reload() error {
 	reply := make(chan error, 1)
 	select {
 	case r.requests <- reply:
 		return <-reply
-	case <-time.After(0):
-		// No consumer is running. Serialize against other inline callers via
-		// the same single-slot channel discipline by falling through to the
-		// blocking send below, which a running Run would have taken already.
-	}
-	select {
-	case r.requests <- reply:
-		return <-reply
 	default:
+		r.inline.Lock()
+		defer r.inline.Unlock()
 		return r.reloadOnce()
 	}
 }
@@ -1340,31 +1344,7 @@ func (r *Reloader) Handler() http.Handler {
 }
 ```
 
-Add `"strings"` to the imports.
-
-> **Implementer note on `Reload`.** The three-branch select above is
-> deliberately awkward and should be simplified to the following once the
-> tests pass, which is equivalent and clearer. Use this version:
->
-> ```go
-> func (r *Reloader) Reload() error {
-> 	reply := make(chan error, 1)
-> 	select {
-> 	case r.requests <- reply:
-> 		return <-reply
-> 	default:
-> 		// Run is not consuming (a unit test that never started it). Fall back
-> 		// to an inline reload guarded by the same mutex Run's goroutine would
-> 		// have provided.
-> 		r.inline.Lock()
-> 		defer r.inline.Unlock()
-> 		return r.reloadOnce()
-> 	}
-> }
-> ```
->
-> with `inline sync.Mutex` added to the struct. Do not ship the `time.After(0)`
-> version.
+Add `"strings"` and `"sync"` to the imports.
 
 - [ ] **Step 4: Teach `scaffold.sh` to select the package**
 
@@ -2004,6 +1984,19 @@ type Handle struct {
 	limiter *collector.Limiter
 	labels  prometheus.Labels
 
+	// clientConfig is the RESOLVED module content this machine's transport was
+	// built from, remembered so a reload can tell a real credential change from
+	// a module merely renamed. Compared with reflect.DeepEqual, never by module
+	// name: renaming a module without changing what it holds must restart
+	// nothing, and editing one under the same name must swap the transport.
+	clientConfig *promconfig.HTTPClientConfig
+
+	// tracker is what is registered on the labelled wrapper of the exporter's
+	// registry. Kept so a label change can unregister through a wrapper built
+	// with the PREVIOUS labels and re-register the same tracker with the new
+	// ones, without the collectors ever noticing.
+	tracker *collector.StatusTracker
+
 	cancel context.CancelFunc
 	bgs    []BackgroundCollector
 }
@@ -2126,90 +2119,625 @@ the reload path is exercised on every single start and by every golden cell.
 
 ```go
 // Registry owns the live set of watched machines. Boot and reload both go
-// through Prepare then Commit, so the reload path is exercised on every start
-// rather than only when somebody sends a SIGHUP.
+// through Prepare then Commit, so the reload path is exercised by every start
+// and by every golden cell, not only when somebody sends a SIGHUP.
+//
+// Not safe for concurrent use: every call comes from the reload goroutine,
+// which internal/reload serializes, or from main before that goroutine starts.
 type Registry struct {
 	log           *logger.Logger
 	root          prometheus.Registerer
 	instanceLabel string
-	factories     []Factory
-	limit         int
+	factories     []Factory // already filtered to the globally-enabled ones
+	limit         int       // --exporter.max-requests-per-target
 
-	handles map[string]*Handle // by instance name
+	handles map[string]*Handle // live, by instance name
 }
 
-// Plan is what Prepare produced and Commit will apply. Everything in it is
-// already built: the transports exist, so the step that fails on an unreadable
-// CA has already run. Commit therefore cannot fail.
+// NewRegistry builds an empty registry. root is the exporter's own registry;
+// each instance's collectors are registered on a wrapper of it carrying that
+// instance's labels.
+func NewRegistry(log *logger.Logger, root prometheus.Registerer, instanceLabel string, factories []Factory, limit int) *Registry {
+	return &Registry{
+		log:           log,
+		root:          root,
+		instanceLabel: instanceLabel,
+		factories:     factories,
+		limit:         limit,
+		handles:       make(map[string]*Handle),
+	}
+}
+
+// Plan is what Prepare produced and Commit will apply.
+//
+// Everything in it is already BUILT: the transports exist, so the step that
+// fails on an unreadable CA or secret file has already run. That is what makes
+// Commit unable to fail, and it is what makes a reload atomic: a bad CA on the
+// third instance is refused before the first one has been touched.
 type Plan struct {
-	add          []*Handle            // new machines, collectors already built
-	addCollector map[string][]BackgroundCollector
-	remove       []*Handle            // machines gone from the file
-	relabel      []relabelOp          // same machine, new labels: re-register only
-	retransport  []retransportOp      // same machine, new credentials: swap only
+	add         []*addOp
+	remove      []*Handle
+	relabel     []*relabelOp
+	retransport []*retransportOp
+}
+
+// addOp is a machine to start: a handle whose collectors are built but not yet
+// started or registered.
+type addOp struct {
+	handle      *Handle
+	tracker     *collector.StatusTracker
+	collectors  []BackgroundCollector
+}
+
+// relabelOp is the same machine under new labels. The poller is not touched:
+// WrapRegistererWith applies its ConstLabels inside the wrapper at Collect
+// time, so the collector's cached []prometheus.Metric carries bare Descs and
+// knows nothing about them. Only the registration moves.
+type relabelOp struct {
+	handle    *Handle
+	newLabels prometheus.Labels
+}
+
+// retransportOp is the same machine with new credentials. The poller is not
+// touched either: its Clients share the Handle's Transport, so replacing the
+// *http.Client underneath them is enough, and their caches survive.
+//
+// clientConfig travels with the new client so Commit can record what the
+// transport was built from. Without it the next reload compares against the
+// stale config and swaps the transport on every reload forever.
+type retransportOp struct {
+	handle       *Handle
+	client       *http.Client
+	clientConfig *promconfig.HTTPClientConfig
 }
 ```
 
 - [ ] **Step 2: Write the failing tests for the five diff cases**
 
-One test per row of the spec's table. Each asserts on BOTH the registration and
-the cache, because "the poller kept running" is the whole claim:
+One test per row of the spec's table. Every one of them asserts on BOTH the
+registration and the poller, because "the cache survived" is the entire claim
+of this design and a test that only checks registration would pass on an
+implementation that restarts everything.
+
+The shared fixture makes "the poller was not restarted" a number rather than a
+narrative:
 
 ```go
-// TestReconcileKeepsAnUnchangedInstanceUntouched
-// TestReconcileSwapsTransportWhenOnlyCredentialsChanged  (cache kept)
-// TestReconcileReregistersWhenOnlyLabelsChanged          (cache kept)
-// TestReconcileRebuildsWhenTheAddressChanged             (cache dropped)
-// TestReconcileStartsAndDrainsOnAddAndRemove
-```
-
-Each uses a fake `BackgroundCollector` that counts `Start` calls, so "the
-poller was not restarted" is a number and not a narrative:
-
-```go
+// fakeBG stands in for a background collector. It counts Start calls, which is
+// how every test below distinguishes "kept running" from "rebuilt": a handle
+// that was rebuilt has a NEW fakeBG at 1 start, a handle that survived has the
+// SAME fakeBG still at 1.
 type fakeBG struct {
 	starts int32
+	desc   *prometheus.Desc
 	done   chan struct{}
 }
 
-func (f *fakeBG) Describe(chan<- *prometheus.Desc)  {}
-func (f *fakeBG) Collect(chan<- prometheus.Metric)  {}
-func (f *fakeBG) Start(ctx context.Context)         { atomic.AddInt32(&f.starts, 1) }
-func (f *fakeBG) Done() <-chan struct{}             { return f.done }
+func newFakeBG(name string) *fakeBG {
+	return &fakeBG{
+		desc: prometheus.NewDesc("demo_"+name, "fixture", nil, nil),
+		done: make(chan struct{}),
+	}
+}
+
+func (f *fakeBG) Describe(ch chan<- *prometheus.Desc) { ch <- f.desc }
+
+// Always emits exactly one metric, so StatusTracker reports it healthy: a
+// collector emitting none is counted as a failed scrape.
+func (f *fakeBG) Collect(ch chan<- prometheus.Metric) {
+	ch <- prometheus.MustNewConstMetric(f.desc, prometheus.GaugeValue, 1)
+}
+
+func (f *fakeBG) Start(ctx context.Context) {
+	atomic.AddInt32(&f.starts, 1)
+	go func() { <-ctx.Done(); close(f.done) }()
+}
+
+func (f *fakeBG) Done() <-chan struct{} { return f.done }
+
+// testRegistry builds a Registry whose single factory hands out a fakeBG and
+// records every one it made, keyed by the address the Handle carried.
+func testRegistry(t *testing.T, root *prometheus.Registry) (*Registry, *[]*fakeBG) {
+	t.Helper()
+	made := &[]*fakeBG{}
+	enabled := true
+	factories := []Factory{{
+		Name:    "example",
+		Enabled: &enabled,
+		New: func(h *Handle) (BackgroundCollector, error) {
+			bg := newFakeBG("example")
+			*made = append(*made, bg)
+			return bg, nil
+		},
+	}}
+	return NewRegistry(logger.NewTextLogger("error"), root, "target", factories, 0), made
+}
+
+// instancesFrom builds the resolved instance list a test reconciles against.
+func inst(name, addr string, labels map[string]string, cfg *promconfig.HTTPClientConfig) config.ResolvedInstance {
+	return config.ResolvedInstance{Name: name, Address: addr, Labels: labels, ClientConfig: cfg}
+}
+
+// seriesFor counts how many series the root registry gathers carrying the given
+// value for the identifying label.
+func seriesFor(t *testing.T, root *prometheus.Registry, target string) int {
+	t.Helper()
+	mfs, err := root.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+	n := 0
+	for _, mf := range mfs {
+		for _, m := range mf.GetMetric() {
+			for _, l := range m.GetLabel() {
+				if l.GetName() == "target" && l.GetValue() == target {
+					n++
+				}
+			}
+		}
+	}
+	return n
+}
+
+// applyOrFail runs one full reconcile cycle, which is what boot and reload both
+// do.
+func applyOrFail(t *testing.T, r *Registry, ctx context.Context, instances []config.ResolvedInstance) {
+	t.Helper()
+	p, err := r.Prepare(instances)
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	r.Commit(ctx, p)
+}
 ```
 
-For the credentials case, the assertion is:
+The five cases:
 
 ```go
-	if got := atomic.LoadInt32(&bg.starts); got != 1 {
+// TestReconcileKeepsAnUnchangedInstanceUntouched: reconciling the same file
+// twice must be a no-op, not a rebuild.
+func TestReconcileKeepsAnUnchangedInstanceUntouched(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	root := prometheus.NewRegistry()
+	r, made := testRegistry(t, root)
+
+	list := []config.ResolvedInstance{inst("lib1", "https://a.example", nil, nil)}
+	applyOrFail(t, r, ctx, list)
+	applyOrFail(t, r, ctx, list)
+
+	if len(*made) != 1 {
+		t.Fatalf("%d collectors were built; reconciling an unchanged file must build none", len(*made))
+	}
+	if got := atomic.LoadInt32(&(*made)[0].starts); got != 1 {
+		t.Fatalf("the poller was started %d times; an unchanged instance must not be restarted", got)
+	}
+	if seriesFor(t, root, "lib1") == 0 {
+		t.Fatal("the instance's series disappeared after a no-op reconcile")
+	}
+}
+
+// TestReconcileSwapsTransportWhenOnlyCredentialsChanged: the case that pays for
+// this whole design. Rotating a secret written inline must not cost a restart,
+// because a restart costs up to one refresh interval of data per instance.
+func TestReconcileSwapsTransportWhenOnlyCredentialsChanged(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	root := prometheus.NewRegistry()
+	r, made := testRegistry(t, root)
+
+	before := &promconfig.HTTPClientConfig{BasicAuth: &promconfig.BasicAuth{Username: "u", Password: "old"}}
+	after := &promconfig.HTTPClientConfig{BasicAuth: &promconfig.BasicAuth{Username: "u", Password: "new"}}
+
+	applyOrFail(t, r, ctx, []config.ResolvedInstance{inst("lib1", "https://a.example", nil, before)})
+	first := (*made)[0]
+
+	applyOrFail(t, r, ctx, []config.ResolvedInstance{inst("lib1", "https://a.example", nil, after)})
+
+	if len(*made) != 1 {
+		t.Fatalf("%d collectors were built; a credentials-only change must build none", len(*made))
+	}
+	if got := atomic.LoadInt32(&first.starts); got != 1 {
 		t.Fatalf("the poller was started %d times; a credentials-only change must not restart it", got)
 	}
+	if seriesFor(t, root, "lib1") == 0 {
+		t.Fatal("the instance's series disappeared during a credential rotation")
+	}
+}
+
+// TestReconcileDoesNotSwapWhenOnlyTheModuleNameChanged: credentials are
+// compared by resolved CONTENT, so renaming a module without changing what it
+// holds must be a no-op. Without this, every rename would swap a transport for
+// nothing.
+func TestReconcileDoesNotSwapWhenOnlyTheModuleNameChanged(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	root := prometheus.NewRegistry()
+	r, made := testRegistry(t, root)
+
+	cfgA := &promconfig.HTTPClientConfig{BasicAuth: &promconfig.BasicAuth{Username: "u", Password: "p"}}
+	cfgB := &promconfig.HTTPClientConfig{BasicAuth: &promconfig.BasicAuth{Username: "u", Password: "p"}}
+
+	applyOrFail(t, r, ctx, []config.ResolvedInstance{inst("lib1", "https://a.example", nil, cfgA)})
+	p, err := r.Prepare([]config.ResolvedInstance{inst("lib1", "https://a.example", nil, cfgB)})
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if len(p.retransport) != 0 {
+		t.Fatal("two identical resolved configs produced a transport swap; comparison must be by content, not by pointer or module name")
+	}
+	if len(p.add) != 0 || len(p.remove) != 0 || len(p.relabel) != 0 {
+		t.Fatalf("an identical configuration produced work: %+v", p)
+	}
+	_ = made
+}
+
+// TestReconcileReregistersWhenOnlyLabelsChanged: labels live in the registerer
+// wrapper, applied at Collect time, so the collector's cache knows nothing
+// about them and a label change costs a re-registration, not a restart.
+func TestReconcileReregistersWhenOnlyLabelsChanged(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	root := prometheus.NewRegistry()
+	r, made := testRegistry(t, root)
+
+	applyOrFail(t, r, ctx, []config.ResolvedInstance{
+		inst("lib1", "https://a.example", map[string]string{"site": "paris"}, nil)})
+	first := (*made)[0]
+
+	applyOrFail(t, r, ctx, []config.ResolvedInstance{
+		inst("lib1", "https://a.example", map[string]string{"site": "lyon"}, nil)})
+
+	if len(*made) != 1 {
+		t.Fatalf("%d collectors were built; a label-only change must build none", len(*made))
+	}
+	if got := atomic.LoadInt32(&first.starts); got != 1 {
+		t.Fatalf("the poller was started %d times; a label-only change must not restart it", got)
+	}
+
+	mfs, err := root.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+	sites := map[string]bool{}
+	for _, mf := range mfs {
+		for _, m := range mf.GetMetric() {
+			for _, l := range m.GetLabel() {
+				if l.GetName() == "site" {
+					sites[l.GetValue()] = true
+				}
+			}
+		}
+	}
+	if sites["paris"] {
+		t.Fatal("the old label value is still being served; the previous registration was not removed")
+	}
+	if !sites["lyon"] {
+		t.Fatal("the new label value is not being served")
+	}
+}
+
+// TestReconcileRebuildsWhenTheAddressChanged: a different address is a
+// different machine, so the cache describes something else now and must go.
+func TestReconcileRebuildsWhenTheAddressChanged(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	root := prometheus.NewRegistry()
+	r, made := testRegistry(t, root)
+
+	applyOrFail(t, r, ctx, []config.ResolvedInstance{inst("lib1", "https://a.example", nil, nil)})
+	applyOrFail(t, r, ctx, []config.ResolvedInstance{inst("lib1", "https://b.example", nil, nil)})
+
+	if len(*made) != 2 {
+		t.Fatalf("%d collectors were built; a changed address must rebuild the instance", len(*made))
+	}
+	if got := atomic.LoadInt32(&(*made)[1].starts); got != 1 {
+		t.Fatalf("the replacement poller was started %d times, want 1", got)
+	}
+	if seriesFor(t, root, "lib1") == 0 {
+		t.Fatal("the rebuilt instance is not registered")
+	}
+}
+
+// TestReconcileStartsAndDrainsOnAddAndRemove: the added machine appears, the
+// removed one is unregistered immediately (not after its drain) and its poller
+// is cancelled.
+func TestReconcileStartsAndDrainsOnAddAndRemove(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	root := prometheus.NewRegistry()
+	r, made := testRegistry(t, root)
+
+	applyOrFail(t, r, ctx, []config.ResolvedInstance{inst("lib1", "https://a.example", nil, nil)})
+	applyOrFail(t, r, ctx, []config.ResolvedInstance{
+		inst("lib1", "https://a.example", nil, nil),
+		inst("lib2", "https://b.example", nil, nil),
+	})
+	if seriesFor(t, root, "lib2") == 0 {
+		t.Fatal("the added instance is not registered")
+	}
+
+	applyOrFail(t, r, ctx, []config.ResolvedInstance{inst("lib1", "https://a.example", nil, nil)})
+	if n := seriesFor(t, root, "lib2"); n != 0 {
+		t.Fatalf("the removed instance still has %d series; unregistration must be synchronous, not deferred to the drain", n)
+	}
+	if seriesFor(t, root, "lib1") == 0 {
+		t.Fatal("removing one instance unregistered another")
+	}
+
+	// The removed machine's poller must have been cancelled.
+	removed := (*made)[1]
+	select {
+	case <-removed.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("the removed instance's poller was never cancelled")
+	}
+}
+
+// TestPrepareMutatesNothingOnFailure is the atomicity assertion at unit level:
+// a factory failing on the third instance must leave the first two untouched.
+func TestPrepareMutatesNothingOnFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	root := prometheus.NewRegistry()
+
+	enabled := true
+	fail := false
+	made := 0
+	r := NewRegistry(logger.NewTextLogger("error"), root, "target", []Factory{{
+		Name:    "example",
+		Enabled: &enabled,
+		New: func(h *Handle) (BackgroundCollector, error) {
+			if fail && h.Name == "lib3" {
+				return nil, errors.New("unreadable CA")
+			}
+			made++
+			return newFakeBG("example"), nil
+		},
+	}}, 0)
+
+	applyOrFail(t, r, ctx, []config.ResolvedInstance{inst("lib1", "https://a.example", nil, nil)})
+	before := seriesFor(t, root, "lib1")
+
+	fail = true
+	if _, err := r.Prepare([]config.ResolvedInstance{
+		inst("lib1", "https://a.example", nil, nil),
+		inst("lib2", "https://b.example", nil, nil),
+		inst("lib3", "https://c.example", nil, nil),
+	}); err == nil {
+		t.Fatal("Prepare succeeded despite a factory that failed")
+	}
+
+	if seriesFor(t, root, "lib1") != before {
+		t.Fatal("a failed Prepare disturbed the instance that was already running")
+	}
+	if seriesFor(t, root, "lib2") != 0 {
+		t.Fatal("a failed Prepare registered an instance; it must mutate nothing")
+	}
+}
 ```
 
-- [ ] **Step 3: Implement `Prepare` and `Commit`**
-
-`Prepare` compares by instance name and classifies each into exactly one of the
-five cases. Two comparison rules carry the design:
+- [ ] **Step 3: Implement `Prepare`, `Commit` and `Wait`**
 
 ```go
-// Credentials are compared by RESOLVED CONTENT, not by module name. Renaming a
-// module without changing what it holds must restart nothing; editing a
-// module's contents under the same name must swap the transport. The second is
-// the case that matters for rotating a secret written inline in the file, which
-// is the only kind prometheus/common does not already re-read per request.
-if !reflect.DeepEqual(cur.clientConfig, want.ClientConfig) { ... }
+// labelsFor builds the label set an instance's series carry: the identifying
+// label fixed at scaffold time, plus the instance's own extra labels. Built
+// here rather than in main so boot and reload cannot disagree about it.
+func (r *Registry) labelsFor(inst config.ResolvedInstance) prometheus.Labels {
+	labels := prometheus.Labels{r.instanceLabel: inst.Name}
+	for k, v := range inst.Labels {
+		labels[k] = v
+	}
+	return labels
+}
+
+// Prepare classifies every instance in the new configuration against the live
+// set and builds everything the resulting Plan will need. This is the phase
+// that can fail, and it mutates nothing: on error the caller keeps running
+// exactly what it was running.
+//
+// Boot is Prepare against an empty live set, which is why this code path is
+// exercised by every start rather than only by a reload.
+//
+// Instances are processed in the order the file declares them, so a file with
+// two broken instances always fails on the same one.
+func (r *Registry) Prepare(instances []config.ResolvedInstance) (*Plan, error) {
+	p := &Plan{}
+	seen := make(map[string]bool, len(instances))
+
+	for _, inst := range instances {
+		seen[inst.Name] = true
+		labels := r.labelsFor(inst)
+		cur, live := r.handles[inst.Name]
+
+		// Not watched yet: build it whole. Every collector is constructed here,
+		// so a factory that fails (a non-positive timeout, or a reason of its
+		// own) fails the whole reload before anything has been started.
+		if !live || cur.Address != inst.Address {
+			hc, err := clientFor(inst.ClientConfig)
+			if err != nil {
+				return nil, fmt.Errorf("instance %q: %w", inst.Name, err)
+			}
+			h := NewHandle(inst.Name, inst.Address, hc, r.limit, labels)
+			h.clientConfig = inst.ClientConfig
+
+			tracker := collector.NewStatusTracker(r.log)
+			var bgs []BackgroundCollector
+			for _, f := range r.factories {
+				bg, err := f.New(h)
+				if err != nil {
+					return nil, fmt.Errorf("instance %q, collector %q: %w", inst.Name, f.Name, err)
+				}
+				tracker.Add(f.Name, bg)
+				bgs = append(bgs, bg)
+			}
+			p.add = append(p.add, &addOp{handle: h, tracker: tracker, collectors: bgs})
+
+			// A changed ADDRESS is a different machine: the cache describes
+			// something else now, so the old handle is removed alongside.
+			if live {
+				p.remove = append(p.remove, cur)
+			}
+			continue
+		}
+
+		// Same machine, still at the same address. Two things may have moved,
+		// and each is cheap on its own: neither stops a poller or drops a cache.
+		if !reflect.DeepEqual(cur.labels, labels) {
+			p.relabel = append(p.relabel, &relabelOp{handle: cur, newLabels: labels})
+		}
+		if !reflect.DeepEqual(cur.clientConfig, inst.ClientConfig) {
+			hc, err := clientFor(inst.ClientConfig)
+			if err != nil {
+				return nil, fmt.Errorf("instance %q: %w", inst.Name, err)
+			}
+			p.retransport = append(p.retransport, &retransportOp{
+				handle:       cur,
+				client:       hc,
+				clientConfig: inst.ClientConfig,
+			})
+		}
+	}
+
+	// Anything the file no longer declares. Sorted so a reload removing several
+	// instances logs them in the same order every time.
+	var gone []string
+	for name := range r.handles {
+		if !seen[name] {
+			gone = append(gone, name)
+		}
+	}
+	sort.Strings(gone)
+	for _, name := range gone {
+		p.remove = append(p.remove, r.handles[name])
+	}
+
+	return p, nil
+}
+
+// clientFor builds the shared *http.Client for one instance. A nil resolved
+// config means the default transport, exactly as it did before this package
+// owned the construction.
+func clientFor(hcfg *promconfig.HTTPClientConfig) (*http.Client, error) {
+	if hcfg == nil {
+		return &http.Client{}, nil
+	}
+	// The per-request deadline lives on each collector's Client, not here: this
+	// transport is shared by collectors whose timeouts differ.
+	return collector.NewHTTPClient(*hcfg, 0)
+}
+
+// Commit applies a prepared plan. It cannot fail: every construction that could
+// has already happened in Prepare, the names it registers were proved unique by
+// ResolveInstances, and starting a goroutine does not fail.
+//
+// Order matters. Removals unregister FIRST, so a removed instance's series are
+// gone from the very next scrape rather than lingering for the length of a
+// drain. Draining is then handed to a background goroutine, so a reload never
+// blocks behind a poller stuck in a long request.
+func (r *Registry) Commit(ctx context.Context, p *Plan) {
+	for _, h := range p.remove {
+		prometheus.WrapRegistererWith(h.labels, r.root).Unregister(h.tracker)
+		delete(r.handles, h.Name)
+		h.cancel()
+		r.log.Info("Stopped watching instance", "instance", h.Name, "address", h.Address)
+		go h.drain(5 * time.Second)
+	}
+
+	for _, op := range p.relabel {
+		// Unregister through a wrapper built with the PREVIOUS labels: that is
+		// how the registry identifies what to remove, and it is why the handle
+		// remembers them. The tracker and every collector behind it are
+		// untouched, so no cache is lost.
+		prometheus.WrapRegistererWith(op.handle.labels, r.root).Unregister(op.handle.tracker)
+		op.handle.labels = op.newLabels
+		prometheus.WrapRegistererWith(op.handle.labels, r.root).MustRegister(op.handle.tracker)
+		r.log.Info("Relabelled instance", "instance", op.handle.Name)
+	}
+
+	for _, op := range p.retransport {
+		old := op.handle.SetTransport(op.client)
+		// Store what the new transport was built FROM, or the next reload will
+		// compare against the stale config and swap the transport again on
+		// every single reload.
+		op.handle.clientConfig = op.clientConfig
+		if old != nil {
+			// Only IDLE connections close, so a request in flight on the old
+			// client finishes undisturbed. Without this the old transport holds
+			// its sockets until IdleConnTimeout.
+			old.CloseIdleConnections()
+		}
+		r.log.Info("Rotated credentials for instance", "instance", op.handle.Name)
+	}
+
+	for _, op := range p.add {
+		instCtx, cancel := context.WithCancel(ctx)
+		op.handle.cancel = cancel
+		op.handle.bgs = op.collectors
+		op.handle.tracker = op.tracker
+		for _, bg := range op.collectors {
+			bg.Start(instCtx)
+		}
+		prometheus.WrapRegistererWith(op.handle.labels, r.root).MustRegister(op.tracker)
+		r.handles[op.handle.Name] = op.handle
+		r.log.Info("Watching instance", "instance", op.handle.Name, "address", op.handle.Address)
+	}
+}
+
+// drain waits for one removed instance's pollers to exit, under a bounded
+// budget, and warns if they do not. Called on its own goroutine so a reload
+// returns immediately: the instance is already unregistered, so a lingering
+// poller is unreferenced and harmless.
+func (h *Handle) drain(budget time.Duration) {
+	deadline := time.After(budget)
+	for _, bg := range h.bgs {
+		select {
+		case <-bg.Done():
+		case <-deadline:
+			return
+		}
+	}
+}
+
+// Wait blocks until every live instance's pollers have exited, under ONE shared
+// budget rather than one per collector: with N instances by M collectors, a
+// per-collector wait would worst-case at N*M*budget. Called by main at
+// shutdown, after the HTTP server has stopped.
+func (r *Registry) Wait(budget time.Duration) {
+	deadline := time.After(budget)
+	for _, h := range r.handles {
+		for _, bg := range h.bgs {
+			select {
+			case <-bg.Done():
+			case <-deadline:
+				r.log.Warn("background collectors did not all stop within the shutdown budget; exiting anyway")
+				return
+			}
+		}
+	}
+}
 ```
 
+One prerequisite in `internal/collector`: `clientFor` passes timeout `0` to
+`NewHTTPClient`, which currently does `hc.Timeout = timeout` unconditionally.
+Zero is correct and load-bearing here, because the shared transport must carry
+no deadline of its own: each collector's `Client` applies its own through the
+context, and a shared `http.Client.Timeout` would be the same for all of them.
+Amend that constructor's doc comment to say so, and add the test that pins it:
+
 ```go
-// Labels change without touching the poller. WrapRegistererWith applies its
-// ConstLabels inside the wrapper, at Collect time, so a collector's cached
-// []prometheus.Metric carries bare Descs and knows nothing about them.
-// Unregistering requires a wrapper built with the PREVIOUS labels, which is why
-// Handle remembers them.
-old := prometheus.WrapRegistererWith(h.labels, r.root)
-old.Unregister(h.tracker)
-h.labels = want
-prometheus.WrapRegistererWith(h.labels, r.root).MustRegister(h.tracker)
+// TestNewHTTPClientAcceptsAZeroTimeout pins the contract the multi-instance
+// reconciler depends on: a shared transport carries no deadline, because its
+// collectors' deadlines differ and are applied per request through the context.
+func TestNewHTTPClientAcceptsAZeroTimeout(t *testing.T) {
+	hc, err := NewHTTPClient(promconfig.HTTPClientConfig{}, 0)
+	if err != nil {
+		t.Fatalf("NewHTTPClient with a zero timeout: %v", err)
+	}
+	if hc.Timeout != 0 {
+		t.Fatalf("NewHTTPClient forced Timeout to %v on a zero request; the shared transport must carry none", hc.Timeout)
+	}
+}
 ```
 
 - [ ] **Step 4: Update the factory fragment**
@@ -2330,20 +2858,55 @@ Identical to Task 6 Step 2, same comment, same default.
 
 Register the gauges and the route exactly as in Task 6 Step 3.
 
-- [ ] **Step 3: Write the failing integration test**
+- [ ] **Step 3: Write the failing test for what this task alone adds**
 
-In `instance_test.go.tmpl`, a test that drives `Prepare`/`Commit` twice and
-asserts the registry's series before and after:
+Task 8's suite already covers the five diff cases and the atomicity of a failed
+`Prepare`. Do not repeat them here. What this task introduces, and what nothing
+yet pins, is the ORDER of the reload closure: `ResolveInstances` must run and be
+allowed to fail BEFORE `Prepare`, so an instance list that no longer validates
+(a duplicate name, an unresolvable module, a label colliding with the
+identifying one) never reaches the reconciler.
+
+Add to `instance_test.go.tmpl`:
 
 ```go
-// TestReloadAddsAnInstanceWithoutDisturbingTheOthers is the assertion the
-// golden cell mirrors at the process level: the new machine appears and the
-// existing ones keep both their registration and their poller.
-func TestReloadAddsAnInstanceWithoutDisturbingTheOthers(t *testing.T) { ... }
+// TestReloadOrderRejectsAnInvalidInstanceListBeforeReconciling pins the shape
+// of main's reload closure. ResolveInstances is validation and it must run
+// first: a list with a duplicate name or an unresolvable module has to be
+// refused while the running set is still untouched, not discovered halfway
+// through a reconcile.
+//
+// The closure itself lives in package main and cannot be imported, so this test
+// asserts the contract the closure depends on: that a Registry which never saw
+// an invalid list is exactly the Registry it was before.
+func TestReloadOrderRejectsAnInvalidInstanceListBeforeReconciling(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	root := prometheus.NewRegistry()
+	r, made := testRegistry(t, root)
 
-// TestReloadRemovingAnInstanceUnregistersItImmediately proves the series are
-// gone from the very next Gather, before the drain has finished.
-func TestReloadRemovingAnInstanceUnregistersItImmediately(t *testing.T) { ... }
+	applyOrFail(t, r, ctx, []config.ResolvedInstance{inst("lib1", "https://a.example", nil, nil)})
+	before := seriesFor(t, root, "lib1")
+
+	// What main's closure does on a reload, in order. The validation step is
+	// the one that must reject this file.
+	cfg := &config.Config{Instances: []config.Instance{
+		{Name: "lib1", Address: "https://a.example"},
+		{Name: "lib1", Address: "https://b.example"}, // duplicate name
+	}}
+	if _, err := cfg.ResolveInstances("target", "collector"); err == nil {
+		t.Fatal("ResolveInstances accepted a duplicate instance name")
+	}
+
+	// Because validation failed, Prepare was never reached and the live set is
+	// untouched.
+	if seriesFor(t, root, "lib1") != before {
+		t.Fatal("the running instance was disturbed by a configuration that never validated")
+	}
+	if len(*made) != 1 {
+		t.Fatalf("%d collectors exist; a rejected configuration must build none", len(*made))
+	}
+}
 ```
 
 - [ ] **Step 4: Prove it**
