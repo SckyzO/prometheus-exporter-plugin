@@ -2953,6 +2953,30 @@ stuck in a long request."
 - Consumes: `collector.NewLimiterSet` (Task 2), `instance.NewRegistry`'s `limit` parameter (Task 8).
 - Produces: the flag `--exporter.max-requests-per-target`.
 
+> **Three obligations carried from Task 2. All three are requirements of this
+> task, not suggestions, and Task 2 shipped comments pointing here.**
+>
+> 1. **Reject a non-positive per-collector timeout when a ceiling is
+>    configured.** `client_init.frag` declares `--collector.<name>.timeout` as
+>    an unvalidated kingpin `Duration`. With a ceiling set,
+>    `--collector.example.timeout=0s` gives an unbounded limiter wait, because
+>    `Client.acquireTimeout` is what bounds it. Reject it at boot with a message
+>    naming the collector, mirroring `instance.Handle.ClientFor`'s convention.
+>    `WithLimiter` deliberately does NOT validate: a panic there was removed
+>    because `wiring/probe_factory.frag` calls `NewClientFor` per probe request,
+>    inside the handler, where a panic is recovered by `net/http` and produces
+>    silently broken probes instead of a fail-fast boot.
+> 2. **Register `RequestWait`.** Task 2 declared
+>    `@@NAMESPACE@@_exporter_request_wait_seconds` but registered it nowhere, so
+>    it reaches no `/metrics`. Its doc comments say this task registers it.
+>    Register it in both `registry.frag` files and in the two mains, then add
+>    the `docs/metrics.md` rows Task 2 correctly refused to write while they
+>    would have been untrue.
+> 3. **Close the cli duration asymmetry.** On the http flavor a limiter timeout
+>    is recorded by `RequestDuration` through its deferred named return; on cli,
+>    `CommandDuration`'s observation is not deferred, so an abandoned wait is
+>    invisible. Make them symmetric.
+
 - [ ] **Step 1: Declare the flag in both mains**
 
 ```go

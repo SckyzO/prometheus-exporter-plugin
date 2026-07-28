@@ -452,13 +452,23 @@ case <-ctx.Done():
 }
 ```
 
-The wait is therefore charged **against** the collector's own
-`--collector.<name>.timeout`, never in addition to it. This is the property
-that keeps a ceiling from degrading silently: a starved poller fails its
-refresh, logs, keeps its previous cache, and its freshness gauge stops
-advancing. Without a deadline on the wait it would instead sit in the queue
-while `time.Ticker` silently dropped its ticks, and the effective refresh
-interval would drift with nothing reporting it.
+The wait must therefore be bounded by the collector's own
+`--collector.<name>.timeout`. This is the property that keeps a ceiling from
+degrading silently: a starved poller fails its refresh, logs, keeps its previous
+cache, and its freshness gauge stops advancing. Without a deadline on the wait it
+would instead sit in the queue while `time.Ticker` silently dropped its ticks,
+and the effective refresh interval would drift with nothing reporting it.
+
+**Corrected during implementation.** This section originally claimed the wait was
+charged against the collector's budget "never in addition to it". That was only
+true on the shared-transport path. On every wired construction
+(`NewClient`, `NewClientWithConfig`, `NewClientFor`) the deadline lives on
+`http.Client.Timeout`, which starts at `Do`, after the wait has already happened,
+so the wait was unbounded. Reproduced at five times the configured budget. The
+`Client` now carries an explicit acquire budget, populated by every constructor,
+that bounds the wait itself. The honest bound is therefore **at most twice the
+configured timeout** on the wired paths (the wait, then the request) and exactly
+once on the shared-transport path, where a single context deadline covers both.
 
 **Where the semaphore lives, and why there is no index of targets.** Under
 `multi-instance` the `Limiter` belongs to the `Handle`: one machine, one set
