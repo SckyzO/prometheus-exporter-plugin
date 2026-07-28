@@ -5,7 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.0] - 2026-07-28
+
+### Changed
+
+- **`multi-instance` is taught, not just shipped.** The target model landed in
+  v0.5.0 but appeared in none of the reference documents and not in the
+  skill's own step 0, so a session learning from `references/` alone still
+  believed there were two target models and could not discover the third when
+  making an architecture decision. The architecture reference now compares
+  three models instead of forking on two, and the scaffold, collector,
+  discovery and Prometheus-conventions references each cover what the model
+  changes for them: the background-collector mandate, the shared shutdown
+  budget, the per-instance identifying label and the labels an instance may
+  not reuse. The argument for the model is stated where it belongs: it exists
+  for Prometheus's five-minute staleness window, not for slow targets, and it
+  generalises to any application API, batch job or nightly inventory that
+  cannot be scraped live.
 
 ### Removed
 
