@@ -20,14 +20,24 @@
 #   - scaffold-unit-tests: the fast, Go-free, network-free unit suites for
 #     scaffold.sh itself, including its --target-model single|multi axis
 #     (test/scaffold_multitarget_test.sh).
-#   - golden-smoke: the full {http,cli} x {none,github} matrix, plus a 5th
-#     http-multi cell (--target-model multi) - scaffolds a real exporter and
-#     runs each through make build/check, promtool, a guarded docker build,
-#     the docs-check lie-injection round-trip, and (http-multi only) a live
-#     /probe request against the running binary. Gated behind
-#     scaffold-unit-tests: no reason to burn several minutes of Docker builds
-#     on 5 full scaffolds if scaffold.sh itself is already known broken by
-#     its own cheap unit tests.
+#   - golden-smoke: the full {http,cli} x {none,github} matrix, plus an
+#     http-multi and an http-multi-instance cell - scaffolds a real exporter
+#     and runs each through make build/check, promtool, a guarded docker
+#     build, the docs-check lie-injection round-trip, and (multi and
+#     multi-instance only) live requests against the running binary. Gated
+#     behind scaffold-unit-tests: no reason to burn several minutes of Docker
+#     builds on six full scaffolds if scaffold.sh itself is already known
+#     broken by its own cheap unit tests.
+#
+#     Run as a JOB MATRIX, one runner per cell, rather than as a single
+#     runner looping over test/golden-smoke.sh --all. The script's own loop
+#     is sequential on purpose (every cell shares one tools-image tag and
+#     would race on it, see its comment), but that is a property of one
+#     machine: six runners have six Docker daemons and nothing to race on.
+#     Sequentially the job took 24m43s while every other job here finishes
+#     under twenty seconds, so the whole pipeline's latency was this one job.
+#     --all is untouched and remains the local entry point. See
+#     docs/design/2026-07-28-golden-smoke-ci-matrix-design.md.
 #
 # Every job needs nothing beyond what ubuntu-latest ships out of the box
 # (git, make, docker, jq) plus, for claude-plugin-validate, a
@@ -117,6 +127,25 @@ jobs:
           sh test/scaffold_edge_test.sh
           sh test/scaffold_multitarget_test.sh
 
+      # Drift guard for golden-smoke's matrix. A workflow cannot read a shell
+      # variable, so the matrix below repeats the cell list that
+      # test/golden-smoke.sh owns (its MATRIX_CELLS). Without this assertion,
+      # adding a cell to the script and forgetting the workflow would mean CI
+      # silently stops covering it, and a silent gap in a gate is worse than a
+      # missing gate. Lives in THIS job, which costs seven seconds, so a drift
+      # is reported before the matrix burns six runners.
+      - name: golden-smoke matrix matches the script's cell list
+        run: |
+          set -eu
+          workflow=$(grep -oE '\{ *cell: [a-z-]+' .github/workflows/plugin-ci.yml | sed 's/.*cell: //' | sort)
+          script=$(sh test/golden-smoke.sh --list-cells | sort)
+          if [ "$workflow" != "$script" ]; then
+            echo "::error::golden-smoke's matrix and test/golden-smoke.sh --list-cells disagree"
+            printf 'workflow matrix:\n%s\n\nscript --list-cells:\n%s\n' "$workflow" "$script" >&2
+            exit 1
+          fi
+          printf 'golden-smoke matrix matches --list-cells:\n%s\n' "$script"
+
   probe-backbone-test:
     runs-on: ubuntu-latest
     steps:
@@ -129,9 +158,32 @@ jobs:
   golden-smoke:
     needs: scaffold-unit-tests
     runs-on: ubuntu-latest
+    name: golden-smoke (${{ matrix.cell }})
+    strategy:
+      # One broken cell must not hide the state of the other five: that is
+      # what --all does deliberately today (it runs every cell and reports
+      # them together), and fail-fast would silently drop that property.
+      fail-fast: false
+      # Static list, never fromJSON: a generated matrix that comes back empty
+      # produces a job that succeeds without running anything, which reads as
+      # green. A literal list cannot be empty. It is kept honest against
+      # test/golden-smoke.sh by the drift guard in scaffold-unit-tests above,
+      # so keep "cell:" first in each entry, which is what that guard greps.
+      matrix:
+        include:
+          - {cell: http-none, flavor: http, forge: none, target_model: single}
+          - {cell: http-github, flavor: http, forge: github, target_model: single}
+          - {cell: cli-none, flavor: cli, forge: none, target_model: single}
+          - {cell: cli-github, flavor: cli, forge: github, target_model: single}
+          - {cell: http-multi, flavor: http, forge: none, target_model: multi}
+          - {cell: http-multi-instance, flavor: http, forge: none, target_model: multi-instance}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: golden smoke matrix (--all) - scaffold x4 + http-multi, build, check, promtool, docker
-        run: sh test/golden-smoke.sh --all
+      - name: golden smoke cell - scaffold, build, check, promtool, docker
+        env:
+          FLAVOR: ${{ matrix.flavor }}
+          FORGE: ${{ matrix.forge }}
+          TARGET_MODEL: ${{ matrix.target_model }}
+        run: sh test/golden-smoke.sh --flavor "$FLAVOR" --forge "$FORGE" --target-model "$TARGET_MODEL"
