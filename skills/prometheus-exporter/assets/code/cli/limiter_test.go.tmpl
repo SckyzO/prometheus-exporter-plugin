@@ -125,25 +125,7 @@ func TestLimiterReleaseIsSafeUnderConcurrency(t *testing.T) {
 	}
 }
 
-// TestLimiterSetGroupsByTarget proves two collectors on the same address share
-// one ceiling and two collectors on different addresses do not.
-func TestLimiterSetGroupsByTarget(t *testing.T) {
-	s := NewLimiterSet(4)
-	// Two separate calls, each stored before comparing: calling For twice
-	// inline on the same line (s.For(x) != s.For(x)) reads to staticcheck's
-	// SA4000 as comparing an expression to itself, a false positive here
-	// since For is stateful, but named variables sidestep the false alarm
-	// the same way TestNewClientForSharesOneTransport's a.tr.Get() !=
-	// b.tr.Get() already does elsewhere in this package.
-	first := s.For("http://a.example")
-	second := s.For("http://a.example")
-	if first != second {
-		t.Fatal("LimiterSet handed out two limiters for one target")
-	}
-	if s.For("http://a.example") == s.For("http://b.example") {
-		t.Fatal("LimiterSet shared one limiter across two targets")
-	}
-	if NewLimiterSet(0).For("http://a.example") != nil {
-		t.Fatal("a LimiterSet built with ceiling 0 handed out a non-nil limiter")
-	}
-}
+// No TestLimiterSetGroupsByTarget here: this flavor carries no LimiterSet at
+// all. See Limiter's own doc comment in limiter.go for why the http flavor's
+// per-target index has nothing to index in a flavor with one shared Execute
+// boundary and no per-target Client.

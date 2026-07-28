@@ -53,6 +53,5 @@ Emitted regardless of which `--collector.*` flags are set: see
 | Metric | Type | Labels | Description |
 |---|---|---|---|
 | `@@NAMESPACE@@_exporter_command_duration_seconds` | Histogram | `outcome` | Duration in seconds of external commands issued by this exporter's collectors, by outcome (`success` or `error`). Defined in `internal/collector/execute.go`. |
-| `@@NAMESPACE@@_exporter_request_wait_seconds` | Histogram | - | Duration in seconds a command invocation waited for a concurrency slot before it ran. Zero when `--exporter.max-requests-per-target` is unset (the default). Defined in `internal/collector/limiter.go`. |
 | `@@NAMESPACE@@_exporter_collector_success` | Gauge | `collector` | Whether the last scrape of the collector succeeded (1=success, 0=failure). Defined in `internal/collector/status_tracker.go`. |
 | `@@NAMESPACE@@_exporter_collector_duration_seconds` | Gauge | `collector` | Duration of the last scrape for the collector, in seconds. Defined in `internal/collector/status_tracker.go`. |

@@ -94,17 +94,36 @@ type Client struct {
 	tr      *Transport
 	baseURL string
 	timeout time.Duration // 0 means "the deadline is on the shared-nothing http.Client"
-	limiter *Limiter      // nil means unlimited, see limiter.go
+
+	// acquireTimeout bounds ONLY the wait for a limiter slot, never the
+	// request that follows it. It exists because http.Client.Timeout (the
+	// mechanism that bounds the request itself on every path except
+	// NewClientOn) does not start counting until Do begins: it gives no
+	// cover at all for time already spent blocked in Acquire before Do ever
+	// runs. Every constructor below sets it to the same per-request deadline
+	// it already knows, so a Client's worst case with a limiter attached is
+	// at most acquireTimeout (the wait) plus whatever already bounds the
+	// request, never an unbounded queue on top of an already-bounded
+	// request. See acquire and WithLimiter.
+	acquireTimeout time.Duration
+	limiter        *Limiter // nil means unlimited, see limiter.go
 }
 
 // NewClient builds a Client bound to target (a base URL, for example
 // "http://localhost:9100"), applying timeout to every request. Unchanged
 // since v0.1: its transport is private to this Client and its deadline is
 // http.Client.Timeout.
+//
+// acquireTimeout is set to the same timeout so that IF a limiter is later
+// attached with WithLimiter, the wait for a slot is bounded too. With no
+// limiter attached (every deployment before v0.7, and every deployment today
+// that never calls WithLimiter) acquireTimeout is stored but never read, so
+// this line changes nothing observable: see acquire.
 func NewClient(target string, timeout time.Duration) *Client {
 	return &Client{
-		tr:      NewTransport(&http.Client{Timeout: timeout}),
-		baseURL: target,
+		tr:             NewTransport(&http.Client{Timeout: timeout}),
+		baseURL:        target,
+		acquireTimeout: timeout,
 	}
 }
 
@@ -127,13 +146,25 @@ func NewClient(target string, timeout time.Duration) *Client {
 // Transport shared by more than one NewClientOn. Build it any other way and
 // this Client's own timeout stops being the only deadline in play, silently.
 func NewClientOn(tr *Transport, target string, timeout time.Duration) *Client {
-	return &Client{tr: tr, baseURL: target, timeout: timeout}
+	return &Client{tr: tr, baseURL: target, timeout: timeout, acquireTimeout: timeout}
 }
 
 // WithLimiter returns the same Client bound to lim, which bounds how many
 // requests this exporter has in flight against one machine at a time. A nil
 // limiter means unlimited, which is the default.
+//
+// Panics if lim is non-nil and this Client has no bound at all on how long
+// Acquire may wait (both acquireTimeout and timeout are zero): that
+// combination is exactly the silent-unbounded-queueing failure Limiter
+// exists to prevent, not a case to accept quietly. Every constructor above
+// sets one or the other, so reaching this panic means either a Client was
+// assembled some other way, or NewClientFor was handed an *http.Client whose
+// Timeout is 0 outside the one case (backing a Transport shared by more than
+// one NewClientOn) NewHTTPClient's own doc comment reserves that for.
 func (c *Client) WithLimiter(lim *Limiter) *Client {
+	if lim != nil && c.acquireTimeout <= 0 && c.timeout <= 0 {
+		panic("collector: WithLimiter requires a Client built with a positive timeout, so the wait for a slot has a bound")
+	}
 	c.limiter = lim
 	return c
 }
@@ -190,8 +221,18 @@ func NewHTTPClient(httpCfg promconfig.HTTPClientConfig, timeout time.Duration) (
 
 // NewClientFor binds an already-built *http.Client to one base URL. Many
 // targets share one *http.Client, each paying only this struct.
+//
+// acquireTimeout is read off hc.Timeout, not passed separately: for every
+// caller of this function that timeout IS the deadline that already governs
+// the request (NewClientWithConfig below builds hc with exactly the timeout
+// it was given), so reading it back here is the same value, not a guess. The
+// one construction NewHTTPClient's own doc comment reserves a 0 Timeout for
+// (backing a Transport shared by more than one NewClientOn) never reaches
+// this function, so a 0 read here means genuinely no bound is known, and
+// WithLimiter refuses to attach a real limiter to that Client rather than
+// silently accepting an unbounded wait.
 func NewClientFor(target string, hc *http.Client) *Client {
-	return &Client{tr: NewTransport(hc), baseURL: target}
+	return &Client{tr: NewTransport(hc), baseURL: target, acquireTimeout: hc.Timeout}
 }
 
 // NewClientWithConfig builds a Client whose transport carries the
@@ -232,18 +273,20 @@ func (c *Client) Fetch(ctx context.Context, path string) (data []byte, err error
 	// deadline lives on its own private http.Client.Timeout, so its c.timeout
 	// stays zero and this block is a no-op for it.
 	//
-	// Applied before the limiter below on purpose: time spent waiting for a
-	// slot is charged against this collector's own budget, never added on top
-	// of it, so a starved poller fails its refresh and says so instead of
-	// silently stretching its effective interval while time.Ticker drops its
-	// ticks.
+	// Applied before the limiter below on purpose: for a Client on this path,
+	// ctx now carries the ONLY deadline that governs the rest of this call,
+	// wait and request together, so the wait is charged against this
+	// collector's own budget, never added on top of it. A Client whose
+	// deadline lives on http.Client.Timeout instead reaches acquire below
+	// with no deadline on ctx at all; that path bounds the wait itself, via
+	// acquireTimeout, for exactly this reason. See acquire's own comment.
 	if c.timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, c.timeout)
 		defer cancel()
 	}
 
-	release, err := c.limiter.Acquire(ctx)
+	release, err := c.acquire(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("wait for a request slot for %s: %w", path, err)
 	}
@@ -269,4 +312,33 @@ func (c *Client) Fetch(ctx context.Context, path string) (data []byte, err error
 		return nil, fmt.Errorf("read response body for %s: %w", path, err)
 	}
 	return data, nil
+}
+
+// acquire waits for a limiter slot, bounding that wait to acquireTimeout so
+// it can never exceed the same deadline that already governs the request
+// about to follow it. The bound is applied to a context local to this call
+// only: it never replaces or shortens the ctx Fetch goes on to build the
+// request with, so a Client whose request deadline lives on
+// http.Client.Timeout (every constructor except NewClientOn) keeps that
+// deadline exactly as it was before, limiter or not.
+//
+// Total worst case once a limiter is attached: acquireTimeout (the wait)
+// plus whatever already bounds the request, at most twice the configured
+// timeout, and if the wait alone exceeds that budget Fetch fails fast with
+// an error instead of eventually succeeding late (see Fetch's own error
+// message for this). For NewClientOn, ctx already carries c.timeout's
+// deadline by the time this runs (see Fetch above), so the wait is already
+// covered by that single deadline and acquireTimeout adds nothing further:
+// worst case there stays exactly c.timeout, unchanged from before WithLimiter
+// existed.
+func (c *Client) acquire(ctx context.Context) (func(), error) {
+	if c.limiter == nil {
+		return c.limiter.Acquire(ctx)
+	}
+	if c.acquireTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.acquireTimeout)
+		defer cancel()
+	}
+	return c.limiter.Acquire(ctx)
 }

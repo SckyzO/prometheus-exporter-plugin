@@ -8,39 +8,48 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// RequestWait records how long a request waited for a concurrency slot before
-// it was issued. Unlabelled, like RequestDuration next to it: the exporter's
-// own registry carries no per-instance label, and the per-collector freshness
-// gauge the background variant already emits is what identifies WHICH
-// collector is starving. This one answers whether anything is queueing at all.
+// RequestWait records how long a command invocation waited for a
+// concurrency slot before it ran. Unlabelled, matching CommandDuration next
+// to it in execute.go: this flavor has one shared command-execution boundary
+// (the package-level Execute var), not one Client per target, so there is
+// nothing to label a wait by.
 //
-// Observed whenever a ceiling is actually configured, even when a slot is
-// immediately free (the wait is then near zero): the series exists from the
-// first scrape once a ceiling is set, so an operator can tell "queueing
-// briefly" from "queueing for real". On the nil fast path (no ceiling
-// configured, the default) Acquire returns before touching this histogram at
-// all, matching the "costs one nil check and no allocation" contract below:
-// there is nothing to report when there is no ceiling to wait on.
+// Observed whenever CommandLimiter is actually set to a real ceiling, even
+// when a slot is immediately free (the wait is then near zero): the series
+// exists from the first scrape once a ceiling is set, so an operator can
+// tell "queueing briefly" from "queueing for real". On the nil fast path (no
+// ceiling configured, the default) Acquire returns before touching this
+// histogram at all, matching the "costs one nil check and no allocation"
+// contract below: there is nothing to report when there is no ceiling to
+// wait on.
 var RequestWait = prometheus.NewHistogram(prometheus.HistogramOpts{
 	Name: "@@NAMESPACE@@_exporter_request_wait_seconds",
-	Help: "Duration in seconds a request waited for a per-target concurrency slot before being issued.",
+	Help: "Duration in seconds a command invocation waited for a concurrency slot before it ran.",
 })
 
-// Limiter bounds how many requests this exporter has in flight against one
-// target at a time. It exists because every collector under the multi-instance
-// target model is a background poller with its own goroutine and its own
-// ticker, entirely outside the sequential collection StatusTracker performs, so
-// nothing else caps how many of them hit one machine at once.
+// Limiter bounds how many invocations of the target command this exporter
+// runs at once. It exists because a background-refresh collector variant
+// runs Execute from its own goroutine on its own ticker, entirely outside
+// any scrape, so nothing else caps how many commands run concurrently.
 //
-// A nil *Limiter is a valid, unlimited limiter. That is the default
-// (--exporter.max-requests-per-target is 0), so the common path costs one nil
-// check and no allocation.
+// A nil *Limiter is a valid, unlimited limiter. That is the default (no
+// ceiling configured), so the common path costs one nil check and no
+// allocation. See CommandLimiter in execute.go, the package-level var this
+// type exists to back.
+//
+// Unlike the http flavor's sibling limiter.go, this file carries no
+// LimiterSet. That type indexes one Limiter per target address, for a model
+// where several Clients can each name a different --collector.<name>.target
+// and must share a ceiling only when their addresses match. This flavor has
+// no per-target Client at all, only the one shared Execute boundary every
+// collector calls through, so there is no address to index by: one Limiter
+// is already everything a ceiling here needs.
 type Limiter struct {
 	slots chan struct{}
 }
 
-// NewLimiter returns a limiter admitting at most limit concurrent requests, or
-// nil when limit is not positive, meaning unlimited.
+// NewLimiter returns a limiter admitting at most limit concurrent
+// invocations, or nil when limit is not positive, meaning unlimited.
 func NewLimiter(limit int) *Limiter {
 	if limit <= 0 {
 		return nil
@@ -48,16 +57,17 @@ func NewLimiter(limit int) *Limiter {
 	return &Limiter{slots: make(chan struct{}, limit)}
 }
 
-// Acquire blocks until a slot is free or ctx is done, and returns the function
-// that gives the slot back. The returned release is always safe to call, and
-// is a no-op when err is non-nil, so callers can defer it unconditionally
-// after checking the error.
+// Acquire blocks until a slot is free or ctx is done, and returns the
+// function that gives the slot back. The returned release is always safe to
+// call, and is a no-op when err is non-nil, so callers can defer it
+// unconditionally after checking the error.
 //
 // Honouring ctx is what makes a ceiling safe to turn on: the caller's own
-// deadline (a collector's --collector.<name>.timeout) bounds the wait, so a
-// starved poller fails its refresh, logs, and keeps its previous cache. Without
-// it the poller would sit in the queue while time.Ticker silently dropped its
-// ticks and the effective refresh interval drifted with nothing reporting it.
+// deadline (a collector's --collector.<name>.timeout, already applied to ctx
+// before Execute runs, see execute.go's own comment) bounds the wait, so a
+// starved collector fails its refresh, logs, and keeps its previous cache.
+// Without it a collector would sit in the queue with nothing bounding how
+// long, and nothing reporting that it was stuck.
 func (l *Limiter) Acquire(ctx context.Context) (func(), error) {
 	if l == nil {
 		return func() {}, nil
@@ -72,46 +82,4 @@ func (l *Limiter) Acquire(ctx context.Context) (func(), error) {
 		RequestWait.Observe(time.Since(start).Seconds())
 		return func() {}, ctx.Err()
 	}
-}
-
-// LimiterSet indexes one Limiter per target address. It exists for the
-// single-target model, where each collector carries its own
-// --collector.<name>.target and there is no shared per-machine object to hang a
-// ceiling on: collectors naming the same address must share one ceiling, and
-// collectors naming different addresses must not.
-//
-// The multi-instance model does NOT use this: there, instance.Handle owns one
-// Limiter per watched machine by construction, so an instance added by a reload
-// gets its own without anything having to be pre-populated. Keeping that model
-// off this index is deliberate, because a pre-populated map would silently fail
-// to cover an instance added later.
-//
-// For is called at startup only, over the finite and immutable set of target
-// flags, so the key space is never caller-controlled.
-type LimiterSet struct {
-	limit int
-
-	mu       sync.Mutex
-	byTarget map[string]*Limiter
-}
-
-// NewLimiterSet returns a set handing out limiters with the given ceiling. A
-// non-positive ceiling makes every For return nil, meaning unlimited.
-func NewLimiterSet(limit int) *LimiterSet {
-	return &LimiterSet{limit: limit, byTarget: make(map[string]*Limiter)}
-}
-
-// For returns the limiter shared by every collector pointed at target.
-func (s *LimiterSet) For(target string) *Limiter {
-	if s == nil || s.limit <= 0 {
-		return nil
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if l, ok := s.byTarget[target]; ok {
-		return l
-	}
-	l := NewLimiter(s.limit)
-	s.byTarget[target] = l
-	return l
 }

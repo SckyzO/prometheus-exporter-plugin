@@ -476,3 +476,66 @@ func TestClientWithLimiterBlocksASecondConcurrentFetch(t *testing.T) {
 	}
 	<-first
 }
+
+// TestClientWithLimiterBoundsTheAcquireWaitOnNewClient proves the fix for a
+// Critical review finding: on NewClient, the only deadline mechanism is
+// http.Client.Timeout, which does not start counting until Do begins, so it
+// gives no cover at all for time spent blocked in Acquire before Do ever
+// runs. A Client built this way is also exactly what a single-target
+// collector calls Fetch with context.Background() on (see
+// ExampleCollector.ctx's own doc comment: "no deadline, exactly as before"),
+// so before this fix, attaching a limiter to a NewClient and losing the race
+// for its only slot would block forever, not just overshoot: nothing would
+// ever cancel the wait.
+//
+// Proven directly rather than by timing an HTTP round trip: the only slot is
+// acquired here and never released, so success would mean an actually
+// unbounded wait, and the assertion is on a measured duration, not a comment.
+func TestClientWithLimiterBoundsTheAcquireWaitOnNewClient(t *testing.T) {
+	const timeout = 50 * time.Millisecond
+	lim := NewLimiter(1)
+	release, err := lim.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("acquire the only slot: %v", err)
+	}
+	defer release()
+
+	c := NewClient("http://example.invalid", timeout).WithLimiter(lim)
+
+	done := make(chan time.Duration, 1)
+	go func() {
+		start := time.Now()
+		_, _ = c.Fetch(context.Background(), "/")
+		done <- time.Since(start)
+	}()
+
+	select {
+	case elapsed := <-done:
+		// Generous margin over the Client's own 50ms timeout for scheduling
+		// jitter; the pre-fix failure mode is not "somewhat over", it is
+		// "never returns", so this bound and the 2s fallback below are far
+		// apart on purpose.
+		if elapsed > 3*timeout {
+			t.Fatalf("Fetch took %v to fail with the only slot permanently held; want at most %v: the acquire wait must be bounded by the Client's own timeout even though the ctx passed in (context.Background()) carries no deadline of its own", elapsed, 3*timeout)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Fetch did not return within 2s: the acquire wait is unbounded on a Client built by NewClient with a limiter attached, exactly the Critical finding this test guards against")
+	}
+}
+
+// TestClientWithLimiterPanicsWithoutABoundedAcquireWait proves the rejected
+// combination WithLimiter's own doc comment describes: a Client with no
+// bound at all on its acquire wait (built by NewClientFor with an
+// *http.Client whose Timeout is left at its zero value, outside the one case
+// NewHTTPClient's doc comment reserves that for) must refuse a real limiter
+// rather than silently accept an unbounded one.
+func TestClientWithLimiterPanicsWithoutABoundedAcquireWait(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("WithLimiter did not panic on a Client with no bound on its acquire wait (acquireTimeout and timeout both zero)")
+		}
+	}()
+
+	c := NewClientFor("http://example.invalid", &http.Client{}) // Timeout left at zero
+	c.WithLimiter(NewLimiter(1))
+}
