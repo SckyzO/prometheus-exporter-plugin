@@ -9,6 +9,7 @@ package probe
 import (
 	"context"
 	"fmt"
+	"maps"
 	"math"
 	"net/http"
 	"net/url"
@@ -76,7 +77,10 @@ type Module struct {
 // under a mutex: /probe is the hot path, it reads this on every request and
 // never writes it, so a pointer load costs no lock. It also makes "a reader
 // observed a half-replaced table" impossible by construction rather than by
-// discipline, since the value is never mutated in place, only swapped.
+// discipline, since the value is never mutated in place, only swapped, AND
+// SetConfig gives it a private copy of modules (see its own doc comment), so
+// no caller-held reference can reach in and mutate a handlerConfig once a
+// reader has loaded it.
 type handlerConfig struct {
 	modules       map[string]Module
 	defaultClient *http.Client // top-level http_client_config; nil unless it was set
@@ -120,10 +124,23 @@ func NewHandler(log *logger.Logger, factories []NamedFactory, allowlist []string
 // SetConfig installs a new module table, atomically. A probe already in flight
 // finishes against the table it started with; the next one sees this.
 //
+// SetConfig clones modules before storing it: the map handed to a
+// handlerConfig is this method's own private copy, never the caller's map
+// value. Without that, a caller that keeps its map around and mutates it (or
+// simply reuses one map value across successive reloads) after calling
+// SetConfig would be writing to the same map a probe goroutine can be
+// ranging over right now: "concurrent map read and map write", a process
+// abort, not a degraded probe. Cloning here is what lets the handlerConfig
+// doc comment say a half-replaced view is impossible BY CONSTRUCTION rather
+// than by the caller's discipline. This is a cold path, called once at boot
+// and at most once per reload, so the copy costs nothing that matters.
+//
 // The caller is responsible for calling CloseIdleConnections on any
 // *http.Client this replaces. Doing it here would be wrong: this Handler cannot
 // know whether the caller still references the old clients elsewhere.
 func (h *Handler) SetConfig(modules map[string]Module, defaultClient *http.Client) {
+	modules = maps.Clone(modules)
+
 	// Precomputed for the guard rule 5 applies, and sorted so a credential-less
 	// probe names the candidates in the same order every time.
 	var credentialed []string
