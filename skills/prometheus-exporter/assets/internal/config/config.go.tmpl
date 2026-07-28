@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -570,4 +571,39 @@ func (c *Config) RejectModulesAndInstances() error {
 		return fmt.Errorf("config file: \"instances:\" is only used by multi-instance exporters; this is a single-target exporter")
 	}
 	return nil
+}
+
+// DiffFlags returns the sorted names of every "flags:" key whose value differs
+// between a and b, including keys present in only one of them.
+//
+// It exists because "flags:" cannot be reloaded. This package renders that
+// section back into command-line arguments and lets kingpin parse them exactly
+// once (see the package comment for why writing into flags after Parse is
+// wrong), so a running process cannot adopt a new value for one. A reload that
+// finds this section changed therefore refuses the whole reload and names these
+// keys, rather than applying the other sections and leaving the process
+// describing neither the old file nor the new one.
+//
+// reflect.DeepEqual is the right comparison here: the values are whatever YAML
+// produced (scalars, bools, and []interface{} for repeatable flags), never
+// functions or channels.
+func DiffFlags(a, b *Config) []string {
+	seen := make(map[string]bool, len(a.Flags)+len(b.Flags))
+	for k := range a.Flags {
+		seen[k] = true
+	}
+	for k := range b.Flags {
+		seen[k] = true
+	}
+
+	var changed []string
+	for k := range seen {
+		av, aok := a.Flags[k]
+		bv, bok := b.Flags[k]
+		if aok != bok || !reflect.DeepEqual(av, bv) {
+			changed = append(changed, k)
+		}
+	}
+	sort.Strings(changed)
+	return changed
 }
