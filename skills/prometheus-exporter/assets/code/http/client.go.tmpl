@@ -153,18 +153,30 @@ func NewClientOn(tr *Transport, target string, timeout time.Duration) *Client {
 // requests this exporter has in flight against one machine at a time. A nil
 // limiter means unlimited, which is the default.
 //
-// Panics if lim is non-nil and this Client has no bound at all on how long
-// Acquire may wait (both acquireTimeout and timeout are zero): that
-// combination is exactly the silent-unbounded-queueing failure Limiter
-// exists to prevent, not a case to accept quietly. Every constructor above
-// sets one or the other, so reaching this panic means either a Client was
-// assembled some other way, or NewClientFor was handed an *http.Client whose
-// Timeout is 0 outside the one case (backing a Transport shared by more than
-// one NewClientOn) NewHTTPClient's own doc comment reserves that for.
+// Deliberately total: attach and return, no validation, no panic. This method
+// is reachable from a live scrape, not only from boot-time wiring:
+// wiring/probe_factory.frag calls NewClientFor once per incoming probe
+// request, from inside the HTTP handler (see probe.go's own factory-call
+// site), so anything this method does runs on a request goroutine that
+// net/http will recover a panic on rather than crash the process, turning a
+// misconfiguration into silently broken probes and stack-trace spam instead
+// of a clean, loud boot failure. A Client with no bound on its acquire wait
+// (acquireTimeout and timeout both zero) attached to a real limiter here will
+// therefore wait unboundedly inside Fetch's acquire (see its own comment):
+// that is a real gap, left open on purpose rather than guarded badly here.
+//
+// The check belongs at flag-parse time, in whichever change wires
+// --exporter.max-requests-per-target and turns a ceiling on for the first
+// time: that change MUST reject, at boot, any collector whose own
+// --collector.<name>.timeout is non-positive while a ceiling is configured,
+// the same way instance.Handle.ClientFor already rejects a non-positive
+// NewClientOn timeout (see NewClientOn's own doc comment) by returning an
+// error instead of proceeding. Skipping that check would let
+// --collector.<name>.timeout=0s, a flag combination that works today with no
+// ceiling configured, combine with a configured ceiling to produce exactly
+// the unbounded wait this comment describes, and this method has no way to
+// catch that at the point it runs.
 func (c *Client) WithLimiter(lim *Limiter) *Client {
-	if lim != nil && c.acquireTimeout <= 0 && c.timeout <= 0 {
-		panic("collector: WithLimiter requires a Client built with a positive timeout, so the wait for a slot has a bound")
-	}
 	c.limiter = lim
 	return c
 }
@@ -228,9 +240,10 @@ func NewHTTPClient(httpCfg promconfig.HTTPClientConfig, timeout time.Duration) (
 // it was given), so reading it back here is the same value, not a guess. The
 // one construction NewHTTPClient's own doc comment reserves a 0 Timeout for
 // (backing a Transport shared by more than one NewClientOn) never reaches
-// this function, so a 0 read here means genuinely no bound is known, and
-// WithLimiter refuses to attach a real limiter to that Client rather than
-// silently accepting an unbounded wait.
+// this function under today's callers, so a 0 read here means genuinely no
+// bound is known; a Client built this way and then handed a real limiter via
+// WithLimiter would wait unboundedly, a gap that method's own doc comment
+// names and points at the flag-parse-time check that must prevent it.
 func NewClientFor(target string, hc *http.Client) *Client {
 	return &Client{tr: NewTransport(hc), baseURL: target, acquireTimeout: hc.Timeout}
 }

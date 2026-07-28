@@ -14,13 +14,23 @@ import (
 // gauge the background variant already emits is what identifies WHICH
 // collector is starving. This one answers whether anything is queueing at all.
 //
+// Declared here, not yet exposed: nothing registers this histogram on any
+// registry in any target model yet. registry.frag registers RequestDuration
+// this same way for single, and mains/multi/main.go.tmpl and
+// mains/multi-instance/main.go.tmpl each hardcode their own
+// reg.MustRegister(collector.RequestDuration) call, but neither has an
+// equivalent line for this var. It will not appear on /metrics until
+// whichever change wires --exporter.max-requests-per-target also registers
+// it alongside that flag, so a ceiling and its own visibility land together.
+// Until then this var exists so Acquire has something to call and Limiter's
+// own tests can exercise it directly.
+//
 // Observed whenever a ceiling is actually configured, even when a slot is
-// immediately free (the wait is then near zero): the series exists from the
-// first scrape once a ceiling is set, so an operator can tell "queueing
-// briefly" from "queueing for real". On the nil fast path (no ceiling
-// configured, the default) Acquire returns before touching this histogram at
-// all, matching the "costs one nil check and no allocation" contract below:
-// there is nothing to report when there is no ceiling to wait on.
+// immediately free (the wait is then near zero). On the nil fast path (no
+// ceiling configured, the default) Acquire returns before touching this
+// histogram at all, matching the "costs one nil check and no allocation"
+// contract below: there is nothing to report when there is no ceiling to
+// wait on.
 var RequestWait = prometheus.NewHistogram(prometheus.HistogramOpts{
 	Name: "@@NAMESPACE@@_exporter_request_wait_seconds",
 	Help: "Duration in seconds a request waited for a per-target concurrency slot before being issued.",
@@ -32,9 +42,10 @@ var RequestWait = prometheus.NewHistogram(prometheus.HistogramOpts{
 // ticker, entirely outside the sequential collection StatusTracker performs, so
 // nothing else caps how many of them hit one machine at once.
 //
-// A nil *Limiter is a valid, unlimited limiter. That is the default
-// (--exporter.max-requests-per-target is 0), so the common path costs one nil
-// check and no allocation.
+// A nil *Limiter is a valid, unlimited limiter, which is the default today:
+// nothing in this scaffold constructs a non-nil one yet (that is a later
+// change's job, alongside the flag that will turn a ceiling on). The common
+// path, nil, costs one nil check and no allocation regardless.
 type Limiter struct {
 	slots chan struct{}
 }

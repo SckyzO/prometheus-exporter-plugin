@@ -14,14 +14,20 @@ import (
 // (the package-level Execute var), not one Client per target, so there is
 // nothing to label a wait by.
 //
+// Declared here, not yet exposed: nothing registers this histogram on any
+// registry yet. registry.frag registers CommandDuration this same way, but
+// has no equivalent line for this var, and this flavor has no other target
+// model to check for a competing registration path. It will not appear on
+// /metrics until whichever change wires the ceiling flag also registers it
+// alongside that flag. Until then this var exists so Acquire has something
+// to call and Limiter's own tests can exercise it directly.
+//
 // Observed whenever CommandLimiter is actually set to a real ceiling, even
-// when a slot is immediately free (the wait is then near zero): the series
-// exists from the first scrape once a ceiling is set, so an operator can
-// tell "queueing briefly" from "queueing for real". On the nil fast path (no
-// ceiling configured, the default) Acquire returns before touching this
-// histogram at all, matching the "costs one nil check and no allocation"
-// contract below: there is nothing to report when there is no ceiling to
-// wait on.
+// when a slot is immediately free (the wait is then near zero). On the nil
+// fast path (no ceiling configured, the default) Acquire returns before
+// touching this histogram at all, matching the "costs one nil check and no
+// allocation" contract below: there is nothing to report when there is no
+// ceiling to wait on.
 var RequestWait = prometheus.NewHistogram(prometheus.HistogramOpts{
 	Name: "@@NAMESPACE@@_exporter_request_wait_seconds",
 	Help: "Duration in seconds a command invocation waited for a concurrency slot before it ran.",

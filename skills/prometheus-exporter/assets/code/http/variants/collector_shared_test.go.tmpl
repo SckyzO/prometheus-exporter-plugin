@@ -309,19 +309,18 @@ func TestClientWithLimiterBoundsTheAcquireWaitOnNewClient(t *testing.T) {
 	}
 }
 
-// TestClientWithLimiterPanicsWithoutABoundedAcquireWait proves the rejected
-// combination WithLimiter's own doc comment describes: a Client with no
-// bound at all on its acquire wait must refuse a real limiter rather than
-// silently accept an unbounded one. Duplicated from
+// TestClientWithLimiterIsTotalEvenWithoutABoundedAcquireWait proves
+// WithLimiter never panics, including on a Client with no bound at all on its
+// acquire wait. WithLimiter is reachable from a live probe request goroutine
+// (see its own doc comment), where a panic would crash that request instead
+// of failing loudly at boot, so validating this combination belongs at
+// flag-parse time in whichever change wires
+// --exporter.max-requests-per-target, not here. Duplicated from
 // code/http/collector_test.go.tmpl for the same reason the other Client
 // tests in this file are.
-func TestClientWithLimiterPanicsWithoutABoundedAcquireWait(t *testing.T) {
-	defer func() {
-		if recover() == nil {
-			t.Fatal("WithLimiter did not panic on a Client with no bound on its acquire wait (acquireTimeout and timeout both zero)")
-		}
-	}()
-
+func TestClientWithLimiterIsTotalEvenWithoutABoundedAcquireWait(t *testing.T) {
 	c := NewClientFor("http://example.invalid", &http.Client{}) // Timeout left at zero
-	c.WithLimiter(NewLimiter(1))
+	if got := c.WithLimiter(NewLimiter(1)); got != c {
+		t.Fatal("WithLimiter did not return the same Client")
+	}
 }

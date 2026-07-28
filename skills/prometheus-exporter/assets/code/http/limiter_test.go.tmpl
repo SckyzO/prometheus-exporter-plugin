@@ -7,9 +7,9 @@ import (
 	"time"
 )
 
-// TestNilLimiterIsPassThrough pins the default: --exporter.max-requests-per-target
-// is 0, NewLimiter returns nil for that, and a nil *Limiter must cost nothing
-// and never block.
+// TestNilLimiterIsPassThrough pins the default: no ceiling configured,
+// NewLimiter returns nil for any non-positive limit, and a nil *Limiter must
+// cost nothing and never block.
 func TestNilLimiterIsPassThrough(t *testing.T) {
 	var l *Limiter
 	if NewLimiter(0) != nil {
