@@ -98,10 +98,9 @@ current seam exists to remove.
 
 Append, never replace: the marker stays in place for the next collector.
 
-**Never touch modules.** `--probe.module` values and the config file's
-`modules:` section both reference collector names. Adding a collector cannot
-invalidate an existing module, and composing scrape profiles is an operator
-decision, not yours.
+**Never touch modules.** The config file's `modules:` section references
+collector names. Adding a collector cannot invalidate an existing module, and
+composing scrape profiles is an operator decision, not yours.
 
 **Refuse `--variant background` on a multi-target scaffold.** A background
 collector refreshes a cache from a goroutine on a fixed interval. In multi,

@@ -389,16 +389,14 @@ built once at startup, every collector's constructor assuming that same one
 target for the process's whole lifetime.
 
 `--target-model multi` (http flavor only, there is no `cli` multi-target) is
-the other model `/new-prometheus-exporter` can scaffold. Instead of this
-file's registration-driven registry, it ships `internal/probe/` and a
+one of two other models `/new-prometheus-exporter` can scaffold. Instead of
+this file's registration-driven registry, it ships `internal/probe/` and a
 `/probe?target=…` handler that builds a fresh registry and collector set,
 scoped to whatever `target=` the caller supplies, once per request,
 Prometheus's own multi-target exporter pattern (see `exporter-architecture.md`
 §2 for why this is a structural fork decided *before* scaffolding, not
-retrofitted onto this `main.go` afterward). The two models are mutually
-exclusive per scaffold: a generated repository has exactly one `main.go`, and
-either this registry or that `/probe` handler, never both. `/add-collector`
-handles both models: against a multi-target scaffold it appends a factory at
+retrofitted onto this `main.go` afterward). `/add-collector` handles it:
+against a multi-target scaffold it appends a factory at
 `// @@PROBE_FACTORIES@@` instead of a `register(...)` call.
 
 Each factory in that slice has the shape
@@ -407,6 +405,29 @@ Each factory in that slice has the shape
 top-level `http_client_config:`, or nil), but built only once, at boot in
 `main`, and shared by every collector: nothing about handling one more probe
 rebuilds it.
+
+`--target-model multi-instance` (http flavor only, and `--config.file` is
+required at runtime) is the third. Instead of a registry built once for one
+target, or a handler that builds one fresh per request, it ships
+`internal/instance/` and a boot-time loop over `instances:` from the
+configuration file: for each instance, `main` calls every enabled
+collector's `Factory.New(addr string, hcfg *promconfig.HTTPClientConfig)
+(BackgroundCollector, error)`, `Start(ctx)`s the result, wraps it in a
+`StatusTracker`, and registers that tracker under
+`prometheus.WrapRegistererWith(labels, reg)`, where `labels` carries the
+identifying label (`--instance-label`, default `target`) plus that
+instance's own `labels:` from its configuration entry. There is no `/probe`
+here: every instance is already resolved by the time the process finishes
+booting, so the one `/metrics` endpoint answers for all of them from
+whatever each instance's background pollers have already cached
+(`collector-pattern.md`'s "Collector variants" section covers why every
+collector on this model must be the background variant). `/add-collector`
+handles this model too: against a multi-instance scaffold it appends a
+factory at `// @@INSTANCE_FACTORIES@@` instead of a `register(...)` call.
+
+The three models are mutually exclusive per scaffold: a generated repository
+has exactly one `main.go`, and exactly one of this file's registry, the
+`/probe` handler, or the multi-instance boot-time loop, never more than one.
 
 ## Checklist
 

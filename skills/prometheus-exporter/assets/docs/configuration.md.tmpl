@@ -47,7 +47,6 @@ Prometheus itself uses.
 | `--probe.target-allowlist` | *(multi-target builds only, `--target-model multi`)* Restrict `/probe` to these target hosts (repeatable; host or host:port, exact match) | (empty = allow-any) |
 | `--probe.timeout` | *(multi-target builds only)* Ceiling on each `/probe` request's own deadline | `5s` |
 | `--probe.timeout-offset` | *(multi-target builds only)* Subtracted from Prometheus's scrape timeout when computing a probe's deadline, so the exporter answers before Prometheus abandons the scrape | `0.5s` |
-| `--probe.module` | *(multi-target builds only)* Declare a named module (a subset of collectors) selectable per probe with `&module=<name>` (repeatable; `<name>:<collector>[,<collector>]`) | (none) |
 
 In **single-target builds**, individual collectors may also expose their own flags. The bundled `example` collector does:
 

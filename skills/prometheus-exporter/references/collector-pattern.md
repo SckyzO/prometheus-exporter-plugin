@@ -325,6 +325,25 @@ today, and one is still planned.
   materialized as a template yet: don't go looking for `cache.go.tmpl` in
   this scaffold's assets today; it lands per the roadmap.
 
+On a `multi-instance` build (`exporter-architecture.md`), background refresh
+is not one option among several: every collector must be this variant,
+because multi-instance's own `main` never calls a collector per scrape at
+all, only builds one `instance.BackgroundCollector` per instance at boot and
+reads its cache thereafter. The variant's own constructor signature reflects
+the same split as that seam: `NewExampleCollector(log, client, interval)`
+(`background_collector.go.tmpl`) takes no `ctx` at all, unlike the
+synchronous constructor above, because a background collector's
+cancellation context does not arrive at construction, it arrives at
+`Start(ctx)`, called separately, once, at boot. `internal/instance`'s
+`Factory.New`, `func(addr string, hcfg *promconfig.HTTPClientConfig)
+(BackgroundCollector, error)`, matches that shape exactly: no `ctx`
+parameter either, with multi-instance's `main` calling `Start(ctx)` on
+whatever it returns right afterward. On shutdown, every instance's every
+collector's `Done()` is drained under one shared five-second budget, not one
+per collector: with N instances and M collectors that is N x M goroutines to
+wait on, and a per-collector budget would multiply the wait by that count
+instead of bounding it once.
+
 ## Checklist
 
 - [ ] The one I/O call sits behind the flavor's mockable boundary (`Client`

@@ -486,8 +486,7 @@ type ResolvedModule struct {
 
 // ResolveModules validates the modules section for the multi target model.
 // Unlike multi-instance, multi HONOURS a module's "collectors:" key: there it
-// selects the probe's collector subset, which is the job the deprecated
-// --probe.module flag does today.
+// selects the probe's collector subset.
 //
 // A modules: section alongside a top-level http_client_config: is refused.
 // With modules declared, nothing reads the top-level section, so accepting

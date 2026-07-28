@@ -167,7 +167,7 @@ present. The exact format:
 ## Architecture decisions
 - Data source: <REST API | gRPC | CLI>, <base URL / command>
 - I/O flavor: <http | cli>
-- Target model: <single-target | multi-target>
+- Target model: <single | multi | multi-instance>
 - Collectors (ordered):
   1. `<name>`, <resource>, endpoint `<path>`, <one line>
   2. ...

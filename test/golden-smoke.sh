@@ -663,11 +663,11 @@ EOF
   # boot rather than silently ignore one of them. This refusal lives in
   # ResolveModules, which the design spec's own step order (kingpin.MustParse
   # is step 3, ResolveModules is step 5, see the multi-target-module-
-  # credentials design doc) places AFTER kingpin parses, exactly like rule 8
-  # below. That means --help exits before ever reaching it and returns 0
-  # regardless of this conflict, confirmed empirically while writing this
-  # check: --help against this exact config exits 0 while a real start exits
-  # 1. So this starts the process for real too, same as rule 8.
+  # credentials design doc) places AFTER kingpin parses. That means --help
+  # exits before ever reaching it and returns 0 regardless of this conflict,
+  # confirmed empirically while writing this check: --help against this exact
+  # config exits 0 while a real start exits 1. So this starts the process for
+  # real too.
   #
   # If this refusal is ever silently removed, main() proceeds past
   # ResolveModules and blocks forever in web.ListenAndServe on
@@ -703,30 +703,6 @@ EOF
     die "http-multi modules: a modules: section alongside a top-level http_client_config: was accepted ($flavor/$forge)"
   fi
   echo "confirmed: modules: plus a top-level http_client_config: is refused ($flavor/$forge)"
-
-  # Rule 8: --probe.module and a modules: section cannot both be used. This
-  # one is refused AFTER kingpin parses, so --help would exit first; start the
-  # process for real and require a non-zero exit. Same background-plus-
-  # bounded-wait shape as rule 9 above and for the same reason: if this
-  # refusal were ever silently removed, a plain foreground `if` would hang
-  # forever on the bound listener instead of catching the regression.
-  "$bin" --config.file="$mods_config" --probe.module=x:example --web.listen-address=127.0.0.1:9998 >/dev/null 2>&1 &
-  refusal_pid=$!
-  i=0
-  while [ "$i" -lt 10 ]; do
-    kill -0 "$refusal_pid" 2>/dev/null || break
-    i=$((i + 1))
-    sleep 1
-  done
-  if kill -0 "$refusal_pid" 2>/dev/null; then
-    kill "$refusal_pid" >/dev/null 2>&1 || true
-    wait "$refusal_pid" 2>/dev/null || true
-    die "http-multi modules: --probe.module together with a modules: section did not fail the boot within 10s; the refusal did not fire and the process is serving ($flavor/$forge)"
-  fi
-  if wait "$refusal_pid"; then
-    die "http-multi modules: --probe.module together with a modules: section was accepted ($flavor/$forge)"
-  fi
-  echo "confirmed: --probe.module plus a modules: section is refused ($flavor/$forge)"
 
   mods_port=9999
   mods_log="$work/.golden-smoke-server-modules.log"
@@ -1014,12 +990,18 @@ EOF
   trap - EXIT
 
   echo "== module selection on the live exporter =="
-  # Restart with a module that names only the second collector, then probe
-  # with &module=only-second. The example collector must NOT be gathered: its
-  # health series must be absent — the module parameter doing real work end to
-  # end, not just passing a unit test.
+  # Restart with a config file naming a module that selects only the second
+  # collector, then probe with &module=only-second. The example collector
+  # must NOT be gathered: its health series must be absent, proving the
+  # module parameter does real work end to end, not just passing a unit test.
+  second_mod_config="$work/.golden-smoke-second-module-config.yml"
+  cat > "$second_mod_config" <<'EOF'
+modules:
+  only-second:
+    collectors: [second]
+EOF
   probe_log3="$work/.golden-smoke-server-module.log"
-  "$bin" --web.listen-address="127.0.0.1:$probe_port" --log.level=info --probe.module=only-second:second >"$probe_log3" 2>&1 &
+  "$bin" --config.file="$second_mod_config" --web.listen-address="127.0.0.1:$probe_port" --log.level=info >"$probe_log3" 2>&1 &
   server_pid=$!
   trap 'kill "$server_pid" >/dev/null 2>&1 || true' EXIT
 

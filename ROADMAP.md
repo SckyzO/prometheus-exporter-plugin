@@ -132,25 +132,9 @@ it points to.
 
 ## v0.6
 
-- **Reload on SIGHUP.** Deferred from v0.5: reloading the instance list into
-  a running process, while its pollers are mid-flight, is a concurrency
-  problem worth its own version. Per-module credentials inherit the same
-  deferral, so a credential rotation currently needs a restart.
 - **Retire `--probe.module`.** Deprecated in v0.5 in favour of the
   configuration file's `modules:` section, removed here under the two-phase
   rule.
-- **A project journal that survives a cleared context.** Today only step 0
-  hands anything durable to a later step: `/design-exporter` writes an
-  architecture brief that `/new-prometheus-exporter` reads. Everything after
-  that (which collectors are left to build, the cardinality budget, which
-  ones need the background variant, the credential convention chosen) lives
-  only in the conversation, so a compaction or a `/clear` between two
-  collectors loses decisions that are already recorded on disk two metres
-  away. Promote the brief into a journal every command reads on entry and
-  appends to on exit, making each step resumable from a cold start and
-  turning the file into the reference base for building a complete exporter.
-  Sequenced after v0.5 because it reshapes the contract of all four commands
-  at once and deserves its own design.
 - **No in-place migrations before 1.0** (decided, and already applied).
   `/add-collector` used to rewrite an older repository's probe seam in place.
   That machinery is gone: the command now detects an outdated seam, refuses,
@@ -177,6 +161,51 @@ it points to.
   containerised cells. Decide up front which combinations are supported and
   which are refused fail-fast, the way `multi` and `multi-instance` already
   require `--flavor http`.
+
+## v0.7
+
+Configuration reload is the ecosystem's norm, not a nicety: both
+`blackbox_exporter` and `snmp_exporter` reload on `SIGHUP` and on
+`POST /-/reload`, apply the new configuration atomically, and keep the old
+one when the new one fails to parse (verified against their current
+documentation). An exporter driven by a configuration file that cannot
+reload is the exception. What v0.5 deferred as one item is really two, of
+very different difficulty, so they are listed separately: the first is
+largely a transcription of a known pattern, the second is a genuine
+concurrency design.
+
+The operational need behind both is credential rotation. Since v0.5 a single
+exporter can hold several credential sets, and rotating one currently costs a
+restart and therefore a gap in the series. Note that `--web.config.file`, the
+TLS the exporter *presents*, is already reloaded per connection by
+`exporter-toolkit`; the gap is only on the outbound side.
+
+- **Reload for `single` and `multi`.** Both resolve their configuration per
+  request, which is exactly the shape `snmp_exporter` reloads: a
+  `sync.RWMutex` guarding the config, readers taking the read lock, the
+  reload swapping under the write lock, so in-flight scrapes finish against
+  the old configuration and the next one sees the new. Add `SIGHUP` and
+  `POST /-/reload` together, as both reference exporters do, and refuse to
+  apply a configuration that does not parse.
+- **Reload for `multi-instance`.** The hard half, and the reason v0.5
+  deferred the whole thing. Its background pollers own goroutines with a
+  lifecycle (`Start(ctx)`, `Done()`), so a reload has to start pollers for
+  added instances, stop and drain pollers for removed ones, and decide what
+  happens to a cached snapshot whose instance changed address or module,
+  all while `/metrics` keeps being served. This deserves its own design
+  document, not a paragraph in the one that covers the easy half.
+- **A project journal that survives a cleared context.** Today only step 0
+  hands anything durable to a later step: `/design-exporter` writes an
+  architecture brief that `/new-prometheus-exporter` reads. Everything after
+  that (which collectors are left to build, the cardinality budget, which
+  ones need the background variant, the credential convention chosen) lives
+  only in the conversation, so a compaction or a `/clear` between two
+  collectors loses decisions that are already recorded on disk two metres
+  away. Promote the brief into a journal every command reads on entry and
+  appends to on exit, making each step resumable from a cold start and
+  turning the file into the reference base for building a complete exporter.
+  It reshapes the contract of all four commands at once and deserves its own
+  design.
 
 ## v1.0
 

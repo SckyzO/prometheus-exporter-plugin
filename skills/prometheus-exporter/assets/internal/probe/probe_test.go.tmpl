@@ -299,37 +299,6 @@ func TestClampTimeoutRejectsNonFiniteAndOverflowingHeaders(t *testing.T) {
 	}
 }
 
-func TestParseModules(t *testing.T) {
-	mods, err := ParseModules([]string{"basic:disks,pools", "full:disks,pools,perf"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got := mods["basic"].Collectors; len(got) != 2 || got[0] != "disks" || got[1] != "pools" {
-		t.Errorf("basic = %v, want [disks pools]", got)
-	}
-	if got := mods["full"].Collectors; len(got) != 3 {
-		t.Errorf("full = %v, want 3 collectors", got)
-	}
-}
-
-func TestParseModulesRejectsMalformed(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		in   []string
-	}{
-		{"no colon", []string{"basic"}},
-		{"empty module name", []string{":disks"}},
-		{"empty collector list", []string{"basic:"}},
-		{"duplicate module", []string{"basic:disks", "basic:pools"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if _, err := ParseModules(tc.in); err == nil {
-				t.Fatalf("ParseModules(%v) accepted a malformed module, want an error", tc.in)
-			}
-		})
-	}
-}
-
 func TestValidateModulesRejectsUnknownCollector(t *testing.T) {
 	factories := []NamedFactory{(&recordingFactory{}).named("disks")}
 
@@ -598,16 +567,19 @@ func TestNoCredentialsAnywhereStillProbes(t *testing.T) {
 	}
 }
 
-// Rule 2 step 3, the v0.4.0 path: flag-declared modules carry no credentials,
-// so the top-level http_client_config still applies to every request. This is
-// the guarantee that an existing deployment behaves identically.
-func TestFlagModulesFallBackToTopLevelClient(t *testing.T) {
+// Rule 2 step 3, the v0.4.0 path: a configuration file with no modules:
+// section at all still applies its top-level http_client_config to every
+// probe. This is the guarantee that a v0.4.0-era configuration behaves
+// identically today: no module can carry credentials of its own without a
+// modules: section, so this and TestSelectedModuleSuppliesItsClient above
+// together cover both sources a probe's client can come from.
+func TestNoModulesTopLevelClientStillApplies(t *testing.T) {
 	top := &http.Client{}
 	f := &recordingFactory{metric: "stub_alpha"}
 	h := NewHandler(logger.NewTextLogger("error"), []NamedFactory{f.named("alpha")}, nil,
-		5*time.Second, 0, map[string]Module{"basic": {Collectors: []string{"alpha"}}}, top)
+		5*time.Second, 0, nil, top)
 
-	rec := serve(h, "/probe?target=http://n:9100&module=basic")
+	rec := serve(h, "/probe?target=http://n:9100")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("got %d, want 200", rec.Code)

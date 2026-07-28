@@ -142,8 +142,9 @@ from, never a dependency it requires.
 ## Checklist
 
 - [ ] **0. Architecture**: source chosen (REST/API, gRPC, or CLI as last
-      resort; database is out of scope), single- vs. multi-target decided,
-      collector list drafted, cardinality budget set.
+      resort; database is out of scope), target model decided (`single`,
+      `multi`, or `multi-instance`), collector list drafted, cardinality
+      budget set.
 - [ ] **1. Conventions**: naming/types/labels/OpenMetrics confirmed
       against `prometheus.io` via context7.
 - [ ] **2. Scaffold**: `/new-prometheus-exporter <name>` run; repository
@@ -187,7 +188,7 @@ templates they document:
 
 | Reference | Covers |
 |---|---|
-| `exporter-architecture.md` | Step 0: source order, single/multi-target, collector decomposition, cardinality budget |
+| `exporter-architecture.md` | Step 0: source order, the three target models (single/multi/multi-instance), collector decomposition, cardinality budget |
 | `discovery-inputs.md` | Step 0: discovery input taxonomy, preference order, the degradation ladder, the architecture-brief format |
 | `prometheus-principles.md` | Step 1: naming, types, labels, OpenMetrics, self-instrumentation |
 | `collector-pattern.md` | Step 3: the mockable I/O boundary, the five-piece collector shape, the test triad |
