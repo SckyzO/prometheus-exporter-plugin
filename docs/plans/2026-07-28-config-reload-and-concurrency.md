@@ -402,10 +402,17 @@ pins that contract rather than trusting it."
 **Files:**
 - Create: `skills/prometheus-exporter/assets/code/http/limiter.go.tmpl`
 - Create: `skills/prometheus-exporter/assets/code/http/limiter_test.go.tmpl`
+- Modify: `skills/prometheus-exporter/assets/code/http/client.go.tmpl`
 - Modify: `skills/prometheus-exporter/assets/code/cli/client.go.tmpl`
 
+> **Amended after Task 1.** This task, not Task 1, owns the `Client.limiter`
+> field, the `WithLimiter` method and the `c.limiter.Acquire(ctx)` call in
+> `Fetch`. Task 1 deferred them, correctly: `Limiter` does not exist until this
+> task, so wiring them earlier left `internal/collector` uncompilable in every
+> flavor. Add them here, in the same commit that creates `limiter.go.tmpl`.
+
 **Interfaces:**
-- Consumes: `Client.limiter` and the `c.limiter.Acquire(ctx)` call from Task 1.
+- Consumes: `Client` and `Fetch` as Task 1 left them.
 - Produces:
   - `func NewLimiter(limit int) *Limiter` (returns nil when `limit <= 0`)
   - `func (l *Limiter) Acquire(ctx context.Context) (release func(), err error)`
@@ -3259,9 +3266,22 @@ is used identically in Tasks 1, 7 and 10. `Handle.ClientFor` returns
 `Reloader.Reload() error` is what both `Handler` and the tests call, in Tasks 4,
 6 and 9.
 
-**Risk carried from the spec.** `MaxIdleConnsPerHost` defaults to 2 in
-`net/http`, and Task 1 collapses one transport per instance per collector into
-one per instance. Fifteen collectors contending for two idle connections will
-churn. Task 1's implementer must set the shared transport's idle settings
-deliberately in `NewHTTPClient` rather than inherit a default sized for one
-collector, and say what value was chosen and why in the commit message.
+**Risk carried from the spec, and since REFUTED.** The spec warned that
+`net/http` defaults `MaxIdleConnsPerHost` to 2, so collapsing one transport per
+instance per collector into one per instance would put fifteen collectors on two
+idle connections and churn them.
+
+That does not happen. `prometheus/common@v0.70.1`'s `newRT`
+(`config/http_config.go:652-664`) builds its transport with
+`MaxIdleConns: 20000` and `MaxIdleConnsPerHost: 1000`, citing golang/go#13801,
+and `NewClientFromConfig` reaches it unconditionally. Every path in this
+scaffold that SHARES a client goes through `NewHTTPClient` and therefore through
+that constructor. The one bypass is `NewClient`'s bare
+`&http.Client{Timeout: ...}`, which inherits the default of 2, but that client is
+private to a single `Client`, so no contention exists on it.
+
+Established during Task 1 by the implementer and verified independently by the
+reviewer against the module source. No override is needed, and adding one would
+be redundant and fragile. Kept here rather than deleted because the spec still
+states the risk, and a reader comparing the two documents deserves the
+resolution.

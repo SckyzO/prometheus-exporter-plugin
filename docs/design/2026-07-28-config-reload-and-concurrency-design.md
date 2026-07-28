@@ -568,13 +568,18 @@ re-audited. Every consumer of the instance seam has to be enumerated and
 checked, not assumed: `instance_factory.frag`, both mains,
 `commands/add-collector.md`, and the golden second-collector snippet.
 
-**The shared transport changes connection behaviour under
-`multi-instance`.** Seventy-five pools become five. That is the intent, but
-it means an instance's collectors now contend for one pool's
-`MaxIdleConnsPerHost`. The default is 2, which with fifteen collectors will
-force connection churn. The tranche 1 work has to set the shared transport's
-idle-connection settings deliberately rather than inherit a default sized for
-one collector.
+**The shared transport changes connection behaviour under `multi-instance`.**
+Seventy-five pools become five. That is the intent, but it means an instance's
+collectors now contend for one pool's `MaxIdleConnsPerHost`, whose `net/http`
+default is 2.
+
+**Resolved during implementation: this does not bite.** `prometheus/common`'s
+own transport constructor (`config/http_config.go:652-664` in v0.70.1) sets
+`MaxIdleConns: 20000` and `MaxIdleConnsPerHost: 1000`, citing golang/go#13801,
+and every path in this scaffold that shares a client reaches it through
+`NewClientFromConfig`. The only construction bypassing it is `NewClient`, whose
+transport is private to one collector and therefore uncontended. No deliberate
+override is required.
 
 **A ceiling that is never set is a ceiling that is never exercised.** With
 the default at 0, only the unit tests cover the non-trivial path. The golden
