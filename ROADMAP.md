@@ -151,20 +151,20 @@ it points to.
   turning the file into the reference base for building a complete exporter.
   Sequenced after v0.5 because it reshapes the contract of all four commands
   at once and deserves its own design.
-- **A migration harness for `/add-collector`.** That command is the only part
-  of this plugin that writes into a repository somebody else already owns,
-  and it is the only part with no gate at all. `golden-smoke`'s
-  second-collector splice exercises the *append* path onto an already-current
-  seam; no gate has ever executed a *migration* path. v0.5 found two defects
-  of that exact class by hand, both of which would have rewritten four files
-  in a user's repository and left it not building: a migration describing a
-  six-argument call against a seam that had become seven, and a chain into
-  wiring that referenced a configuration package the older repository does
-  not contain. Both were invisible to every gate. The fix is a fixture
+- **No in-place migrations before 1.0** (decided, and already applied).
+  `/add-collector` used to rewrite an older repository's probe seam in place.
+  That machinery is gone: the command now detects an outdated seam, refuses,
+  and points at rescaffolding. Three things drove the decision. It was the
+  only part of the plugin that writes into a repository somebody else owns
+  and the only part with no gate at all, so v0.5 found two defects in it by
+  hand, each of which would have rewritten four files and left the repository
+  not building. It cost roughly 19k tokens on every `/add-collector`
+  invocation, more than any other component and about four times the skill
+  router. And pre-1.0, with no released version yet carrying a user, it was
+  maintained for nobody. After 1.0 the calculus inverts and migrations become
+  an obligation; the harness that would make them testable (a fixture
   repository per historical seam shape, run through the migration and then
-  through `make build`. Until that exists, every seam change obliges a manual
-  re-audit of every migration that points at it, which is a discipline, not a
-  guarantee.
+  through `make build`) is the prerequisite for reintroducing them.
 - **Teach `multi-instance` in the references.** The target model shipped in
   v0.5 but appears in none of the eleven reference documents and not in
   `SKILL.md`'s step 0 walkthrough, so a session that learns from

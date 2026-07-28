@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed
+
+- **`/add-collector`'s in-place seam migrations.** The command no longer
+  rewrites an older repository's `internal/probe/` and `cmd/*/main.go` to
+  the current shape. It detects an outdated seam, stops, and points at
+  rescaffolding with `/new-prometheus-exporter` and porting the collector
+  bodies across, which is a smaller operation than an automated rewrite no
+  gate in this plugin can verify. Appending into an outdated seam is still
+  refused, so nothing silently produces code that will not compile.
+
+  This is a pre-1.0 decision. Migration was the only part of this plugin that
+  writes into a repository somebody else owns, the only part with no test
+  harness, and it cost about 19k tokens on every invocation, more than any
+  other component. With no released version yet carrying a user, it was
+  maintained for nobody. Migrations become an obligation after 1.0, and a
+  migration harness is the prerequisite for bringing them back.
+
 ## [0.5.0] - 2026-07-28
 
 ### Added
