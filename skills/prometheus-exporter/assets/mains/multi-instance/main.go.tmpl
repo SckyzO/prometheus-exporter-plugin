@@ -14,7 +14,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	promconfig "github.com/prometheus/common/config"
 	"github.com/prometheus/common/version"
 	"github.com/prometheus/exporter-toolkit/web"
 	webflag "github.com/prometheus/exporter-toolkit/web/kingpinflag"
@@ -71,12 +70,6 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
-
-	// backgroundCollector is the shutdown-wait seam every background collector
-	// satisfies. Every instance's every collector is a background poller,
-	// appended here as it is built, and waited on under ONE shared budget below.
-	type backgroundCollector interface{ Done() <-chan struct{} }
-	var backgroundCollectors []backgroundCollector
 
 	// factories holds one entry per collector, in declaration order. scaffold.sh
 	// injects the starter at the marker below, and /add-collector appends every
@@ -155,35 +148,26 @@ func main() {
 	}
 	reg.MustRegister(collector.RequestDuration)
 
-	// Build every instance's collectors at boot. Each instance's series carry
-	// the identifying label plus the instance's own extra labels, applied by
-	// WrapRegistererWith as ConstLabels. Two instances registering the same
-	// collector never collide because ConstLabels are part of a Desc's identity.
-	for _, inst := range instances {
-		labels := prometheus.Labels{instanceLabel: inst.Name}
-		for k, v := range inst.Labels {
-			labels[k] = v
-		}
-		instReg := prometheus.WrapRegistererWith(labels, reg)
-
-		tracker := collector.NewStatusTracker(log)
-		for _, f := range enabled {
-			bg, err := f.New(inst.Address, inst.ClientConfig)
-			if err != nil {
-				// A transport that cannot be built (unreadable CA or secret
-				// file) is a configuration fault: stop at boot rather than
-				// surface it on the first scrape.
-				log.Error("Failed to build collector for instance", "collector", f.Name, "instance", inst.Name, "err", err)
-				stop()     // release the signal handler explicitly before bypassing defer via os.Exit
-				os.Exit(1) //nolint:gocritic // stop() called explicitly above
-			}
-			bg.Start(ctx)
-			backgroundCollectors = append(backgroundCollectors, bg)
-			tracker.Add(f.Name, bg)
-		}
-		instReg.MustRegister(tracker)
-		log.Info("Watching instance", "instance", inst.Name, "address", inst.Address)
+	// Boot is Prepare against an empty live set, then Commit: the exact same two
+	// calls a configuration reload makes. That is what lets the reload path be
+	// exercised by every start and by every golden cell, not only when somebody
+	// sends a SIGHUP. Each instance's series carry the identifying label plus
+	// the instance's own extra labels, applied by prometheus.WrapRegistererWith
+	// as ConstLabels inside Registry.Commit.
+	//
+	// 0: --exporter.max-requests-per-target's ceiling is wired by a later
+	// change; unlimited (Registry's own documented meaning for 0) until then.
+	registry := instance.NewRegistry(log, reg, instanceLabel, enabled, 0)
+	plan, err := registry.Prepare(instances)
+	if err != nil {
+		// A transport that cannot be built (unreadable CA or secret file) is a
+		// configuration fault: stop at boot rather than surface it on the first
+		// scrape. Prepare mutates nothing on error, so there is nothing to undo.
+		log.Error("Invalid instance configuration", "err", err)
+		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+		os.Exit(1) //nolint:gocritic // stop() called explicitly above
 	}
+	registry.Commit(ctx, plan)
 
 	log.Info("Starting multi-instance exporter server...", "namespace", namespace, "instances", len(instances))
 
@@ -224,15 +208,6 @@ func main() {
 
 	// ONE shared 5s budget for ALL background collectors, not 5s each: with N
 	// instances x M collectors, a per-collector wait would worst-case at
-	// N*M*5s. time.After returns a single channel; once it fires, the loop
-	// returns, capping the TOTAL wait at 5s.
-	deadline := time.After(5 * time.Second)
-	for _, bc := range backgroundCollectors { //nolint:gosec // G602: for-range over a slice never indexes out of bounds
-		select {
-		case <-bc.Done():
-		case <-deadline:
-			log.Warn("background collectors did not all stop within 5s; exiting anyway")
-			return
-		}
-	}
+	// N*M*5s. See Registry.Wait's own doc comment.
+	registry.Wait(5 * time.Second)
 }

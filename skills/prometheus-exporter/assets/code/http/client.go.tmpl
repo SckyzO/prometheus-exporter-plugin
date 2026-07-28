@@ -181,6 +181,11 @@ func (c *Client) WithLimiter(lim *Limiter) *Client {
 	return c
 }
 
+// Limiter returns the ceiling this Client contends for, or nil when
+// unlimited. Exported for tests that assert two collectors of one instance
+// share one ceiling.
+func (c *Client) Limiter() *Limiter { return c.limiter }
+
 // NewHTTPClient builds the *http.Client carrying the authentication and TLS
 // declared in --config.file's http_client_config section.
 //
@@ -207,6 +212,12 @@ func (c *Client) WithLimiter(lim *Limiter) *Client {
 // test file, are the contract. Reserve a non-zero timeout for a *http.Client
 // this function's caller keeps entirely to itself and never hands to
 // NewTransport more than once, such as NewClientWithConfig below.
+//
+// internal/instance's Registry (the multi-instance reconciler) is the caller
+// this paragraph is for: its clientFor helper always passes 0 here, on
+// purpose, when it builds or rotates a machine's shared transport, because
+// that transport backs every one of that machine's collectors at once and
+// each carries its own deadline through Handle.ClientFor instead.
 //
 // NewClientFromConfig's own transport already sizes its idle connection pool
 // for many callers sharing one host, not one: it sets MaxIdleConnsPerHost to

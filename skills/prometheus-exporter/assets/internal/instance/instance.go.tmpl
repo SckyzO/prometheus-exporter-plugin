@@ -13,9 +13,18 @@ package instance
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"reflect"
+	"sort"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	promconfig "github.com/prometheus/common/config"
+
+	"@@MODULE_PATH@@/internal/collector"
+	"@@MODULE_PATH@@/internal/config"
+	"@@MODULE_PATH@@/internal/logger"
 )
 
 // BackgroundCollector is the lifecycle a multi-instance collector must satisfy:
@@ -29,19 +38,371 @@ type BackgroundCollector interface {
 	Done() <-chan struct{}
 }
 
-// Factory builds one instance-bound background collector. New takes the
-// instance's address and its resolved module client config (nil meaning the
-// default transport) and returns the collector, or an error when the transport
-// cannot be built (an unreadable CA or secret file), which fails the boot.
-// Enabled is the collector's --[no-]collector.<name> toggle, checked once before
-// the instance loop.
+// Handle is everything the process keeps about ONE watched machine: the
+// transport its collectors share, the concurrency ceiling they contend for, the
+// labels its series carry, and the cancellation that stops its pollers.
 //
-// The multi-instance main appends one Factory per collector at its
-// factory-injection marker, and /add-collector appends another for each
-// collector added later. There is no per-request routing as in /probe, only a
-// boot-time fan-out over instances, so this is a plain slice, not a Handler.
+// It exists because a configuration reload has to be able to change a machine's
+// credentials WITHOUT stopping its pollers: restarting them would drop their
+// caches, and under this target model a cache is worth up to a full refresh
+// interval of data. Sharing one transport per machine also collapses what used
+// to be one http.Transport per instance per collector.
+//
+// Address is immutable on purpose. A changed address is a different machine, so
+// the cached data is no longer about the thing it claims to describe: that case
+// rebuilds the Handle rather than mutating it.
+type Handle struct {
+	Name    string
+	Address string
+
+	tr      *collector.Transport
+	limiter *collector.Limiter
+	labels  prometheus.Labels
+
+	// clientConfig is the RESOLVED module content this machine's transport was
+	// built from, remembered so a reload can tell a real credential change from
+	// a module merely renamed. Compared with reflect.DeepEqual, never by module
+	// name: renaming a module without changing what it holds must restart
+	// nothing, and editing one under the same name must swap the transport.
+	clientConfig *promconfig.HTTPClientConfig
+
+	// tracker is what is registered on the labelled wrapper of the exporter's
+	// registry. Kept so a label change can unregister through a wrapper built
+	// with the PREVIOUS labels and re-register the same tracker with the new
+	// ones, without the collectors ever noticing.
+	tracker *collector.StatusTracker
+
+	cancel context.CancelFunc
+	bgs    []BackgroundCollector
+}
+
+// NewHandle builds a handle for one machine. hc is the client its collectors
+// share, built once from the instance's resolved module. limit is
+// --exporter.max-requests-per-target; 0 means unlimited.
+func NewHandle(name, address string, hc *http.Client, limit int, labels prometheus.Labels) *Handle {
+	return &Handle{
+		Name:    name,
+		Address: address,
+		tr:      collector.NewTransport(hc),
+		limiter: collector.NewLimiter(limit),
+		labels:  labels,
+	}
+}
+
+// ClientFor returns a Client bound to this machine, carrying one collector's
+// own timeout and sharing this machine's transport and ceiling.
+//
+// A non-positive timeout is refused rather than treated as "no deadline": the
+// shared transport carries no http.Client.Timeout of its own, so a collector
+// reaching it without one would block its poller forever on a hung connection.
+// The error travels out through Factory.New and fails the boot, or fails a
+// reload's prepare phase before anything is swapped.
+func (h *Handle) ClientFor(timeout time.Duration) (*collector.Client, error) {
+	if timeout <= 0 {
+		return nil, fmt.Errorf("instance %q: a collector timeout must be positive, got %v (the shared transport carries no timeout of its own)", h.Name, timeout)
+	}
+	return collector.NewClientOn(h.tr, h.Address, timeout).WithLimiter(h.limiter), nil
+}
+
+// SetTransport installs a new shared client and returns the one it replaced, so
+// the caller can release its idle connections. Every collector of this machine
+// sees the change on its next request, without being stopped and without losing
+// its cache.
+func (h *Handle) SetTransport(hc *http.Client) *http.Client {
+	old := h.tr.Get()
+	h.tr.Set(hc)
+	return old
+}
+
+// Labels returns the identifying and extra labels this machine's series carry.
+// They are applied by prometheus.WrapRegistererWith at REGISTRATION, and the
+// wrapper adds them at Collect time, so the collectors and their caches know
+// nothing about them. That is what makes a label change cost a re-registration
+// and not a poller restart.
+func (h *Handle) Labels() prometheus.Labels { return h.labels }
+
+// Factory builds one instance-bound background collector.
+//
+// It takes the Handle rather than an address and a client config because the
+// transport is now built once per machine, in the reconciler, and shared: a
+// factory that built its own would give every collector of one machine its own
+// connection pool and would put the transport out of a reload's reach.
+//
+// New may fail: ClientFor refuses a non-positive timeout, and a collector may
+// have its own reasons. That failure fails the boot, or fails a reload's
+// prepare phase before anything is swapped.
 type Factory struct {
 	Name    string
 	Enabled *bool
-	New     func(addr string, hcfg *promconfig.HTTPClientConfig) (BackgroundCollector, error)
+	New     func(h *Handle) (BackgroundCollector, error)
+}
+
+// Registry owns the live set of watched machines. Boot and reload both go
+// through Prepare then Commit, so the reload path is exercised by every start
+// and by every golden cell, not only when somebody sends a SIGHUP.
+//
+// Not safe for concurrent use: every call comes from the reload goroutine,
+// which internal/reload serializes, or from main before that goroutine starts.
+type Registry struct {
+	log           *logger.Logger
+	root          prometheus.Registerer
+	instanceLabel string
+	factories     []Factory // already filtered to the globally-enabled ones
+	limit         int       // --exporter.max-requests-per-target
+
+	handles map[string]*Handle // live, by instance name
+}
+
+// NewRegistry builds an empty registry. root is the exporter's own registry;
+// each instance's collectors are registered on a wrapper of it carrying that
+// instance's labels.
+func NewRegistry(log *logger.Logger, root prometheus.Registerer, instanceLabel string, factories []Factory, limit int) *Registry {
+	return &Registry{
+		log:           log,
+		root:          root,
+		instanceLabel: instanceLabel,
+		factories:     factories,
+		limit:         limit,
+		handles:       make(map[string]*Handle),
+	}
+}
+
+// Plan is what Prepare produced and Commit will apply.
+//
+// Everything in it is already BUILT: the transports exist, so the step that
+// fails on an unreadable CA or secret file has already run. That is what makes
+// Commit unable to fail, and it is what makes a reload atomic: a bad CA on the
+// third instance is refused before the first one has been touched.
+type Plan struct {
+	add         []*addOp
+	remove      []*Handle
+	relabel     []*relabelOp
+	retransport []*retransportOp
+}
+
+// addOp is a machine to start: a handle whose collectors are built but not yet
+// started or registered.
+type addOp struct {
+	handle     *Handle
+	tracker    *collector.StatusTracker
+	collectors []BackgroundCollector
+}
+
+// relabelOp is the same machine under new labels. The poller is not touched:
+// WrapRegistererWith applies its ConstLabels inside the wrapper at Collect
+// time, so the collector's cached []prometheus.Metric carries bare Descs and
+// knows nothing about them. Only the registration moves.
+type relabelOp struct {
+	handle    *Handle
+	newLabels prometheus.Labels
+}
+
+// retransportOp is the same machine with new credentials. The poller is not
+// touched either: its Clients share the Handle's Transport, so replacing the
+// *http.Client underneath them is enough, and their caches survive.
+//
+// clientConfig travels with the new client so Commit can record what the
+// transport was built from. Without it the next reload compares against the
+// stale config and swaps the transport on every reload forever.
+type retransportOp struct {
+	handle       *Handle
+	client       *http.Client
+	clientConfig *promconfig.HTTPClientConfig
+}
+
+// labelsFor builds the label set an instance's series carry: the identifying
+// label fixed at scaffold time, plus the instance's own extra labels. Built
+// here rather than in main so boot and reload cannot disagree about it.
+func (r *Registry) labelsFor(inst config.ResolvedInstance) prometheus.Labels {
+	labels := prometheus.Labels{r.instanceLabel: inst.Name}
+	for k, v := range inst.Labels {
+		labels[k] = v
+	}
+	return labels
+}
+
+// Prepare classifies every instance in the new configuration against the live
+// set and builds everything the resulting Plan will need. This is the phase
+// that can fail, and it mutates nothing: on error the caller keeps running
+// exactly what it was running.
+//
+// Boot is Prepare against an empty live set, which is why this code path is
+// exercised by every start rather than only by a reload.
+//
+// Instances are processed in the order the file declares them, so a file with
+// two broken instances always fails on the same one.
+func (r *Registry) Prepare(instances []config.ResolvedInstance) (*Plan, error) {
+	p := &Plan{}
+	seen := make(map[string]bool, len(instances))
+
+	for _, inst := range instances {
+		seen[inst.Name] = true
+		labels := r.labelsFor(inst)
+		cur, live := r.handles[inst.Name]
+
+		// Not watched yet: build it whole. Every collector is constructed here,
+		// so a factory that fails (a non-positive timeout, or a reason of its
+		// own) fails the whole reload before anything has been started.
+		if !live || cur.Address != inst.Address {
+			hc, err := clientFor(inst.ClientConfig)
+			if err != nil {
+				return nil, fmt.Errorf("instance %q: %w", inst.Name, err)
+			}
+			h := NewHandle(inst.Name, inst.Address, hc, r.limit, labels)
+			h.clientConfig = inst.ClientConfig
+
+			tracker := collector.NewStatusTracker(r.log)
+			var bgs []BackgroundCollector
+			for _, f := range r.factories {
+				bg, err := f.New(h)
+				if err != nil {
+					return nil, fmt.Errorf("instance %q, collector %q: %w", inst.Name, f.Name, err)
+				}
+				tracker.Add(f.Name, bg)
+				bgs = append(bgs, bg)
+			}
+			p.add = append(p.add, &addOp{handle: h, tracker: tracker, collectors: bgs})
+
+			// A changed ADDRESS is a different machine: the cache describes
+			// something else now, so the old handle is removed alongside.
+			if live {
+				p.remove = append(p.remove, cur)
+			}
+			continue
+		}
+
+		// Same machine, still at the same address. Two things may have moved,
+		// and each is cheap on its own: neither stops a poller or drops a cache.
+		if !reflect.DeepEqual(cur.labels, labels) {
+			p.relabel = append(p.relabel, &relabelOp{handle: cur, newLabels: labels})
+		}
+		if !reflect.DeepEqual(cur.clientConfig, inst.ClientConfig) {
+			hc, err := clientFor(inst.ClientConfig)
+			if err != nil {
+				return nil, fmt.Errorf("instance %q: %w", inst.Name, err)
+			}
+			p.retransport = append(p.retransport, &retransportOp{
+				handle:       cur,
+				client:       hc,
+				clientConfig: inst.ClientConfig,
+			})
+		}
+	}
+
+	// Anything the file no longer declares. Sorted so a reload removing several
+	// instances logs them in the same order every time.
+	var gone []string
+	for name := range r.handles {
+		if !seen[name] {
+			gone = append(gone, name)
+		}
+	}
+	sort.Strings(gone)
+	for _, name := range gone {
+		p.remove = append(p.remove, r.handles[name])
+	}
+
+	return p, nil
+}
+
+// clientFor builds the shared *http.Client for one instance. A nil resolved
+// config means the default transport, exactly as it did before this package
+// owned the construction.
+func clientFor(hcfg *promconfig.HTTPClientConfig) (*http.Client, error) {
+	if hcfg == nil {
+		return &http.Client{}, nil
+	}
+	// The per-request deadline lives on each collector's Client, not here: this
+	// transport is shared by collectors whose timeouts differ.
+	return collector.NewHTTPClient(*hcfg, 0)
+}
+
+// Commit applies a prepared plan. It cannot fail: every construction that could
+// has already happened in Prepare, the names it registers were proved unique by
+// ResolveInstances, and starting a goroutine does not fail.
+//
+// Order matters. Removals unregister FIRST, so a removed instance's series are
+// gone from the very next scrape rather than lingering for the length of a
+// drain. Draining is then handed to a background goroutine, so a reload never
+// blocks behind a poller stuck in a long request.
+func (r *Registry) Commit(ctx context.Context, p *Plan) {
+	for _, h := range p.remove {
+		prometheus.WrapRegistererWith(h.labels, r.root).Unregister(h.tracker)
+		delete(r.handles, h.Name)
+		h.cancel()
+		r.log.Info("Stopped watching instance", "instance", h.Name, "address", h.Address)
+		go h.drain(5 * time.Second)
+	}
+
+	for _, op := range p.relabel {
+		// Unregister through a wrapper built with the PREVIOUS labels: that is
+		// how the registry identifies what to remove, and it is why the handle
+		// remembers them. The tracker and every collector behind it are
+		// untouched, so no cache is lost.
+		prometheus.WrapRegistererWith(op.handle.labels, r.root).Unregister(op.handle.tracker)
+		op.handle.labels = op.newLabels
+		prometheus.WrapRegistererWith(op.handle.labels, r.root).MustRegister(op.handle.tracker)
+		r.log.Info("Relabelled instance", "instance", op.handle.Name)
+	}
+
+	for _, op := range p.retransport {
+		old := op.handle.SetTransport(op.client)
+		// Store what the new transport was built FROM, or the next reload will
+		// compare against the stale config and swap the transport again on
+		// every single reload.
+		op.handle.clientConfig = op.clientConfig
+		if old != nil {
+			// Only IDLE connections close, so a request in flight on the old
+			// client finishes undisturbed. Without this the old transport holds
+			// its sockets until IdleConnTimeout.
+			old.CloseIdleConnections()
+		}
+		r.log.Info("Rotated credentials for instance", "instance", op.handle.Name)
+	}
+
+	for _, op := range p.add {
+		instCtx, cancel := context.WithCancel(ctx)
+		op.handle.cancel = cancel
+		op.handle.bgs = op.collectors
+		op.handle.tracker = op.tracker
+		for _, bg := range op.collectors {
+			bg.Start(instCtx)
+		}
+		prometheus.WrapRegistererWith(op.handle.labels, r.root).MustRegister(op.tracker)
+		r.handles[op.handle.Name] = op.handle
+		r.log.Info("Watching instance", "instance", op.handle.Name, "address", op.handle.Address)
+	}
+}
+
+// drain waits for one removed instance's pollers to exit, under a bounded
+// budget, and warns if they do not. Called on its own goroutine so a reload
+// returns immediately: the instance is already unregistered, so a lingering
+// poller is unreferenced and harmless.
+func (h *Handle) drain(budget time.Duration) {
+	deadline := time.After(budget)
+	for _, bg := range h.bgs {
+		select {
+		case <-bg.Done():
+		case <-deadline:
+			return
+		}
+	}
+}
+
+// Wait blocks until every live instance's pollers have exited, under ONE shared
+// budget rather than one per collector: with N instances by M collectors, a
+// per-collector wait would worst-case at N*M*budget. Called by main at
+// shutdown, after the HTTP server has stopped.
+func (r *Registry) Wait(budget time.Duration) {
+	deadline := time.After(budget)
+	for _, h := range r.handles {
+		for _, bg := range h.bgs {
+			select {
+			case <-bg.Done():
+			case <-deadline:
+				r.log.Warn("background collectors did not all stop within the shutdown budget; exiting anyway")
+				return
+			}
+		}
+	}
 }

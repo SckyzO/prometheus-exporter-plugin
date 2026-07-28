@@ -534,7 +534,21 @@ func TestClientWithLimiterBoundsTheAcquireWaitOnNewClient(t *testing.T) {
 // --exporter.max-requests-per-target, not here.
 func TestClientWithLimiterIsTotalEvenWithoutABoundedAcquireWait(t *testing.T) {
 	c := NewClientFor("http://example.invalid", &http.Client{}) // Timeout left at zero
-	if got := c.WithLimiter(NewLimiter(1)); got != c {
+	lim := NewLimiter(1)
+	if got := c.WithLimiter(lim); got != c {
 		t.Fatal("WithLimiter did not return the same Client")
+	}
+	if c.Limiter() != lim {
+		t.Fatal("Limiter() did not return the limiter WithLimiter attached")
+	}
+}
+
+// TestClientLimiterDefaultsToNil proves a Client built without WithLimiter
+// reports no ceiling, the unlimited default every deployment before v0.7 (and
+// every deployment today that never calls WithLimiter) keeps.
+func TestClientLimiterDefaultsToNil(t *testing.T) {
+	c := NewClient("http://example.invalid", time.Second)
+	if c.Limiter() != nil {
+		t.Fatal("a Client built by NewClient without WithLimiter reported a non-nil Limiter")
 	}
 }
