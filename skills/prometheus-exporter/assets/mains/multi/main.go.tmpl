@@ -23,6 +23,7 @@ import (
 	"@@MODULE_PATH@@/internal/config"
 	"@@MODULE_PATH@@/internal/logger"
 	"@@MODULE_PATH@@/internal/probe"
+	"@@MODULE_PATH@@/internal/reload"
 )
 
 // namespace is this exporter's Prometheus metric prefix (used by the landing
@@ -48,6 +49,19 @@ var (
 		"probe.target-allowlist",
 		"Restrict /probe to these target hosts (repeatable; host or host:port). Empty (default) accepts any http/https target.",
 	).Strings()
+
+	// enableLifecycle exposes POST /-/reload. Default false, which is
+	// Prometheus's own posture and not Blackbox's: a scaffolded multi-target
+	// exporter is allow-any and unauthenticated by default, so shipping every
+	// generated exporter an unauthenticated MUTATING endpoint would be the one
+	// change here that degrades the default posture of an operator who
+	// configured nothing. --web.config.file covers the route once it is set,
+	// but it is not set by default. SIGHUP is always on: it already requires
+	// being on the machine.
+	enableLifecycle = kingpin.Flag(
+		"web.enable-lifecycle",
+		"Expose POST /-/reload, which reloads --config.file. SIGHUP always works and needs no flag.",
+	).Default("false").Bool()
 
 	// configFile is declared like any other flag so kingpin accepts it on the
 	// command line and lists it in --help. Its VALUE is read straight from
@@ -140,60 +154,39 @@ func main() {
 
 	// Modules come from the configuration file's modules: section and nowhere
 	// else.
-	resolved, err := cfg.ResolveModules()
+	modules, defaultClient, err := buildModules(cfg, factories, *probeTimeout)
 	if err != nil {
-		log.Error("Invalid \"modules:\" section", "err", err)
-		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
-		os.Exit(1) //nolint:gocritic // stop() called explicitly above
-	}
-
-	// One client per credential-bearing module, built ONCE here rather than per
-	// probe or per collector: NewClientFromConfig mints a fresh transport on
-	// every call and caches nothing. An unreadable CA or credentials file is a
-	// configuration fault, so it stops the exporter here rather than surfacing
-	// on the first probe. Sorted so a file with two broken modules always fails
-	// on the same one.
-	modules := make(map[string]probe.Module, len(resolved))
-	moduleNames := make([]string, 0, len(resolved))
-	for name := range resolved {
-		moduleNames = append(moduleNames, name)
-	}
-	sort.Strings(moduleNames)
-	for _, name := range moduleNames {
-		rm := resolved[name]
-		m := probe.Module{Collectors: rm.Collectors}
-		if rm.ClientConfig != nil {
-			hc, cerr := collector.NewHTTPClient(*rm.ClientConfig, *probeTimeout)
-			if cerr != nil {
-				log.Error("Failed to build HTTP client for module", "module", name, "err", cerr)
-				stop()     // release the signal handler explicitly before bypassing defer via os.Exit
-				os.Exit(1) //nolint:gocritic // stop() called explicitly above
-			}
-			m.Client = hc
-		}
-		modules[name] = m
-	}
-
-	// The top-level http_client_config, which the configuration layer accepts
-	// only when no modules: section exists. It is what a probe falls back to,
-	// and it is what keeps a pre-modules configuration behaving identically.
-	var defaultClient *http.Client
-	if cfg.HTTPClientConfig != nil {
-		defaultClient, err = collector.NewHTTPClient(*cfg.HTTPClientConfig, *probeTimeout)
-		if err != nil {
-			log.Error("Failed to build HTTP client from http_client_config", "err", err)
-			stop()     // release the signal handler explicitly before bypassing defer via os.Exit
-			os.Exit(1) //nolint:gocritic // stop() called explicitly above
-		}
-	}
-
-	if err := probe.ValidateModules(factories, modules); err != nil {
-		log.Error("Invalid module definition", "err", err)
+		log.Error("Invalid configuration", "err", err)
 		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
 		os.Exit(1) //nolint:gocritic // stop() called explicitly above
 	}
 
 	probeHandler := probe.NewHandler(log, factories, *probeTargetAllowlist, *probeTimeout, *probeTimeoutOffset, modules, defaultClient)
+
+	// The reload policy for this target model: rebuild the module table, swap
+	// it atomically, then release the connections the replaced clients held.
+	// buildModules is the prepare phase and cannot mutate; SetConfig and
+	// closeIdle are the commit phase and cannot fail.
+	//
+	// Captured by reference so a reload sees the CURRENT table, not the one
+	// that existed when this closure was created.
+	current := struct {
+		modules       map[string]probe.Module
+		defaultClient *http.Client
+	}{modules, defaultClient}
+
+	reloader := reload.New(log, config.ExtractFlagValue(os.Args[1:], "config.file"), cfg,
+		func(next *config.Config) error {
+			newModules, newDefault, err := buildModules(next, factories, *probeTimeout)
+			if err != nil {
+				return err
+			}
+			probeHandler.SetConfig(newModules, newDefault)
+			closeIdle(current.modules, current.defaultClient)
+			current.modules, current.defaultClient = newModules, newDefault
+			return nil
+		})
+	go reloader.Run(ctx)
 
 	// /metrics reports on the EXPORTER ITSELF (build info, Go runtime/process,
 	// aggregate request timing), scraped independently of any probed target,
@@ -208,6 +201,7 @@ func main() {
 		)
 	}
 	reg.MustRegister(collector.RequestDuration)
+	reg.MustRegister(reloader.Collectors()...)
 
 	log.Info("Starting multi-target exporter server...", "namespace", namespace)
 
@@ -224,6 +218,22 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+	// Registered unconditionally, ahead of the "/" handler above, but the flag
+	// check inside is what makes an exporter that did not opt in answer 404
+	// on this path: http.ServeMux treats "/" as a catch-all for any path with
+	// no more specific match, so leaving this path entirely unregistered
+	// would fall through to the landing page instead of 404ing.
+	http.HandleFunc("/-/reload", func(w http.ResponseWriter, r *http.Request) {
+		if !*enableLifecycle {
+			http.NotFound(w, r)
+			return
+		}
+		reloader.Handler().ServeHTTP(w, r)
+	})
+	if !*enableLifecycle {
+		log.Info("POST /-/reload is disabled; SIGHUP still reloads the configuration",
+			"enable_with", "--web.enable-lifecycle")
+	}
 
 	server := &http.Server{
 		ReadHeaderTimeout: 5 * time.Second, // Mitigate Slowloris attacks (G112).
@@ -246,6 +256,69 @@ func main() {
 	}
 
 	log.Info("Server stopped")
+}
+
+// buildModules turns a parsed configuration into the probe handler's module
+// table. This is the PREPARE phase, shared by boot and by every reload so the
+// two cannot drift: it can fail, and it mutates nothing. Building a transport
+// is the step that fails on an unreadable CA or secret file, and it happens
+// here, before anything is swapped.
+//
+// Sorted iteration so a file with two broken modules always fails on the same
+// one, at boot and at reload alike.
+func buildModules(cfg *config.Config, factories []probe.NamedFactory, timeout time.Duration) (map[string]probe.Module, *http.Client, error) {
+	resolved, err := cfg.ResolveModules()
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid \"modules:\" section: %w", err)
+	}
+
+	names := make([]string, 0, len(resolved))
+	for name := range resolved {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	modules := make(map[string]probe.Module, len(resolved))
+	for _, name := range names {
+		rm := resolved[name]
+		m := probe.Module{Collectors: rm.Collectors}
+		if rm.ClientConfig != nil {
+			hc, cerr := collector.NewHTTPClient(*rm.ClientConfig, timeout)
+			if cerr != nil {
+				return nil, nil, fmt.Errorf("build HTTP client for module %q: %w", name, cerr)
+			}
+			m.Client = hc
+		}
+		modules[name] = m
+	}
+
+	var defaultClient *http.Client
+	if cfg.HTTPClientConfig != nil {
+		defaultClient, err = collector.NewHTTPClient(*cfg.HTTPClientConfig, timeout)
+		if err != nil {
+			return nil, nil, fmt.Errorf("build HTTP client from http_client_config: %w", err)
+		}
+	}
+
+	if err := probe.ValidateModules(factories, modules); err != nil {
+		return nil, nil, fmt.Errorf("invalid module definition: %w", err)
+	}
+	return modules, defaultClient, nil
+}
+
+// closeIdle releases the connections held by clients a reload replaced.
+// Only IDLE connections are closed, so a probe still in flight on an old client
+// finishes undisturbed; without this the old transports would hold their
+// sockets until IdleConnTimeout.
+func closeIdle(modules map[string]probe.Module, defaultClient *http.Client) {
+	for _, m := range modules {
+		if m.Client != nil {
+			m.Client.CloseIdleConnections()
+		}
+	}
+	if defaultClient != nil {
+		defaultClient.CloseIdleConnections()
+	}
 }
 
 // warnIfProbeUnrestricted logs one visible, non-fatal warning when /probe has

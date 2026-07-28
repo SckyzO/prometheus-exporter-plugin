@@ -16,7 +16,15 @@ import (
 )
 
 // recordingFactory records how it was called and returns a stub collector.
+//
+// mu guards every field below: a factory shared across concurrent /probe
+// requests (see TestServeHTTPDuringReload, which drives ServeHTTP from
+// several goroutines at once, the way real Prometheus scrape traffic does)
+// has its make method called concurrently, and without a mutex here that is
+// a bare "calls++" and three unguarded field writes racing with each other,
+// caught by -race, not a degraded probe.
 type recordingFactory struct {
+	mu      sync.Mutex
 	calls   int
 	target  string
 	timeout time.Duration
@@ -26,14 +34,18 @@ type recordingFactory struct {
 }
 
 func (f *recordingFactory) make(ctx context.Context, target string, timeout time.Duration, hc *http.Client) (prometheus.Collector, error) {
+	f.mu.Lock()
 	f.calls++
 	f.target = target
 	f.timeout = timeout
 	f.client = hc
-	if f.panics {
+	panics := f.panics
+	metric := f.metric
+	f.mu.Unlock()
+
+	if panics {
 		return panicCollector{}, nil
 	}
-	metric := f.metric
 	if metric == "" {
 		metric = "stub_up"
 	}
@@ -712,4 +724,57 @@ func TestSetConfigClonesEachModulesCollectorsSlice(t *testing.T) {
 	}
 	close(stop)
 	wg.Wait()
+}
+
+// TestServeHTTPDuringReload drives real /probe traffic, through ServeHTTP
+// itself rather than selectFactories directly, from several goroutines at
+// once while another goroutine keeps calling SetConfig, the way SIGHUP or
+// POST /-/reload lands on a running exporter at an arbitrary moment relative
+// to in-flight scrapes. Every probe must still succeed: SetConfig's atomic
+// swap means a request in flight completes against one coherent table,
+// never a half-replaced one, whichever side of a given swap it lands on.
+func TestServeHTTPDuringReload(t *testing.T) {
+	f := &recordingFactory{}
+	h := NewHandler(testLogger(), []NamedFactory{f.named("example")}, nil,
+		time.Second, 0, map[string]Module{"prod": {Collectors: []string{"example"}}}, nil)
+
+	stop := make(chan struct{})
+	var reloadWG sync.WaitGroup
+	reloadWG.Add(1)
+	go func() {
+		defer reloadWG.Done()
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if i%2 == 0 {
+				h.SetConfig(map[string]Module{"prod": {Collectors: []string{"example"}}}, nil)
+			} else {
+				h.SetConfig(map[string]Module{"prod": {Collectors: []string{"example"}}, "staging": {}}, nil)
+			}
+		}
+	}()
+
+	const probers = 4
+	var proberWG sync.WaitGroup
+	proberWG.Add(probers)
+	for p := 0; p < probers; p++ {
+		go func() {
+			defer proberWG.Done()
+			for i := 0; i < 200; i++ {
+				rec := serve(h, "/probe?target=http://example.invalid&module=prod")
+				if rec.Code != http.StatusOK {
+					// t.Errorf, not t.Fatalf: safe to call from a non-test
+					// goroutine, unlike Fatal/FailNow.
+					t.Errorf("probe failed during a concurrent reload: %d body=%s", rec.Code, rec.Body.String())
+					return
+				}
+			}
+		}()
+	}
+	proberWG.Wait()
+	close(stop)
+	reloadWG.Wait()
 }
