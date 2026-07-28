@@ -88,10 +88,20 @@ SYFT_VERSION=1.46.0
 
 prog=$(basename "$0")
 
+# MATRIX_CELLS is the single source of truth for what --all runs AND for what
+# .github/workflows/plugin-ci.yml's golden-smoke matrix must name. That
+# workflow cannot read a shell variable, so it repeats the list literally; the
+# scaffold-unit-tests job then asserts the two agree by diffing its matrix
+# against `--list-cells`. Add a cell here and that assertion goes red until the
+# workflow names it too, which is the point: a cell CI silently never runs is
+# worse than no cell at all.
+MATRIX_CELLS="http-none http-github cli-none cli-github http-multi http-multi-instance"
+
 usage() {
   cat <<EOF >&2
 Usage: $prog --flavor <http|cli> --forge <github|none> [--target-model <single|multi|multi-instance>]
        $prog --all
+       $prog --list-cells
 EOF
 }
 
@@ -124,6 +134,13 @@ while [ $# -gt 0 ]; do
     --all)
       all=1
       shift
+      ;;
+    --list-cells)
+      # One cell name per line, for CI's drift guard. Answered here, before
+      # every validation below, because listing the matrix needs no
+      # --flavor/--forge and does no work.
+      for c in $MATRIX_CELLS; do echo "$c"; done
+      exit 0
       ;;
     -h|--help)
       usage
@@ -185,7 +202,7 @@ if [ "$all" -eq 1 ]; then
   # --flavor http (no cli multi-target, same restriction validated above),
   # so each is special-cased here rather than folded into the generic
   # cell%-*/cell#*- parsing below, which assumes exactly one hyphen.
-  for cell in http-none http-github cli-none cli-github http-multi http-multi-instance; do
+  for cell in $MATRIX_CELLS; do
     case "$cell" in
       http-multi)
         cell_flavor=http
