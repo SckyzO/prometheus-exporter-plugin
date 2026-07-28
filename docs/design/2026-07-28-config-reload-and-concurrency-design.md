@@ -89,13 +89,13 @@ single exporter can hold several credential sets, and rotating one currently
 costs a restart and therefore a gap in the series." That is **false for
 every secret held in a file**, and the correction narrows the scope.
 
-In the pinned `github.com/prometheus/common v0.68.1`:
+In the pinned `github.com/prometheus/common v0.70.1`:
 
-- `FileSecret.Fetch` (`config/http_config.go:796-802`) performs an
+- `FileSecret.Fetch` (`config/http_config.go:805-811`) performs an
   `os.ReadFile` on every call, and `basicAuthRoundTripper.RoundTrip` calls
-  it per request (`:917`). The same `SecretReader` indirection backs
+  it per request (`:926`). The same `SecretReader` indirection backs
   `bearer_token_file` and `authorization.credentials_file`.
-- `tlsRoundTripper.RoundTrip` (`:1467-1480`) hashes the CA, certificate and
+- `tlsRoundTripper.RoundTrip` (`:1575-1588`) hashes the CA, certificate and
   key on every request and rebuilds its inner round tripper when the hash
   changes.
 
