@@ -41,10 +41,24 @@ Discovery can also be grounded in a local API spec (OpenAPI/Swagger/
 `.proto`) or a docs folder/URL, in
 preference order; `/design-exporter <target>` runs this phase and writes
 an architecture brief `/new-prometheus-exporter` can consume. Decide
-single-target vs. multi-target (Prometheus's `/probe?target=` pattern, for
-an exporter that polls many remote instances at once); multi-target is now
-scaffolded, opt-in, via `--target-model multi` (http flavor only: there is
-no cli multi-target). Decompose the target
+the target model, which is one of three: `single` (the default, one fixed
+target), `multi` (Prometheus picks the target per scrape via
+`/probe?target=`, the Blackbox pattern), or `multi-instance` (a fixed list
+of machines polled in the background and served through one `/metrics`).
+All three are scaffolded, opt-in, via `--target-model`; both multi models
+require the http flavor, there is no cli multi-target. When a session
+reaches this step without `/design-exporter` (which asks these questions on
+its own), ask them here rather than assuming: which of the three, and, if
+the answer is `multi`, one follow-up, "how do your targets authenticate?",
+with three answers: (a) all the same, or not at all, so one
+`http_client_config:` covers every target; (b) by group, so one module per
+group carries its own credentials and the scrape config names one with
+`&module=`; (c) credentials and collector subsets vary independently, so
+credentials-only modules combine with collector modules in one request. The
+generated code is identical in all three cases; the answer only decides
+which commented block of `config.example.yml` the exporter's author should
+uncomment, so record it with the rest of the architecture decisions.
+Decompose the target
 into one collector per resource, and set a cardinality budget (which
 labels, how many series, what flags will cap them) before writing a line
 of code. For any collector whose backend is slow or expensive enough that a

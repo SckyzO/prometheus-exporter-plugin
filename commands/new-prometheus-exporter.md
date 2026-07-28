@@ -37,15 +37,17 @@ on their behalf):
 - **Data source and I/O flavor.** Preference order is REST/gRPC-style API >
   database > CLI (last resort: justify it if chosen, e.g. no API exists).
   This maps directly to `--flavor http` (the default) or `--flavor cli`.
-- **Single-target vs. multi-target.** Maps to `--target-model single`
-  (default) or `--target-model multi`. Multi-target (Prometheus's
-  `/probe?target=` pattern, for an exporter that polls many remote instances
-  on demand) **requires `--flavor http`**. There is no cli multi-target, and
-  the scaffolder rejects that pairing outright. If the design calls for
-  multi-target with a CLI-flavored source, stop and flag the conflict to the
-  user rather than silently falling back to single-target: either the flavor
-  or the target model has to change. `/add-collector` works against either
-  target model, so the choice made here does not close that door.
+- **Single-target vs. multi-target vs. multi-instance.** Maps to
+  `--target-model single` (default), `--target-model multi` (one target per
+  request via `?target=`), or `--target-model multi-instance` (a fixed list of
+  instances polled in the background, from `--config.file`). Both multi models
+  **require `--flavor http`**. If the design brief describes many machines with
+  per-machine credentials known ahead of time, or a source that refreshes more
+  slowly than Prometheus's 5-minute staleness window, that is multi-instance;
+  if Prometheus should pick the target per scrape, that is multi. Reject a
+  multi model with a CLI-flavored source rather than silently falling back.
+  `/add-collector` works against any target model, so the choice made here
+  does not close that door.
 - **The collector list**: which resources/metrics this exporter will track,
   even if only the first one is built today. Later collectors are added one
   at a time with `/add-collector`.
@@ -108,13 +110,16 @@ Derive or ask for each:
   at all.
 - **`--flavor`** (`http` or `cli`, not a `--var`): carried over directly
   from the step 0 decision; don't ask again.
-- **`--target-model`** (`single` or `multi`, not a `--var`): carried over
-  directly from the step 0 decision; default `single` when step 0 didn't
-  specify one. `multi` requires `--flavor http`: reject the combination
-  `--target-model multi` + `--flavor cli` yourself with a clear message
-  before running anything, rather than passing it through to `scaffold.sh`
-  (which also rejects it, but don't rely on that alone: fail fast here,
-  same posture as step 2's name validation).
+- **`--target-model`** (`single`, `multi`, or `multi-instance`, not a
+  `--var`): carried over from the step 0 decision; default `single`. Both
+  `multi` and `multi-instance` require `--flavor http`: reject either paired
+  with `--flavor cli` yourself, with a clear message, before running
+  scaffold.sh (which also rejects it, but don't rely on that alone: fail
+  fast here, same posture as step 2's name validation).
+- **`--instance-label`** (not a `--var`; multi-instance only): the label name
+  this exporter applies to every instance's series; default `target`. Ask
+  only if the design brief named a more natural dimension (e.g. `library`,
+  `device`). Ignored for single/multi.
 
 ## 1b. Offer a license
 
@@ -172,16 +177,26 @@ Then run:
   --dst <target-dir> \
   --flavor <http|cli> \
   --forge <github|none> \
-  --target-model <single|multi> \
+  --target-model <single|multi|multi-instance> \
   --var EXPORTER_NAME=<EXPORTER_NAME> \
   --var NAMESPACE=<NAMESPACE> \
   --var MODULE_PATH=<MODULE_PATH> \
   --var DATA_SOURCE=<DATA_SOURCE> \
   --var DATA_SOURCE_PATH=<DATA_SOURCE_PATH> \
   --var DEFAULT_PORT=<DEFAULT_PORT> \
+  --instance-label <INSTANCE_LABEL, multi-instance only; omit otherwise> \
+  --var COLLECTOR_HEALTH_BY=<"job,<INSTANCE_LABEL>" for multi-instance, else "job"> \
+  --var COLLECTOR_LOCATION=<"<INSTANCE_LABEL>" for multi-instance, else "instance"> \
   --var OWNER=<OWNER> \
   --var LICENSE=<apache-2.0|mit|gpl-3.0|bsd-3>
 ```
+
+For `single`/`multi`, pass `--var COLLECTOR_HEALTH_BY=job --var
+COLLECTOR_LOCATION=instance` (the shipped rules aggregate by job and name the
+exporter host). For `multi-instance`, pass `--var
+COLLECTOR_HEALTH_BY=job,<instance-label> --var
+COLLECTOR_LOCATION=<instance-label>` so the health rules break down per
+instance.
 
 Show its output. It prints `scaffolded <target-dir>` on success. If it fails
 instead (including a residual-`@@VAR@@`-sentinel error), that means a
@@ -239,3 +254,12 @@ If this exporter was scaffolded with `--target-model multi`, `/add-collector`
 detects that and appends a factory at `// @@PROBE_FACTORIES@@` in
 `cmd/*/main.go` rather than a `register(...)` call into a single-target
 registry.
+
+If the architecture brief recorded a credential convention
+(`Credential convention: a|b|c` under `## Architecture decisions`), point the
+user at the matching commented block in `config.example.yml`: `a` is the
+plain `http_client_config:` block (or nothing at all, if no target needs
+credentials), `b` is the block marked "Convention 1", `c` is the block marked
+"Convention 2". Point them at `docs/configuration.md`'s `### Selecting a
+module` section either way, for the scrape config that goes with whichever
+block they uncomment.

@@ -87,30 +87,96 @@ it points to.
   set, since it has nothing to authenticate against). Absent
   `--config.file`, a scaffolded exporter behaves exactly as before: no
   default moves and no existing scaffold changes. Prerequisite for v0.5's
-  `fanout` target model, which cannot express N instances with per-instance
-  credentials through a kingpin flag surface. The instance list
-  (`instances:`) and the fan-out target model itself are v0.5, not this
-  release.
+  `multi-instance` target model, which cannot express N instances with
+  per-instance credentials through a kingpin flag surface. The instance list
+  (`instances:`) and the multi-instance target model itself are v0.5, not
+  this release.
 
 ## v0.5
 
-- **A third target model, `fanout`.** Single-target watches one instance
-  fixed at scaffold time; multi-target takes its instance per request on
-  `/probe`. Fan-out sits between them: one process scrapes a list of
-  instances declared in the configuration file, each with its own
-  authentication, TLS and labels. That list is why v0.4 came first, since a
-  kingpin flag surface cannot express N instances with per-instance
-  credentials.
-- The generic half belongs here: the `instances:` list, per-instance
-  authentication, TLS, labels and overrides, reload on SIGHUP, and fail-fast
-  validation at startup. Anything that answers one target's hardware
-  constraint belongs in that exporter's own repository, not in the scaffold.
+- **A third target model, `multi-instance`, delivered.** Single-target
+  watches one instance fixed at scaffold time; multi-target takes its
+  instance per request on `/probe`. Neither fits a target whose data is only
+  worth refreshing every fifteen minutes or once a night: Prometheus only
+  keeps a sample queryable for a staleness window that defaults to five
+  minutes, so slowing down `scrape_interval` just makes the series flicker
+  in and out of existence instead of settling anything, and `/probe` cannot
+  host a background poller because a poller needs its target at startup, not
+  per request. Multi-instance is the fix: one process watches a list of
+  instances declared in the configuration file (`instances:`), each polled
+  in the background on its own schedule and re-served from a cache on every
+  scrape, so the scrape itself stays fast no matter how slow the underlying
+  fetch is. This isn't specific to tape libraries or any one slow device;
+  the same argument applies to any application API, batch job, or nightly
+  inventory that can't be scraped live.
+- Delivered as part of this: the `instances:` list, per-instance labels,
+  module-based credential and TLS selection (`modules:`, building on v0.4's
+  configuration file), a fixed identifying label applied to every instance's
+  series (default `target`, set once at scaffold time via
+  `scaffold.sh --instance-label`), and fail-fast validation at boot (unique
+  instance names, valid addresses, resolvable modules, no label collisions).
+- **Sequenced follow-up: per-target credentials for `multi` (volet A).** The
+  `multi` (`?target=`) model still authenticates every target through one
+  shared `http_client_config:`, so it cannot probe two targets that
+  authenticate differently. It gains per-request module selection
+  (`/probe?target=...&module=...`), the same thing multi-instance already
+  does per instance, with one rule settling the collision between
+  combinable modules and credentials: at most one selected module may carry
+  credentials. That single mechanism expresses both the Blackbox convention
+  (a module is a complete bundle) and the SNMP one (credentials and
+  collector subsets as independent axes), so the developer picks a
+  convention in the configuration file rather than in code. Designed in
+  [`docs/design/2026-07-27-multi-target-module-credentials-design.md`](docs/design/2026-07-27-multi-target-module-credentials-design.md).
+- Also not in this drop: per-instance flag overrides (not planned unless a
+  real consumer needs one).
+
+## v0.6
+
+- **Reload on SIGHUP.** Deferred from v0.5: reloading the instance list into
+  a running process, while its pollers are mid-flight, is a concurrency
+  problem worth its own version. Per-module credentials inherit the same
+  deferral, so a credential rotation currently needs a restart.
+- **Retire `--probe.module`.** Deprecated in v0.5 in favour of the
+  configuration file's `modules:` section, removed here under the two-phase
+  rule.
+- **A project journal that survives a cleared context.** Today only step 0
+  hands anything durable to a later step: `/design-exporter` writes an
+  architecture brief that `/new-prometheus-exporter` reads. Everything after
+  that (which collectors are left to build, the cardinality budget, which
+  ones need the background variant, the credential convention chosen) lives
+  only in the conversation, so a compaction or a `/clear` between two
+  collectors loses decisions that are already recorded on disk two metres
+  away. Promote the brief into a journal every command reads on entry and
+  appends to on exit, making each step resumable from a cold start and
+  turning the file into the reference base for building a complete exporter.
+  Sequenced after v0.5 because it reshapes the contract of all four commands
+  at once and deserves its own design.
+- **A migration harness for `/add-collector`.** That command is the only part
+  of this plugin that writes into a repository somebody else already owns,
+  and it is the only part with no gate at all. `golden-smoke`'s
+  second-collector splice exercises the *append* path onto an already-current
+  seam; no gate has ever executed a *migration* path. v0.5 found two defects
+  of that exact class by hand, both of which would have rewritten four files
+  in a user's repository and left it not building: a migration describing a
+  six-argument call against a seam that had become seven, and a chain into
+  wiring that referenced a configuration package the older repository does
+  not contain. Both were invisible to every gate. The fix is a fixture
+  repository per historical seam shape, run through the migration and then
+  through `make build`. Until that exists, every seam change obliges a manual
+  re-audit of every migration that points at it, which is a discipline, not a
+  guarantee.
+- **Teach `multi-instance` in the references.** The target model shipped in
+  v0.5 but appears in none of the eleven reference documents and not in
+  `SKILL.md`'s step 0 walkthrough, so a session that learns from
+  `references/` alone still believes there are two target models. v0.5's
+  per-module credentials work added it in two places as a side effect; the
+  rest is an unpaid documentation debt from the model's own drop.
 - Budget the combinatorial cost in the design rather than discovering it in
   flight. Three target models against two flavors and two collector variants
-  would multiply both `scaffold.sh` and the `golden-smoke` matrix, which
-  already runs five containerised cells. Decide up front which combinations
-  are supported and which are refused fail-fast, the way `multi` already
-  requires `--flavor http`.
+  multiply both `scaffold.sh` and the `golden-smoke` matrix, now six
+  containerised cells. Decide up front which combinations are supported and
+  which are refused fail-fast, the way `multi` and `multi-instance` already
+  require `--flavor http`.
 
 ## v1.0
 

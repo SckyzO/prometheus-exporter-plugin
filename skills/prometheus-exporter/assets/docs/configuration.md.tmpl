@@ -39,11 +39,11 @@ Prometheus itself uses.
 |------|-------------|---------|
 | `--web.listen-address` | Address to listen on for web interface and telemetry | `:@@DEFAULT_PORT@@` |
 | `--web.config.file` | Path to a configuration file for TLS/Basic Auth | (none) |
-| `--config.file` | Path to this exporter's own YAML configuration file (see [Configuration file](#configuration-file)). Not the same thing as `--web.config.file` | (none) |
+| `--config.file` | Path to this exporter's own YAML configuration file (see [Configuration file](#configuration-file)). Not the same thing as `--web.config.file`. **Required** for a multi-instance build (`--target-model multi-instance`); optional and empty by default everywhere else | (none) |
 | `--log.level` | Log level: `debug`, `info`, `warn`, `error` | `info` |
 | `--log.format` | Log format: `json`, `text` | `text` |
 | `--web.disable-exporter-metrics` | Exclude Go runtime and process metrics from `/metrics` | `false` |
-| `--[no-]collector.<name>` | *(single-target builds only)* Enable or disable a collector (kingpin boolean flag) | see below |
+| `--[no-]collector.<name>` | *(single-target and multi-instance builds)* Enable or disable a collector (kingpin boolean flag) | see below |
 | `--probe.target-allowlist` | *(multi-target builds only, `--target-model multi`)* Restrict `/probe` to these target hosts (repeatable; host or host:port, exact match) | (empty = allow-any) |
 | `--probe.timeout` | *(multi-target builds only)* Ceiling on each `/probe` request's own deadline | `5s` |
 | `--probe.timeout-offset` | *(multi-target builds only)* Subtracted from Prometheus's scrape timeout when computing a probe's deadline, so the exporter answers before Prometheus abandons the scrape | `0.5s` |
@@ -57,6 +57,8 @@ In **single-target builds**, individual collectors may also expose their own fla
 | `--collector.example.target` | Base URL the `example` collector fetches | `@@DATA_SOURCE@@` | HTTP only |
 
 In **multi-target builds** (`--target-model multi`), the `example` collector is built fresh per `/probe` request: its target and timeout come from the request (bounded by the `--probe.*` flags above), so it exposes no `--collector.example.*` flags, and multi has no `--[no-]collector.<name>` toggle.
+
+In **multi-instance builds** (`--target-model multi-instance`), the `example` collector is the background-refresh variant: `--collector.example.timeout` and `--collector.example.interval` (background refresh period, default `5m`) apply the same way to every watched instance, but there is no `--collector.example.target`, since each instance's address comes from `instances:` in the configuration file (see below), not a flag. `--[no-]collector.example` still toggles it on or off, same as single-target.
 
 There is no single global command/request timeout: each collector owns its own, following
 the `example` collector's pattern above. Run `--help` after adding your own collectors to see
@@ -182,6 +184,146 @@ curl 'http://localhost:@@DEFAULT_PORT@@/probe?target=http://some-host:9100'
   URL is a deliberate, ecosystem-standard trade-off (Blackbox/SNMP/IPMI all
   work this way): see [SECURITY.md](../SECURITY.md) before exposing this
   endpoint beyond a trusted network.
+
+### Selecting a module
+
+`?module=` names one or more modules declared in `--config.file`'s `modules:`
+section. It is repeatable and comma-separated, so `?module=a&module=b,c`
+selects a, b and c. For the YAML shape of that section, see the commented
+`modules:` block in `config.example.yml` at the repository root, which spells
+out both conventions (one complete bundle per group of targets, or
+credentials and collector subsets as independent axes); the `modules:` sample
+further down this page is the multi-instance variant, where a module is
+resolved once at boot rather than per request.
+
+- **Collectors combine.** The probe runs the union of the selected modules'
+  `collectors:` lists, always in the exporter's own declared order. A module
+  that lists none contributes none, and if the union ends up empty, for
+  example because the only module selected was a credentials-only one such as
+  `default`, every registered collector runs: the same fallback an absent
+  `module=` parameter takes.
+- **Credentials do not combine.** A request makes one connection, so it needs
+  one set of credentials. They resolve in this order, first hit wins: the
+  unique selected module carrying an `http_client_config:`, then a module
+  named `default`, then the top-level `http_client_config:`. Selecting two
+  modules that both carry credentials returns **400**.
+- **A probe that resolves no credentials against a file that declares some
+  returns 400.** Probing in the clear would return 200 with series nobody
+  questions; the 400 makes `up` go to 0 and shows in your monitoring.
+- **An unknown module returns 400**, and a request naming no module at all
+  runs every collector.
+
+A matching scrape config carries the module as a label and relabels it:
+
+```yaml
+  - job_name: '@@EXPORTER_NAME@@-probe'
+    metrics_path: /probe
+    file_sd_configs: [{ files: ['targets/*.yml'] }]   # each entry carries a `module` label
+    relabel_configs:
+      - { source_labels: [__address__],    target_label: __param_target }
+      - { source_labels: [module],         target_label: __param_module }
+      - { source_labels: [__param_target], target_label: instance }
+      - { target_label: __address__, replacement: 'exporter-host:@@DEFAULT_PORT@@' }
+```
+
+## The multi-instance target model (multi-instance builds only)
+
+A multi-instance build (scaffolded with `--target-model multi-instance`, http
+flavor only) watches a fixed list of machines declared in a configuration
+file, instead of one target baked in at scaffold time (single-target) or one
+target per `/probe` request (multi-target). `--config.file` is **required**
+for this build: without it there is no instance list to load, and the
+exporter refuses to start. Single-target and multi-target builds keep
+`--config.file` optional, unchanged.
+
+```bash
+./@@EXPORTER_NAME@@ --config.file=config.yml
+```
+
+### The `modules:` and `instances:` sections
+
+On top of the `flags:` and `http_client_config:` sections described above, a
+multi-instance config file adds two more:
+
+```yaml
+# modules: named credential/TLS bundles, one exporter-wide set an instance
+# can reference by name.
+modules:
+  default:
+    http_client_config:
+      basic_auth:
+        username: monitor
+        password_file: /etc/@@EXPORTER_NAME@@/default.pass
+  privileged:
+    http_client_config:
+      tls_config:
+        ca_file: /etc/@@EXPORTER_NAME@@/internal-ca.pem
+
+# instances: the machines this process watches. Required: at least one.
+instances:
+  - name: machine-a
+    address: https://machine-a.example.net
+    labels:
+      site: paris
+  - name: machine-b
+    address: https://machine-b.example.net
+    module: privileged
+```
+
+- **`modules:`** is optional. Each entry names an `http_client_config:`
+  bundle; an instance picks one by name in its own `module:` key. Leaving
+  `module:` off an instance uses the `default` module; with no `modules:`
+  section at all, a top-level `http_client_config:` (if present) is used
+  instead, so a plain pre-multi-instance config file keeps working
+  unchanged.
+- **`instances:`** is required and needs at least one entry. Each instance
+  needs a unique `name` and an `address` that parses as an `http`/`https`
+  URL; `module` is optional (`default` if omitted); `labels` are optional
+  extra key/value pairs added to every series that instance emits. All
+  instances must declare the same set of label keys.
+- A module's `collectors:` key (used on multi-target builds to narrow a
+  `/probe` request) is meaningless here, since collector enablement is
+  global via `--[no-]collector.<name>` under multi-instance; setting it on
+  any module in the file is refused at boot rather than silently ignored.
+- An instance's `labels:` may not reuse the identifying label (see below).
+
+Any problem here (a missing instance list, a duplicate name, an address that
+is not `http`/`https`, an unknown module, a label collision) fails at boot
+with a clear message, not at the first scrape.
+
+### Instance label
+
+Every per-collector series this exporter emits, across every instance and every
+collector including the per-collector health metrics, carries one identifying
+label: `@@INSTANCE_LABEL@@` by default, for example
+`@@NAMESPACE@@_exporter_collector_success{collector="example", @@INSTANCE_LABEL@@="machine-a"}`.
+The one exception is `@@NAMESPACE@@_exporter_request_duration_seconds`, a single
+process-wide histogram shared across all instances and labeled only by
+`outcome`, never by `@@INSTANCE_LABEL@@`.
+Its name is fixed at scaffold time via `scaffold.sh --instance-label`, never
+a runtime flag. It is applied by the exporter itself, per instance, rather
+than by any collector's own descriptor, so `make docs-check` cannot see or
+verify it; keeping the name fixed at scaffold time is what lets
+`docs/metrics.md` state it as fact instead of describing a value that could
+drift at runtime with nothing left to catch it.
+
+### Prometheus configuration for a multi-instance build
+
+A multi-instance build is scraped exactly like a single-target one: one
+static target, no relabeling.
+
+```yaml
+scrape_configs:
+  - job_name: '@@EXPORTER_NAME@@'
+    static_configs:
+      - targets: ['@@EXPORTER_NAME@@.example.internal:@@DEFAULT_PORT@@']
+```
+
+`scrape_timeout` only has to cover this one process answering from its own
+caches, not N live fetches against N instances: `/metrics` never talks to an
+instance directly. Each instance's collectors are background pollers that
+refresh a cache on their own schedule (`--collector.<name>.interval`); a
+scrape just reads whatever is already cached.
 
 ---
 

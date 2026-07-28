@@ -17,6 +17,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -42,6 +43,42 @@ type Config struct {
 	// NewClient, whose transport is the one every existing deployment
 	// already runs.
 	HTTPClientConfig *promconfig.HTTPClientConfig `yaml:"http_client_config,omitempty"`
+
+	// Modules are named credential/TLS bundles, Blackbox-shaped. A
+	// multi-instance instance references one by name for its transport. A nil
+	// HTTPClientConfig means the default transport. (The multi /probe model
+	// will select one per request in a later version.)
+	Modules map[string]Module `yaml:"modules,omitempty"`
+
+	// Instances is the list of machines a multi-instance exporter watches.
+	// Meaningful only under the multi-instance target model; single and multi
+	// reject it at boot.
+	Instances []Instance `yaml:"instances,omitempty"`
+}
+
+// Module is a named bundle of an optional collector subset and an optional
+// outbound HTTP client config, shaped like a Blackbox exporter module.
+type Module struct {
+	// Collectors narrows a probe to this subset. Honoured only under the multi
+	// (/probe) model; multi-instance enables collectors globally via the
+	// --collector.<name> flags and refuses this key at boot (see
+	// ResolveInstances).
+	Collectors []string `yaml:"collectors,omitempty"`
+
+	// HTTPClientConfig carries the authentication and TLS this module applies,
+	// the same promconfig.HTTPClientConfig the top-level section uses. A nil
+	// value means the default transport.
+	HTTPClientConfig *promconfig.HTTPClientConfig `yaml:"http_client_config,omitempty"`
+}
+
+// Instance is one machine a multi-instance exporter watches. It references a
+// module for its credentials by name and never carries inline authentication,
+// keeping the "no value has two sources" rule the flags layer relies on.
+type Instance struct {
+	Name    string            `yaml:"name"`
+	Address string            `yaml:"address"`
+	Module  string            `yaml:"module,omitempty"`
+	Labels  map[string]string `yaml:"labels,omitempty"`
 }
 
 // Load reads and validates path. An empty path yields a zero Config that
@@ -70,18 +107,37 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
 
-	if c.HTTPClientConfig != nil {
-		// Paths inside the file (ca_file, password_file, ...) are relative to
-		// the file, not to the process working directory. An exporter started
-		// by systemd runs from /, so the difference decides whether it works.
-		dir, err := filepath.Abs(filepath.Dir(path))
-		if err != nil {
-			return nil, fmt.Errorf("resolve the directory of %s: %w", path, err)
-		}
-		c.HTTPClientConfig.SetDirectory(dir)
+	// Paths inside the file (ca_file, password_file, ...) are relative to the
+	// file, not the process working directory. An exporter started by systemd
+	// runs from /, so the difference decides whether it works. Resolve the
+	// directory once and apply it to the top-level client config and to every
+	// module's.
+	dir, err := filepath.Abs(filepath.Dir(path))
+	if err != nil {
+		return nil, fmt.Errorf("resolve the directory of %s: %w", path, err)
+	}
 
+	if c.HTTPClientConfig != nil {
+		c.HTTPClientConfig.SetDirectory(dir)
 		if err := c.HTTPClientConfig.Validate(); err != nil {
 			return nil, fmt.Errorf("invalid http_client_config in %s: %w", path, err)
+		}
+	}
+
+	// Sorted so a config with two broken modules always fails on the same one.
+	moduleNames := make([]string, 0, len(c.Modules))
+	for name := range c.Modules {
+		moduleNames = append(moduleNames, name)
+	}
+	sort.Strings(moduleNames)
+	for _, name := range moduleNames {
+		hc := c.Modules[name].HTTPClientConfig
+		if hc == nil {
+			continue
+		}
+		hc.SetDirectory(dir)
+		if err := hc.Validate(); err != nil {
+			return nil, fmt.Errorf("invalid http_client_config in module %q of %s: %w", name, path, err)
 		}
 	}
 
@@ -307,4 +363,212 @@ func ExtractFlagValue(argv []string, name string) string {
 		}
 	}
 	return ""
+}
+
+// ResolvedInstance is one validated instance ready to wire: its module
+// reference resolved to a client config (nil meaning the default transport)
+// and its extra labels checked against the identifying label.
+type ResolvedInstance struct {
+	Name         string
+	Address      string
+	Labels       map[string]string
+	ClientConfig *promconfig.HTTPClientConfig
+}
+
+// ResolveInstances validates the instances section for the multi-instance
+// target model and resolves each instance's module reference. instanceLabel is
+// the identifying label scaffold.sh baked in (default "target"); an instance's
+// own labels may not reuse it. It fails on the first problem, the boot posture
+// the design mandates.
+func (c *Config) ResolveInstances(instanceLabel string, reservedLabels ...string) ([]ResolvedInstance, error) {
+	if len(c.Instances) == 0 {
+		return nil, fmt.Errorf("the multi-instance model requires at least one instance under \"instances:\"")
+	}
+
+	// Label keys an instance may not reuse: the identifying label this exporter
+	// applies itself, plus any label a collector already emits (passed by the
+	// caller, which knows its collectors). Reusing one collides at registration.
+	forbidden := map[string]string{instanceLabel: "the identifying label this exporter applies itself"}
+	for _, r := range reservedLabels {
+		forbidden[r] = "a label a collector already emits"
+	}
+
+	// A module carrying "collectors:" is meaningless under multi-instance
+	// (collector enablement is global via --collector.<name>); refuse it rather
+	// than silently ignore it. Sorted for a reproducible failure.
+	moduleNames := make([]string, 0, len(c.Modules))
+	for name := range c.Modules {
+		moduleNames = append(moduleNames, name)
+	}
+	sort.Strings(moduleNames)
+	for _, name := range moduleNames {
+		if len(c.Modules[name].Collectors) > 0 {
+			return nil, fmt.Errorf("module %q sets \"collectors:\", which multi-instance does not honour (collector enablement is global via --collector.<name>); remove it", name)
+		}
+	}
+
+	seen := make(map[string]bool, len(c.Instances))
+	out := make([]ResolvedInstance, 0, len(c.Instances))
+	for i, inst := range c.Instances {
+		if inst.Name == "" {
+			return nil, fmt.Errorf("instance %d has no name", i)
+		}
+		if seen[inst.Name] {
+			return nil, fmt.Errorf("instance name %q declared twice", inst.Name)
+		}
+		seen[inst.Name] = true
+
+		if err := validateInstanceAddress(inst.Address); err != nil {
+			return nil, fmt.Errorf("instance %q: %w", inst.Name, err)
+		}
+		for k := range inst.Labels {
+			if reason, bad := forbidden[k]; bad {
+				return nil, fmt.Errorf("instance %q sets label %q, which is %s; rename it", inst.Name, k, reason)
+			}
+		}
+
+		hc, err := c.resolveModule(inst.Module)
+		if err != nil {
+			return nil, fmt.Errorf("instance %q: %w", inst.Name, err)
+		}
+		out = append(out, ResolvedInstance{
+			Name:         inst.Name,
+			Address:      inst.Address,
+			Labels:       inst.Labels,
+			ClientConfig: hc,
+		})
+	}
+
+	// Every instance must declare the same set of label keys. WrapRegistererWith
+	// folds them into each metric's ConstLabels, and the shared registry rejects
+	// two collectors that share a metric name but differ in label-key dimension,
+	// which would otherwise surface as an opaque panic at registration.
+	if len(c.Instances) > 1 {
+		refKeys := sortedLabelKeys(c.Instances[0].Labels)
+		for _, inst := range c.Instances[1:] {
+			if keys := sortedLabelKeys(inst.Labels); !equalStrings(keys, refKeys) {
+				return nil, fmt.Errorf("instance %q declares label keys %v but instance %q declares %v; every instance must declare the same label keys", inst.Name, keys, c.Instances[0].Name, refKeys)
+			}
+		}
+	}
+	return out, nil
+}
+
+// resolveModule resolves an instance's module reference to a client config. An
+// empty reference means the "default" module. The default module is either an
+// explicit modules.default or, when no modules: section is present, the
+// top-level http_client_config (the v0.4.0 compatibility rule). A missing
+// default resolves to nil: the default transport.
+func (c *Config) resolveModule(name string) (*promconfig.HTTPClientConfig, error) {
+	if name == "" {
+		name = "default"
+	}
+	if len(c.Modules) == 0 {
+		if name == "default" {
+			return c.HTTPClientConfig, nil // nil when no top-level section either
+		}
+		return nil, fmt.Errorf("references module %q but the config declares no modules", name)
+	}
+	m, ok := c.Modules[name]
+	if !ok {
+		return nil, fmt.Errorf("references unknown module %q", name)
+	}
+	return m.HTTPClientConfig, nil
+}
+
+// ResolvedModule is one validated module: the collector subset it selects and
+// the client config its probes authenticate with, nil meaning the default
+// transport.
+type ResolvedModule struct {
+	Collectors   []string
+	ClientConfig *promconfig.HTTPClientConfig
+}
+
+// ResolveModules validates the modules section for the multi target model.
+// Unlike multi-instance, multi HONOURS a module's "collectors:" key: there it
+// selects the probe's collector subset, which is the job the deprecated
+// --probe.module flag does today.
+//
+// A modules: section alongside a top-level http_client_config: is refused.
+// With modules declared, nothing reads the top-level section, so accepting
+// both would silently ignore one of the two places an operator wrote
+// credentials. That refusal is also what makes credential resolution
+// unambiguous in internal/probe: the top-level client is reachable only when
+// no module is.
+//
+// It builds no *http.Client. This package stays a parsing and validation
+// layer with no I/O, exactly as ResolveInstances leaves it; the caller builds
+// the clients so a failure there can name the module it came from.
+func (c *Config) ResolveModules() (map[string]ResolvedModule, error) {
+	if len(c.Modules) == 0 {
+		return nil, nil
+	}
+	if c.HTTPClientConfig != nil {
+		return nil, fmt.Errorf("config file: \"modules:\" and a top-level \"http_client_config:\" cannot both be set; with modules declared the top-level section has no reader, so move it into a module (a module named \"default\" is the one a probe gets when it names none)")
+	}
+
+	out := make(map[string]ResolvedModule, len(c.Modules))
+	for name, m := range c.Modules {
+		out[name] = ResolvedModule{
+			Collectors:   m.Collectors,
+			ClientConfig: m.HTTPClientConfig,
+		}
+	}
+	return out, nil
+}
+
+// validateInstanceAddress enforces that an address parses as an http/https URL,
+// the same floor a /probe target must clear.
+func validateInstanceAddress(addr string) error {
+	if addr == "" {
+		return fmt.Errorf("has no address")
+	}
+	u, err := url.Parse(addr)
+	if err != nil {
+		return fmt.Errorf("address %q is not a valid URL: %w", addr, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("address %q scheme %q not allowed (only http/https)", addr, u.Scheme)
+	}
+	if u.Hostname() == "" {
+		return fmt.Errorf("address %q has no host", addr)
+	}
+	return nil
+}
+
+// sortedLabelKeys returns m's keys sorted, for a deterministic comparison and
+// error message.
+func sortedLabelKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// equalStrings reports whether two string slices are element-wise equal.
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// RejectModulesAndInstances refuses a modules: or instances: section, which a
+// single-target exporter cannot act on. A single-target main calls this so a
+// misconfiguration fails loudly rather than being silently ignored.
+func (c *Config) RejectModulesAndInstances() error {
+	if len(c.Modules) > 0 {
+		return fmt.Errorf("config file: \"modules:\" is only used by multi-target exporters; this is a single-target exporter")
+	}
+	if len(c.Instances) > 0 {
+		return fmt.Errorf("config file: \"instances:\" is only used by multi-instance exporters; this is a single-target exporter")
+	}
+	return nil
 }

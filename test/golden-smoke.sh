@@ -16,7 +16,7 @@
 # proves it accepts the clean doc again (see below).
 #
 # Usage:
-#   test/golden-smoke.sh --flavor <http|cli> --forge <github|none> [--target-model <single|multi>]
+#   test/golden-smoke.sh --flavor <http|cli> --forge <github|none> [--target-model <single|multi|multi-instance>]
 #   test/golden-smoke.sh --all
 #
 # Each of the 4 cells in the {http,cli} x {none,github} matrix has its own
@@ -36,19 +36,27 @@
 # simply surfaces here because this script never redirects make's own
 # stdout/stderr away from the caller's terminal.
 #
-# --target-model <single|multi> (Task 2, multi-target epic) defaults to
-# "single" (today's runtime, every cell above is single-target and
-# unaffected). "multi" requires --flavor http (mirrors scaffold.sh's own
-# restriction) and, beyond the standard build/check/promtool-rules gates
-# every cell runs, additionally starts the scaffolded binary and proves
-# /probe live: it probes the exporter's own /metrics endpoint as a target and
-# checks the response through `promtool check metrics` — see the http-multi
-# guarded block below.
+# --target-model <single|multi|multi-instance> (Task 2, multi-target epic;
+# multi-instance added in Task 12) defaults to "single" (today's runtime,
+# every cell above is single-target and unaffected). "multi" and
+# "multi-instance" both require --flavor http (mirrors scaffold.sh's own
+# restriction; no cli multi-target) and, beyond the standard
+# build/check/promtool-rules gates every cell runs, additionally start the
+# scaffolded binary and prove it serves live: "multi" probes the exporter's
+# own /metrics endpoint as a target and checks the response through
+# `promtool check metrics` - see the http-multi guarded block below.
+# "multi-instance" starts the binary with a --config.file listing two
+# instances at unreachable addresses and confirms both instances' health
+# series (target="alpha", target="beta") appear on /metrics immediately, via
+# the always-emitted freshness gauge - see the http-multi-instance guarded
+# block below.
 #
-# --all (Task 22, extended by Task 2) runs all 4 matrix cells PLUS a 5th,
-# additional http-multi cell (flavor=http, forge=none, target-model=multi) in
-# one invocation - see the dispatch block right after argument parsing below
-# for how each cell stays isolated from the others' own pass/fail.
+# --all (Task 22, extended by Task 2, extended again by Task 12) runs all 4
+# matrix cells PLUS a 5th, additional http-multi cell (flavor=http,
+# forge=none, target-model=multi) PLUS a 6th, additional http-multi-instance
+# cell (flavor=http, forge=none, target-model=multi-instance) in one
+# invocation - see the dispatch block right after argument parsing below for
+# how each cell stays isolated from the others' own pass/fail.
 #
 # POSIX sh + sed + grep + make, same dependency discipline as scaffold.sh
 # itself. `make build`/`make check` additionally need a Go toolchain and,
@@ -82,7 +90,7 @@ prog=$(basename "$0")
 
 usage() {
   cat <<EOF >&2
-Usage: $prog --flavor <http|cli> --forge <github|none> [--target-model <single|multi>]
+Usage: $prog --flavor <http|cli> --forge <github|none> [--target-model <single|multi|multi-instance>]
        $prog --all
 EOF
 }
@@ -127,15 +135,16 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# --target-model (Task 2, multi-target epic): defaults to "single" (today's
-# runtime, unchanged) — mirrors scaffold.sh's own default and validation
-# exactly, including the http-only restriction (there is no cli multi-target).
+# --target-model (Task 2, multi-target epic; multi-instance added in Task 12):
+# defaults to "single" (today's runtime, unchanged), mirroring scaffold.sh's
+# own default and validation exactly, including the http-only restriction
+# (there is no cli multi-target).
 case "$target_model" in
-  single|multi) ;;
-  *) die "invalid --target-model '$target_model'; must be single or multi" ;;
+  single|multi|multi-instance) ;;
+  *) die "invalid --target-model '$target_model'; must be single, multi, or multi-instance" ;;
 esac
-if [ "$target_model" = multi ] && [ -n "$flavor" ] && [ "$flavor" != http ]; then
-  die "--target-model multi requires --flavor http (no cli multi-target)"
+if { [ "$target_model" = multi ] || [ "$target_model" = multi-instance ]; } && [ -n "$flavor" ] && [ "$flavor" != http ]; then
+  die "--target-model $target_model requires --flavor http (no cli multi-target)"
 fi
 
 # --all runs the full matrix and is mutually exclusive with a single
@@ -167,20 +176,26 @@ fi
 # next sidesteps that entirely, and also means the 2nd-4th cells reuse the
 # 1st cell's already-built tools image instead of rebuilding it.
 if [ "$all" -eq 1 ]; then
-  echo "== golden-smoke.sh --all: running the full matrix {http,cli} x {none,github}, plus the http-multi cell =="
+  echo "== golden-smoke.sh --all: running the full matrix {http,cli} x {none,github}, plus the http-multi and http-multi-instance cells =="
   overall_rc=0
   summary=""
-  # http-multi (Task 2, multi-target epic) is a FIFTH, additional cell, not a
-  # full {single,multi} x {http,cli} x {none,github} cross product: multi
-  # requires --flavor http (no cli multi-target — same restriction validated
-  # above), so it is special-cased here rather than folded into the generic
+  # http-multi (Task 2, multi-target epic) and http-multi-instance (Task 12)
+  # are a FIFTH and SIXTH, additional cell, not a full {single,multi,multi-
+  # instance} x {http,cli} x {none,github} cross product: both require
+  # --flavor http (no cli multi-target, same restriction validated above),
+  # so each is special-cased here rather than folded into the generic
   # cell%-*/cell#*- parsing below, which assumes exactly one hyphen.
-  for cell in http-none http-github cli-none cli-github http-multi; do
+  for cell in http-none http-github cli-none cli-github http-multi http-multi-instance; do
     case "$cell" in
       http-multi)
         cell_flavor=http
         cell_forge=none
         cell_extra="--target-model multi"
+        ;;
+      http-multi-instance)
+        cell_flavor=http
+        cell_forge=none
+        cell_extra="--target-model multi-instance"
         ;;
       *)
         cell_flavor=${cell%-*}
@@ -208,17 +223,20 @@ if [ "$all" -eq 1 ]; then
   if [ "$overall_rc" -ne 0 ]; then
     echo "$prog --all: FAIL - at least one matrix cell failed, see summary above" >&2
   else
-    echo "$prog --all: PASS - all 5 cells green"
+    echo "$prog --all: PASS - all 6 cells green"
   fi
   exit "$overall_rc"
 fi
 
-# work dir key: only suffixed with -multi when target_model=multi, so the
+# work dir key: only suffixed for target_model=multi / multi-instance, so the
 # existing 4 cells' work dirs (test/_work/http-none, etc.) are byte-identical
 # to before this axis existed — target_model=single is this script's own
 # default too, exactly mirroring scaffold.sh's own default.
 workkey="$flavor-$forge"
-[ "$target_model" = multi ] && workkey="$workkey-multi"
+case "$target_model" in
+  multi) workkey="$workkey-multi" ;;
+  multi-instance) workkey="$workkey-multi-instance" ;;
+esac
 work="$root/test/_work/$workkey"
 
 # Brief-format contract (discovery-inputs epic): the shipped fixture must
@@ -248,6 +266,19 @@ done
 # anyway: no leftover state from a previous run.
 rm -rf "$work"
 
+# Monitoring vars (Task 11): job/instance for every model except
+# multi-instance, whose identifying label is @@INSTANCE_LABEL@@ (default
+# "target", see scaffold.sh --instance-label) rather than Prometheus's own
+# scrape-time instance label, so its health rules/alerts must aggregate and
+# name by "target" instead; the multi (probe) model still uses job/instance
+# since a probed target has no such custom label.
+collector_health_by=job
+collector_location=instance
+if [ "$target_model" = multi-instance ]; then
+  collector_health_by=job,target
+  collector_location=target
+fi
+
 echo "== scaffolding $flavor/$forge (target-model=$target_model) into ${work#"$root"/} =="
 case "$flavor-$forge" in
   http-none)
@@ -261,7 +292,9 @@ case "$flavor-$forge" in
       --var DATA_SOURCE_PATH=/api/example \
       --var DEFAULT_PORT=9999 \
       --var OWNER=acme \
-      --var LICENSE=apache-2.0
+      --var LICENSE=apache-2.0 \
+      --var COLLECTOR_HEALTH_BY="$collector_health_by" \
+      --var COLLECTOR_LOCATION="$collector_location"
     ;;
   cli-none)
     sh "$assets/scaffold.sh" \
@@ -274,7 +307,9 @@ case "$flavor-$forge" in
       --var DATA_SOURCE_PATH=unused \
       --var DEFAULT_PORT=9999 \
       --var OWNER=acme \
-      --var LICENSE=apache-2.0
+      --var LICENSE=apache-2.0 \
+      --var COLLECTOR_HEALTH_BY="$collector_health_by" \
+      --var COLLECTOR_LOCATION="$collector_location"
     ;;
   http-github)
     sh "$assets/scaffold.sh" \
@@ -287,7 +322,9 @@ case "$flavor-$forge" in
       --var DATA_SOURCE_PATH=/api/example \
       --var DEFAULT_PORT=9999 \
       --var OWNER=acme \
-      --var LICENSE=apache-2.0
+      --var LICENSE=apache-2.0 \
+      --var COLLECTOR_HEALTH_BY="$collector_health_by" \
+      --var COLLECTOR_LOCATION="$collector_location"
     ;;
   cli-github)
     sh "$assets/scaffold.sh" \
@@ -300,7 +337,9 @@ case "$flavor-$forge" in
       --var DATA_SOURCE_PATH=unused \
       --var DEFAULT_PORT=9999 \
       --var OWNER=acme \
-      --var LICENSE=apache-2.0
+      --var LICENSE=apache-2.0 \
+      --var COLLECTOR_HEALTH_BY="$collector_health_by" \
+      --var COLLECTOR_LOCATION="$collector_location"
     ;;
   *)
     die "no golden @@VAR@@ values wired for --flavor $flavor --forge $forge (only http+none, cli+none, http+github, cli+github are wired)"
@@ -392,17 +431,18 @@ esac
 # exception scaffold.sh's own internal residual-sentinel guard carries:
 # main.go's structural markers, `// @@CLIENT_INIT@@`, `// @@CLIENT_BUILD@@`
 # and `// @@COLLECTOR_REGISTRY@@` (single-target), `// @@PROBE_FACTORIES@@`
-# (multi-target), are deliberately left in place forever (for /add-collector
-# to find and reuse later), not data placeholders that a --var should have
-# filled, so asserting a bare `@@[A-Z_]*@@` with no exception here would make
-# this check fail on every single green run.
+# (multi-target), `// @@INSTANCE_FACTORIES@@` (multi-instance, Task 12), are
+# deliberately left in place forever (for /add-collector to find and reuse
+# later), not data placeholders that a --var should have filled, so
+# asserting a bare `@@[A-Z_]*@@` with no exception here would make this
+# check fail on every single green run.
 echo "== no residual @@VAR@@ sentinels in ${work#"$root"/} =="
 grep_rc=0
 hits=$(command grep -rnI '@@[A-Z_]*@@' "$work" 2>&1) || grep_rc=$?
 case "$grep_rc" in
   1) ;; # no match: clean
   0)
-    filtered=$(printf '%s\n' "$hits" | grep -v -E '@@(CLIENT_INIT|CLIENT_BUILD|COLLECTOR_REGISTRY|PROBE_FACTORIES)@@') || true
+    filtered=$(printf '%s\n' "$hits" | grep -v -E '@@(CLIENT_INIT|CLIENT_BUILD|COLLECTOR_REGISTRY|PROBE_FACTORIES|INSTANCE_FACTORIES)@@') || true
     if [ -n "$filtered" ]; then
       echo "$prog: error: residual @@VAR@@ sentinel(s) left in $work:" >&2
       echo "$filtered" >&2
@@ -592,6 +632,247 @@ if [ "$target_model" = multi ]; then
   echo "confirmed: http-multi live-probe check PASSED ($flavor/$forge)"
 fi
 
+# http-multi modules sub-check (volet A): a scaffolded multi-target exporter
+# must boot with a modules: section, serve a probe that names one, and refuse
+# the two ambiguous cases with a 400. It probes its OWN /metrics as the
+# target, so no authenticated backend exists here: this proves the boot, the
+# refusals and the status codes, NOT authentication end to end. That claim is
+# carried by internal/probe's Go tests and by nothing else.
+#
+# Same trap discipline as the live-probe block above: that block killed its
+# server and ran `trap - EXIT` before returning, so nothing is installed here.
+if [ "$target_model" = multi ]; then
+  echo "== http-multi: modules: section sub-check ($flavor/$forge) =="
+  bin="$work/bin/demo_exporter"
+  [ -x "$bin" ] || die "http-multi modules: $bin missing or not executable after make build ($flavor/$forge)"
+
+  mods_config="$work/.golden-smoke-modules-config.yml"
+  cat > "$mods_config" <<'EOF'
+modules:
+  default:
+    http_client_config:
+      basic_auth: { username: monitor, password: hunter2 }
+  other:
+    http_client_config:
+      basic_auth: { username: other, password: sesame }
+  onlyexample:
+    collectors: [example]
+EOF
+
+  # Rule 9: modules: alongside a top-level http_client_config: must fail the
+  # boot rather than silently ignore one of them. This refusal lives in
+  # ResolveModules, which the design spec's own step order (kingpin.MustParse
+  # is step 3, ResolveModules is step 5, see the multi-target-module-
+  # credentials design doc) places AFTER kingpin parses, exactly like rule 8
+  # below. That means --help exits before ever reaching it and returns 0
+  # regardless of this conflict, confirmed empirically while writing this
+  # check: --help against this exact config exits 0 while a real start exits
+  # 1. So this starts the process for real too, same as rule 8.
+  #
+  # If this refusal is ever silently removed, main() proceeds past
+  # ResolveModules and blocks forever in web.ListenAndServe on
+  # 127.0.0.1:9998 instead of exiting. A plain foreground
+  # `if "$bin" ...; then die; fi` would hang right here instead of catching
+  # that regression, so this backgrounds the process and bounds the wait to
+  # 10s, the same idiom the live-probe block above uses: still running after
+  # 10s means the boot did NOT refuse (the regression this check exists to
+  # catch), a non-zero exit means the refusal fired (the pass).
+  both_config="$work/.golden-smoke-modules-both.yml"
+  cat > "$both_config" <<'EOF'
+http_client_config:
+  basic_auth: { username: monitor, password: hunter2 }
+modules:
+  prod:
+    http_client_config:
+      basic_auth: { username: prod, password: hunter2 }
+EOF
+  "$bin" --config.file="$both_config" --web.listen-address=127.0.0.1:9998 >/dev/null 2>&1 &
+  refusal_pid=$!
+  i=0
+  while [ "$i" -lt 10 ]; do
+    kill -0 "$refusal_pid" 2>/dev/null || break
+    i=$((i + 1))
+    sleep 1
+  done
+  if kill -0 "$refusal_pid" 2>/dev/null; then
+    kill "$refusal_pid" >/dev/null 2>&1 || true
+    wait "$refusal_pid" 2>/dev/null || true
+    die "http-multi modules: a modules: section alongside a top-level http_client_config: did not fail the boot within 10s; the refusal did not fire and the process is serving ($flavor/$forge)"
+  fi
+  if wait "$refusal_pid"; then
+    die "http-multi modules: a modules: section alongside a top-level http_client_config: was accepted ($flavor/$forge)"
+  fi
+  echo "confirmed: modules: plus a top-level http_client_config: is refused ($flavor/$forge)"
+
+  # Rule 8: --probe.module and a modules: section cannot both be used. This
+  # one is refused AFTER kingpin parses, so --help would exit first; start the
+  # process for real and require a non-zero exit. Same background-plus-
+  # bounded-wait shape as rule 9 above and for the same reason: if this
+  # refusal were ever silently removed, a plain foreground `if` would hang
+  # forever on the bound listener instead of catching the regression.
+  "$bin" --config.file="$mods_config" --probe.module=x:example --web.listen-address=127.0.0.1:9998 >/dev/null 2>&1 &
+  refusal_pid=$!
+  i=0
+  while [ "$i" -lt 10 ]; do
+    kill -0 "$refusal_pid" 2>/dev/null || break
+    i=$((i + 1))
+    sleep 1
+  done
+  if kill -0 "$refusal_pid" 2>/dev/null; then
+    kill "$refusal_pid" >/dev/null 2>&1 || true
+    wait "$refusal_pid" 2>/dev/null || true
+    die "http-multi modules: --probe.module together with a modules: section did not fail the boot within 10s; the refusal did not fire and the process is serving ($flavor/$forge)"
+  fi
+  if wait "$refusal_pid"; then
+    die "http-multi modules: --probe.module together with a modules: section was accepted ($flavor/$forge)"
+  fi
+  echo "confirmed: --probe.module plus a modules: section is refused ($flavor/$forge)"
+
+  mods_port=9999
+  mods_log="$work/.golden-smoke-server-modules.log"
+  "$bin" --config.file="$mods_config" --web.listen-address="127.0.0.1:$mods_port" --log.level=info >"$mods_log" 2>&1 &
+  server_pid=$!
+  trap 'kill "$server_pid" >/dev/null 2>&1 || true' EXIT
+
+  ready=0
+  i=0
+  while [ "$i" -lt 15 ]; do
+    if curl -fsS -o /dev/null "http://127.0.0.1:$mods_port/healthz" 2>/dev/null; then
+      ready=1
+      break
+    fi
+    kill -0 "$server_pid" 2>/dev/null || die "http-multi modules: server exited before becoming ready, see $mods_log ($flavor/$forge)"
+    i=$((i + 1))
+    sleep 1
+  done
+  [ "$ready" -eq 1 ] || die "http-multi modules: server did not become ready on 127.0.0.1:$mods_port within 15s, see $mods_log ($flavor/$forge)"
+  echo "confirmed: server ready with a 3-module configuration ($flavor/$forge)"
+
+  mods_target="http://127.0.0.1:$mods_port/metrics"
+  probe_code() {
+    curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$mods_port/probe?target=$mods_target&module=$1"
+  }
+
+  code=$(probe_code default)
+  [ "$code" = 200 ] || die "http-multi modules: ?module=default returned $code, want 200 ($flavor/$forge)"
+
+  # Rule 2 step 2: a module that carries only a collector subset falls back to
+  # the default module's credentials rather than probing in the clear.
+  code=$(probe_code onlyexample)
+  [ "$code" = 200 ] || die "http-multi modules: ?module=onlyexample returned $code, want 200 ($flavor/$forge)"
+
+  # Rule 3: two credential-bearing modules in one request is ambiguous.
+  code=$(probe_code default,other)
+  [ "$code" = 400 ] || die "http-multi modules: ?module=default,other returned $code, want 400 ($flavor/$forge)"
+
+  echo "confirmed: module selection serves 200 and refuses an ambiguous credential pair with 400 ($flavor/$forge)"
+
+  kill "$server_pid" >/dev/null 2>&1 || true
+  wait "$server_pid" 2>/dev/null || true
+  trap - EXIT
+  echo "confirmed: http-multi modules sub-check PASSED ($flavor/$forge)"
+fi
+
+# http-multi-instance live check (Task 12, multi-instance target model): a
+# scaffolded multi-instance exporter must actually SERVE every configured
+# instance's health series on /metrics, not just build and pass its own unit
+# tests. --config.file is REQUIRED for this model: main.go refuses to start
+# without one (see internal/config's own doc comment), so this writes a
+# minimal one listing two instances at deliberately UNREACHABLE local
+# addresses (127.0.0.1:1; nothing ever listens there). The background
+# pollers for both instances fail to reach their target, but that failure is
+# fail-open by design (see internal/collector/collector.go's background-
+# refresh Collect doc comment: the freshness gauge is ALWAYS sent, even
+# before any refresh has completed), so StatusTracker still counts at least
+# one emitted metric per instance per scrape and reports
+# demo_exporter_collector_success{collector="example",target="<name>"} 1,
+# on the very FIRST scrape, immediately after boot, with no need for the
+# unreachable backends to ever answer. Proving that is the whole point of
+# this check: an operator's exporter must not go dark just because one of
+# its watched machines is unreachable.
+#
+# Only runs for target_model=multi-instance; single/multi scaffolds have no
+# --config.file requirement and no per-instance "target" label at all.
+#
+# trap ... EXIT here mirrors the http-multi block above exactly: this is a
+# separate cell invocation (a fresh process, see the --all dispatch above),
+# so there is no earlier background process in THIS run to clobber.
+if [ "$target_model" = multi-instance ]; then
+  echo "== http-multi-instance: starting the scaffolded binary against two unreachable instances ($flavor/$forge) =="
+  bin="$work/bin/demo_exporter"
+  [ -x "$bin" ] || die "http-multi-instance: $bin missing or not executable after make build ($flavor/$forge)"
+
+  mi_config="$work/.golden-smoke-multi-instance-config.yml"
+  cat > "$mi_config" <<'EOF'
+instances:
+  - { name: alpha, address: http://127.0.0.1:1 }
+  - { name: beta,  address: http://127.0.0.1:1 }
+EOF
+
+  mi_port=9999
+  mi_log="$work/.golden-smoke-server-multi-instance.log"
+  "$bin" --config.file="$mi_config" --web.listen-address="127.0.0.1:$mi_port" --log.level=info >"$mi_log" 2>&1 &
+  server_pid=$!
+  trap 'kill "$server_pid" >/dev/null 2>&1 || true' EXIT
+
+  # Poll /healthz until the server actually accepts connections. Bounded
+  # (15 x 1s = 15s ceiling) so a broken startup fails fast instead of hanging
+  # this script forever, same discipline as the http-multi block above.
+  ready=0
+  i=0
+  while [ "$i" -lt 15 ]; do
+    if curl -fsS -o /dev/null "http://127.0.0.1:$mi_port/healthz" 2>/dev/null; then
+      ready=1
+      break
+    fi
+    kill -0 "$server_pid" 2>/dev/null || die "http-multi-instance: server process exited before becoming ready, see $mi_log ($flavor/$forge)"
+    i=$((i + 1))
+    sleep 1
+  done
+  [ "$ready" -eq 1 ] || die "http-multi-instance: server did not become ready on 127.0.0.1:$mi_port within 15s, see $mi_log ($flavor/$forge)"
+  echo "confirmed: server ready on 127.0.0.1:$mi_port with 2 unreachable instances configured ($flavor/$forge)"
+
+  mi_out="$work/.golden-smoke-metrics-multi-instance.txt"
+  if ! curl -fsS "http://127.0.0.1:$mi_port/metrics" -o "$mi_out"; then
+    die "http-multi-instance: curl /metrics FAILED ($flavor/$forge), see $mi_log"
+  fi
+  echo "confirmed: /metrics returned a response ($flavor/$forge)"
+
+  for inst in alpha beta; do
+    grep -q "demo_exporter_collector_success{collector=\"example\",target=\"$inst\"} 1" "$mi_out" \
+      || die "http-multi-instance: /metrics is missing demo_exporter_collector_success{collector=\"example\",target=\"$inst\"}=1 ($flavor/$forge)"
+  done
+  echo "confirmed: /metrics carries collector_success=1 for both target=\"alpha\" and target=\"beta\", despite both backends being unreachable ($flavor/$forge)"
+
+  echo "== http-multi-instance: promtool check metrics on /metrics ($flavor/$forge) =="
+  if command -v promtool >/dev/null 2>&1; then
+    echo "using native promtool"
+    if ! promtool check metrics < "$mi_out"; then
+      die "http-multi-instance: promtool check metrics FAILED for /metrics ($flavor/$forge)"
+    fi
+    echo "confirmed: promtool check metrics PASSED ($flavor/$forge)"
+  elif command -v docker >/dev/null 2>&1; then
+    echo "no native promtool; using docker run prom/prometheus:latest"
+    if ! docker run --rm -i --entrypoint promtool prom/prometheus:latest check metrics < "$mi_out"; then
+      die "http-multi-instance: promtool check metrics FAILED (via docker) for /metrics ($flavor/$forge)"
+    fi
+    echo "confirmed: promtool check metrics PASSED via docker ($flavor/$forge)"
+  elif command -v podman >/dev/null 2>&1; then
+    echo "no native promtool and no docker; using podman run prom/prometheus:latest"
+    if ! podman run --rm -i --entrypoint promtool prom/prometheus:latest check metrics < "$mi_out"; then
+      die "http-multi-instance: promtool check metrics FAILED (via podman) for /metrics ($flavor/$forge)"
+    fi
+    echo "confirmed: promtool check metrics PASSED via podman ($flavor/$forge)"
+  else
+    echo "SKIPPING promtool check metrics ($flavor/$forge): no native promtool and no docker/podman container engine found - install one to validate /metrics locally"
+  fi
+
+  kill "$server_pid" >/dev/null 2>&1 || true
+  wait "$server_pid" 2>/dev/null || true
+  trap - EXIT
+  echo "confirmed: http-multi-instance live check PASSED ($flavor/$forge)"
+fi
+
 # Second-collector check (multi-target epic): the whole point of widening the
 # probe seam is that a SECOND collector can be appended at the
 # // @@PROBE_FACTORIES@@ marker and still compile. This is the mechanical core
@@ -644,7 +925,10 @@ if [ "$target_model" = multi ]; then
   cat > "$second_factory_frag" <<'EOF'
 	factories = append(factories, probe.NamedFactory{
 		Name: "second",
-		New: func(ctx context.Context, target string, timeout time.Duration) (prometheus.Collector, error) {
+		New: func(ctx context.Context, target string, timeout time.Duration, hc *http.Client) (prometheus.Collector, error) {
+			if hc != nil {
+				return collector.NewSecondCollector(ctx, log, collector.NewClientFor(target, hc)), nil
+			}
 			return collector.NewSecondCollector(ctx, log, collector.NewClient(target, timeout)), nil
 		},
 	})
@@ -1052,13 +1336,18 @@ fi
 # Renaming first is safe in both directions: no @@VAR@@ sentinel NAME
 # contains "example".
 #
-# Skipped for target_model=multi (Task 2, multi-target epic): this sub-check
-# splices at the // @@CLIENT_INIT@@ / // @@COLLECTOR_REGISTRY@@ markers,
-# which a multi-target main.go doesn't carry at all (it only has its own
-# // @@PROBE_FACTORIES@@ marker) — /add-collector itself stays single-only
-# for this epic (documented follow-up for multi, see Task 3), so there is
-# nothing for this mechanical sub-check to exercise here.
-if [ "$flavor" = http ] && [ "$forge" = none ] && [ "$target_model" != multi ]; then
+# Skipped for target_model=multi and multi-instance (Task 2, multi-target
+# epic; multi-instance added in Task 12): this sub-check splices at the
+# // @@CLIENT_INIT@@ / // @@COLLECTOR_REGISTRY@@ markers, which neither a
+# multi-target main.go (it only has its own // @@PROBE_FACTORIES@@ marker)
+# nor a multi-instance main.go (it only has its own
+# // @@INSTANCE_FACTORIES@@ marker) carries at all. /add-collector itself
+# stays single-only for this epic (documented follow-up for multi, see Task
+# 3; multi-instance's own /add-collector branch, Task 10, appends at
+# // @@INSTANCE_FACTORIES@@ instead, a different splice this mechanical
+# sub-check does not exercise), so there is nothing for this mechanical
+# sub-check to exercise on either model here.
+if [ "$flavor" = http ] && [ "$forge" = none ] && [ "$target_model" = single ]; then
   echo "== mechanical /add-collector sub-check ($flavor/$forge): scaffolded templates still support adding a 2nd collector =="
   addc_tmpl="$assets/code/http/collector.go.tmpl"
   addc_client_frag="$assets/code/http/wiring/client_init.frag"

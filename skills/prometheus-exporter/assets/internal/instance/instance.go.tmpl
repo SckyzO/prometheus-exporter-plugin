@@ -1,0 +1,47 @@
+// Package instance implements the multi-instance target model: one process
+// watches a fixed list of machines declared in --config.file, each refreshed by
+// its own background poller, all served through a single /metrics that
+// Prometheus scrapes as one target.
+//
+// It mirrors internal/probe's NamedFactory pattern but carries a different
+// lifecycle: a /probe factory builds a synchronous collector per request, while
+// an instance factory builds a BACKGROUND collector (poller plus cache) once at
+// boot, which must be Start()-ed and waited on via Done() at shutdown. Those
+// lifecycles do not fit one signature, so the two seams stay separate. See the
+// design doc's "Architecture" section.
+package instance
+
+import (
+	"context"
+
+	"github.com/prometheus/client_golang/prometheus"
+	promconfig "github.com/prometheus/common/config"
+)
+
+// BackgroundCollector is the lifecycle a multi-instance collector must satisfy:
+// a prometheus.Collector a background goroutine refreshes. Start launches that
+// goroutine bound to ctx; Done closes when it has fully exited, so main can wait
+// for it during shutdown. The background collector variant (internal/collector's
+// ExampleCollector, code/http/variants/) already satisfies this structurally.
+type BackgroundCollector interface {
+	prometheus.Collector
+	Start(ctx context.Context)
+	Done() <-chan struct{}
+}
+
+// Factory builds one instance-bound background collector. New takes the
+// instance's address and its resolved module client config (nil meaning the
+// default transport) and returns the collector, or an error when the transport
+// cannot be built (an unreadable CA or secret file), which fails the boot.
+// Enabled is the collector's --[no-]collector.<name> toggle, checked once before
+// the instance loop.
+//
+// The multi-instance main appends one Factory per collector at its
+// factory-injection marker, and /add-collector appends another for each
+// collector added later. There is no per-request routing as in /probe, only a
+// boot-time fan-out over instances, so this is a plain slice, not a Handler.
+type Factory struct {
+	Name    string
+	Enabled *bool
+	New     func(addr string, hcfg *promconfig.HTTPClientConfig) (BackgroundCollector, error)
+}

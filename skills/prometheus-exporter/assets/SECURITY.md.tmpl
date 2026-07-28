@@ -72,6 +72,14 @@ so treat that file as a secret.
   `http_client_config:` block is commented out, so it holds no credentials as
   shipped.
 
+Credentials declared in `--config.file`, whether in the top-level
+`http_client_config:` or in a `modules:` entry, are read once at startup.
+There is no reload on SIGHUP, so rotating a credential means restarting the
+process. A module is selected per request (`?module=` on a multi-target
+build's `/probe`) or once at boot (an instance's `module:` key on a
+multi-instance build); either way it is never a metric label and never
+reaches any series this exporter exposes.
+
 See [docs/configuration.md](docs/configuration.md) for the file's format and
 the precedence rules.
 
@@ -91,6 +99,20 @@ considerations apply here:
   default and is what lets `/probe` work out of the box with Prometheus
   service discovery: a static allowlist fights dynamic SD, which is exactly
   why the ecosystem defaults to allow-any rather than the other way round.
+- **An outbound probe carries the credentials of the module it selected.**
+  Once `--config.file` declares a `modules:` section with
+  `http_client_config:` entries, the connection a probe opens presents
+  whatever that module declares: a basic-auth password, a bearer token, a
+  client certificate. The module is chosen by the request itself
+  (`&module=`), falling back to a `default` module and then to the top-level
+  `http_client_config:`. So a caller who reaches an unrestricted `/probe`
+  picks both the host this exporter connects to **and** which credentials it
+  presents there. That makes an unrestricted `/probe` a
+  credential-exfiltration primitive, not only an SSRF one, and the more
+  modules one exporter concentrates (prod, staging, one per tenant), the
+  more there is to pick from. `--probe.target-allowlist` is what bounds
+  which hosts can ever receive them: on a build that carries credentials,
+  treat it as containment rather than hygiene.
 - **Harden with `--probe.target-allowlist <host>` (repeatable).** When set,
   a target's host must match an entry or the probe returns `403`. Matching is
   **exact-string, case- and trailing-dot-sensitive** against `target=`'s
@@ -102,6 +124,14 @@ considerations apply here:
   can make it issue requests to arbitrary HTTP/HTTPS hosts. It never refuses
   to start over this (same posture as the exposed-and-unauthenticated
   warning above).
+- **Two module-related refusals, both `400`**, documented in
+  [docs/configuration.md](docs/configuration.md) under "Selecting a module":
+  a request naming an unknown module is refused rather than silently probed
+  with everything, and a request that resolves no credentials at all against
+  a configuration that declares some is refused rather than probed in the
+  clear. The second one is what keeps a forgotten `&module=` from quietly
+  downgrading an authenticated probe into an unauthenticated one that still
+  answers `200`.
 - **Isolate the exporter's network regardless of the allowlist.** As with any
   allow-any-by-default prober, the real hardening boundary is network
   placement: run `/probe` somewhere that cannot reach anything you don't

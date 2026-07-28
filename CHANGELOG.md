@@ -5,7 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.0] - 2026-07-28
+
+### Added
+
+- **A third target model, `multi-instance`** (`--target-model multi-instance`,
+  http flavor only): one process watches a fixed list of machines declared in
+  `--config.file`, each polled in the background on its own schedule and
+  re-served from a cache on every scrape, so the scrape itself never waits on
+  a live fetch. `--config.file` is required for this target model (the one
+  place multi-instance departs from the "absent file changes nothing" rule);
+  single-target and multi-target builds are unchanged.
+- **`modules:` and `instances:` configuration schema.** `modules:` names
+  reusable `http_client_config:` bundles; `instances:` lists the machines a
+  multi-instance exporter watches, each with a `name`, an `address`, an
+  optional `module`, and optional extra `labels`. A plain v0.4.0 config file
+  (no `modules:`/`instances:`) keeps working unchanged.
+- **`scaffold.sh --instance-label`** (default `target`): the identifying
+  label a multi-instance scaffold applies to every series of every watched
+  instance, fixed at scaffold time rather than a runtime flag.
+- **Per-target credentials for the `multi` target model.** A `/probe` request
+  selects credentials by name with `?module=`, so one multi-target exporter
+  can probe targets that authenticate differently. Credentials resolve in a
+  fixed order (the unique selected module carrying them, then a `default`
+  module, then the top-level `http_client_config:`) and never combine:
+  selecting two credential-bearing modules returns 400, and so does a probe
+  that resolves no credentials against a configuration that declares some.
+  The same mechanism expresses both ecosystem conventions, a module as a
+  complete bundle or credentials as an independent axis, so the choice lives
+  in the configuration file rather than in code.
+
+### Changed
+
+- **`probe.Factory` gains a fourth `hc *http.Client` parameter.** Affects
+  repositories scaffolded with `--target-model multi`; `/add-collector`
+  detects the older shape and migrates it, diff first. No flag is renamed and
+  no URL changes. Per-collector HTTP clients collapse into one client per
+  module, built once at boot.
+
+### Deprecated
+
+- **`--probe.module`.** Superseded by the configuration file's `modules:`
+  section, which can also carry credentials. Both at once is refused at boot.
+  Removal no earlier than v0.6.0.
 
 ## [0.4.0] - 2026-07-22
 

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"syscall"
 	"time"
 
@@ -95,7 +96,7 @@ func main() {
 	// selected per request with /probe?target=…&module=…. Repeatable.
 	probeModules := kingpin.Flag(
 		"probe.module",
-		"Declare a module: <name>:<collector>[,<collector>...] (repeatable).",
+		"Deprecated, prefer the config file's \"modules:\" section. Declare a module: <name>:<collector>[,<collector>...] (repeatable).",
 	).Strings()
 
 	kingpin.Version(version.Print("@@EXPORTER_NAME@@"))
@@ -116,6 +117,11 @@ func main() {
 		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
 		os.Exit(1) //nolint:gocritic // stop() called explicitly above
 	}
+	if len(cfg.Instances) > 0 {
+		fmt.Fprintln(os.Stderr, "config file: \"instances:\" is only used by the multi-instance target model; this is a multi-target (/probe) exporter")
+		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+		os.Exit(1) //nolint:gocritic // stop() called explicitly above
+	}
 	// The logger does not exist yet (it is built from flags, below), so a
 	// failure here goes to stderr.
 	kingpin.MustParse(kingpin.CommandLine.Parse(
@@ -129,7 +135,7 @@ func main() {
 	}
 
 	warnIfExposedAndUnauthenticated(log, *toolkitFlags.WebListenAddresses, *toolkitFlags.WebConfigFile)
-	warnIfProbeUnrestricted(log, *probeTargetAllowlist)
+	warnIfProbeUnrestricted(log, *probeTargetAllowlist, cfg)
 
 	// factories holds one entry per probed collector, in declaration order.
 	// The // @@PROBE_FACTORIES@@ marker below is where scaffold.sh injects the
@@ -139,19 +145,77 @@ func main() {
 
 	// @@PROBE_FACTORIES@@
 
+	// Modules come from exactly one source. --probe.module is the deprecated
+	// flag form, which can only express collector subsets; the configuration
+	// file's modules: section can also carry per-module authentication. Both at
+	// once would give one module name two definitions, so it is refused rather
+	// than resolved by a precedence nobody documented.
+	if len(cfg.Modules) > 0 && len(*probeModules) > 0 {
+		log.Error("--probe.module and a \"modules:\" section in the config file cannot both be used; --probe.module is deprecated, prefer the configuration file")
+		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+		os.Exit(1) //nolint:gocritic // stop() called explicitly above
+	}
+
 	modules, err := probe.ParseModules(*probeModules)
 	if err != nil {
 		log.Error("Invalid --probe.module", "err", err)
 		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
 		os.Exit(1) //nolint:gocritic // stop() called explicitly above
 	}
-	if err := probe.ValidateModules(factories, modules); err != nil {
-		log.Error("Invalid --probe.module", "err", err)
+
+	resolved, err := cfg.ResolveModules()
+	if err != nil {
+		log.Error("Invalid \"modules:\" section", "err", err)
 		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
 		os.Exit(1) //nolint:gocritic // stop() called explicitly above
 	}
 
-	probeHandler := probe.NewHandler(log, factories, *probeTargetAllowlist, *probeTimeout, *probeTimeoutOffset, modules)
+	// One client per credential-bearing module, built ONCE here rather than per
+	// probe or per collector: NewClientFromConfig mints a fresh transport on
+	// every call and caches nothing. An unreadable CA or credentials file is a
+	// configuration fault, so it stops the exporter here rather than surfacing
+	// on the first probe. Sorted so a file with two broken modules always fails
+	// on the same one.
+	moduleNames := make([]string, 0, len(resolved))
+	for name := range resolved {
+		moduleNames = append(moduleNames, name)
+	}
+	sort.Strings(moduleNames)
+	for _, name := range moduleNames {
+		rm := resolved[name]
+		m := probe.Module{Collectors: rm.Collectors}
+		if rm.ClientConfig != nil {
+			hc, cerr := collector.NewHTTPClient(*rm.ClientConfig, *probeTimeout)
+			if cerr != nil {
+				log.Error("Failed to build HTTP client for module", "module", name, "err", cerr)
+				stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+				os.Exit(1) //nolint:gocritic // stop() called explicitly above
+			}
+			m.Client = hc
+		}
+		modules[name] = m
+	}
+
+	// The top-level http_client_config, which the configuration layer accepts
+	// only when no modules: section exists. It is what a probe falls back to,
+	// and it is what keeps a pre-modules configuration behaving identically.
+	var defaultClient *http.Client
+	if cfg.HTTPClientConfig != nil {
+		defaultClient, err = collector.NewHTTPClient(*cfg.HTTPClientConfig, *probeTimeout)
+		if err != nil {
+			log.Error("Failed to build HTTP client from http_client_config", "err", err)
+			stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+			os.Exit(1) //nolint:gocritic // stop() called explicitly above
+		}
+	}
+
+	if err := probe.ValidateModules(factories, modules); err != nil {
+		log.Error("Invalid module definition", "err", err)
+		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+		os.Exit(1) //nolint:gocritic // stop() called explicitly above
+	}
+
+	probeHandler := probe.NewHandler(log, factories, *probeTargetAllowlist, *probeTimeout, *probeTimeoutOffset, modules, defaultClient)
 
 	// /metrics reports on the EXPORTER ITSELF (build info, Go runtime/process,
 	// aggregate request timing), scraped independently of any probed target,
@@ -210,9 +274,29 @@ func main() {
 // no allowlist: it then accepts any http/https target, so anyone who can reach
 // this exporter can make it issue requests to arbitrary hosts. Never blocks
 // startup (same posture as warnIfExposedAndUnauthenticated).
-func warnIfProbeUnrestricted(log *logger.Logger, allowlist []string) {
-	if len(allowlist) == 0 {
-		log.Warn("/probe accepts any target: anyone who can reach this exporter can make it " +
-			"issue HTTP requests to arbitrary hosts; set --probe.target-allowlist to restrict, and see SECURITY.md")
+//
+// A second warning follows when the configuration also declares credentials.
+// An unrestricted /probe then hands the caller both the destination and the
+// credentials presented there, which is a wider exposure than SSRF alone. It
+// stays a warning: allow-any is the ecosystem's default and changing it under
+// a running deployment would be the breaking change, not the fix.
+func warnIfProbeUnrestricted(log *logger.Logger, allowlist []string, cfg *config.Config) {
+	if len(allowlist) > 0 {
+		return
+	}
+	log.Warn("/probe accepts any target: anyone who can reach this exporter can make it " +
+		"issue HTTP requests to arbitrary hosts; set --probe.target-allowlist to restrict, and see SECURITY.md")
+
+	credentialed := cfg.HTTPClientConfig != nil
+	for _, m := range cfg.Modules {
+		if m.HTTPClientConfig != nil {
+			credentialed = true
+			break
+		}
+	}
+	if credentialed {
+		log.Warn("/probe is unrestricted and this exporter holds credentials: an outbound probe presents " +
+			"the credentials of the module it resolved to whatever target the caller names; " +
+			"--probe.target-allowlist is what bounds which hosts can receive them, see SECURITY.md")
 	}
 }

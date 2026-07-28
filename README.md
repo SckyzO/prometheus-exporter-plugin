@@ -93,7 +93,7 @@ instead of whatever the marketplace currently points to, add the
 marketplace via its full git URL with the tag appended as a `#` ref:
 
 ```
-/plugin marketplace add https://github.com/SckyzO/prometheus-exporter-plugin.git#v0.4.0
+/plugin marketplace add https://github.com/SckyzO/prometheus-exporter-plugin.git#v0.5.0
 ```
 
 ### Sharing with a team

@@ -36,58 +36,112 @@ v0.1 flavors.
 Detect the target model from what is on disk. Never ask what you can check:
 
 ```sh
-[ -d internal/probe ] && echo multi || echo single
+if [ -d internal/instance ]; then echo multi-instance
+elif [ -d internal/probe ]; then echo multi
+else echo single; fi
 ```
 
-For a **multi-target** repository, check the seam's shape before touching
-anything:
+Three models now exist, and the two multi ones ship different seams:
+`multi` (`internal/probe/`) and `multi-instance` (`internal/instance/`) are
+not interchangeable. If detection printed `multi-instance`, skip past the
+`multi`-only seam-shape check and `v0.3.0` migration immediately below (both
+are specific to `internal/probe`'s `NamedFactory` and do not apply to
+`internal/instance`) straight to "Multi-instance wiring" near the end of
+this section.
+
+For a **multi** repository, check the seam's shape before touching
+anything. Three shapes exist:
 
 ```sh
-grep -q 'factories \[\]NamedFactory' internal/probe/probe.go && echo current || echo v0.3.0
+if grep -q 'hc \*http\.Client' internal/probe/probe.go; then echo modules
+elif grep -q 'factories \[\]NamedFactory' internal/probe/probe.go; then echo pre-modules
+else echo v0.3.0; fi
 ```
+
+- **`modules`**: current. Proceed directly to the append below.
+- **`pre-modules`**: the seam holds N collectors but its `Factory` takes no
+  client, so every collector is probed with the one global
+  `http_client_config:`. Migrate with the `pre-modules` steps below.
+- **`v0.3.0`**: the seam holds exactly one `factory Factory` field and the
+  `NamedFactory` type does not exist at all. Run the `v0.3.0` migration
+  first: it runs its own steps and then chains straight into the
+  `pre-modules` migration's wiring steps, and together they land the
+  repository on `modules`.
+
+Either migration reaches the same `cfg`-reading wiring block, so run the
+configuration-layer check immediately below before either of them, and
+before rewriting anything.
+
+### Before either migration: does this repository have the configuration layer?
+
+Both migrations below end in the same wiring sequence, and that sequence
+reads `cfg`: `cfg.Modules`, `cfg.ResolveModules()`, `cfg.HTTPClientConfig`.
+That variable exists only in a repository scaffolded with the `--config.file`
+configuration layer, which shipped in v0.4.0. A `v0.3.0` repository has no
+`cfg` and no `internal/config/` package at all. Check this **before touching
+a single file**, on the `v0.3.0` path and the `pre-modules` path alike:
+
+```sh
+grep -q 'cfg, err := config.Load(' cmd/*/main.go && echo has-config || echo pre-config-layer
+```
+
+**`pre-config-layer`: refuse, and do not rewrite anything.** Say plainly
+that this repository predates the `--config.file` configuration layer, and
+that per-module credentials are built on top of it: the wiring these
+migrations install reads `cfg.Modules`, `cfg.ResolveModules()` and
+`cfg.HTTPClientConfig`, none of which a repository without
+`internal/config/` declares. Adding that layer is a second migration in its
+own right, with its own design (a `--config.file` flag, an `internal/config`
+package, `config.Load`/`cfg.Validate`, the restructure that feeds the file's
+values back through the flag parser, and the module dependencies that come
+with it), and **this command will not attempt that upgrade for them**:
+half-applying it would leave `cmd/*/main.go` reading a package the
+repository does not have, which is worse than the shape it started from.
+Hand them the diff the migration would have written, so they can see what
+they are being asked to reach, and stop there. Do not add the new collector
+either: the seam still cannot hold it.
+
+**`has-config`**: continue with whichever migration the shape detection
+selected.
 
 **If the shape is `v0.3.0`** (the seam holds exactly one `factory Factory`
 field; the `NamedFactory` type does not exist in the file at all), this
 repository predates the N-collector seam and cannot hold a second collector
-yet. Migrate it first, then proceed. Exactly three files are in scope:
+yet. Migrate it first, then proceed.
 
-- `internal/probe/probe.go` — rewrite wholesale from
-  `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/assets/internal/probe/probe.go.tmpl`,
-  substituting the repository's real `@@NAMESPACE@@` and `@@MODULE_PATH@@`.
-  This file is generic, shipped plumbing: the scaffold writes it verbatim and
-  a user has no reason to have hand-edited it.
-- `internal/probe/probe_test.go` — same treatment, from
-  `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/assets/internal/probe/probe_test.go.tmpl`
-  (substituting only `@@MODULE_PATH@@`; this file has no `@@NAMESPACE@@`).
-  Skipping it leaves a test still calling the old 4-argument
-  `NewHandler(log, factory, allowlist, maxTimeout)`, which no longer compiles
-  against a migrated `probe.go` — `make test` is where that surfaces.
-- `cmd/*/main.go`'s probe-wiring block only, **not the whole file**: unlike
-  `probe.go`, this file already carries the repository's real substituted
-  `@@NAMESPACE@@`/`@@EXPORTER_NAME@@`/`@@DEFAULT_PORT@@` (and possibly other
-  hand-added flags), so only the probe-specific block changes shape, matching
-  `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/assets/mains/multi/main.go.tmpl`:
-  - the single `exampleTimeout := kingpin.Flag("collector.example.timeout",
-    ...)` flag (or whatever it was renamed to) becomes three flags:
-    `probeTimeout` (`--probe.timeout`), `probeTimeoutOffset`
-    (`--probe.timeout-offset`), and `probeModules` (`--probe.module`,
-    repeatable) — copy their `Default`/help text from the template verbatim;
-  - `var factories []probe.NamedFactory` is declared right before the
-    `// @@PROBE_FACTORIES@@` marker;
-  - after the marker, `probe.ParseModules`/`probe.ValidateModules` run
-    (both fail fast to `os.Exit(1)` on error, exactly like the template)
-    before the handler is built;
-  - `probeHandler := probe.NewHandler(log, factory, *probeTargetAllowlist,
-    *exampleTimeout)` becomes `probe.NewHandler(log, factories,
-    *probeTargetAllowlist, *probeTimeout, *probeTimeoutOffset, modules)`.
+This migration shares its file rewrites with the `pre-modules` migration
+below: `internal/probe/probe.go`, `internal/probe/probe_test.go`,
+`internal/config/config.go`, and `internal/config/config_test.go` all get
+the same wholesale rewrite described there, for the same reasons. What is
+unique to a `v0.3.0` repository is `cmd/*/main.go`'s probe-wiring block:
+unlike the files above, this one already carries the repository's real
+substituted `@@NAMESPACE@@`/`@@EXPORTER_NAME@@`/`@@DEFAULT_PORT@@` (and
+possibly other hand-added flags), so only the probe-specific block changes
+shape, matching
+`${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/assets/mains/multi/main.go.tmpl`:
+
+- the single `exampleTimeout := kingpin.Flag("collector.example.timeout",
+  ...)` flag (or whatever it was renamed to) becomes three flags:
+  `probeTimeout` (`--probe.timeout`), `probeTimeoutOffset`
+  (`--probe.timeout-offset`), and `probeModules` (`--probe.module`,
+  repeatable); copy their `Default`/help text from the template verbatim;
+- `var factories []probe.NamedFactory` is declared right before the
+  `// @@PROBE_FACTORIES@@` marker;
+- right after the marker, delete the old `probeHandler :=
+  probe.NewHandler(log, factory, *probeTargetAllowlist, *exampleTimeout)`
+  call entirely: a `v0.3.0` repository has no module concept yet, so there is
+  nothing in it to adapt. Continue straight into the `pre-modules`
+  migration's wiring sequence below, which builds `modules` from scratch and
+  ends in the same seven-argument `probe.NewHandler` call; do not stop until
+  that sequence is in place.
 
 **Do not let the existing collector disappear.** Right after the marker, the
 pre-migration file has a `factory := func(target string, timeout
 time.Duration) prometheus.Collector { return
-collector.New<ExistingName>Collector(...) }` block — that is the
+collector.New<ExistingName>Collector(...) }` block: that is the
 repository's real, already-running collector, not scaffold boilerplate.
 Convert it into the first `factories = append(...)` call (same shape as the
-one below), keyed on whatever that collector is actually named — read the
+one below), keyed on whatever that collector is actually named: read the
 name from its registration/file, never assume `"example"`. Only then append
 the new collector's own block. Deleting it instead of converting it would
 still compile, and would silently stop serving that collector's metrics on
@@ -99,7 +153,7 @@ The pre-existing collector's own constructor may still predate the
 `NewExampleCollector(ctx context.Context, log *logger.Logger, client
 *Client)`): a v0.3.0 scaffold's starter collector was built before that
 signature existed. Match the call to what that constructor **actually**
-declares — passing `ctx` to a constructor that never declared it is a
+declares: passing `ctx` to a constructor that never declared it is a
 compile error, not a style choice. Leave that one call exactly as it already
 was if its constructor has no `ctx` parameter: it keeps compiling and
 behaving exactly as before, it simply does not gain the new per-probe
@@ -110,54 +164,124 @@ templates, which do declare `ctx`, and gets that deadline for free.
    `--collector.example.timeout` to `--probe.timeout` (and adds
    `--probe.timeout-offset`/`--probe.module`), a breaking flag change for
    anyone already running that exporter. Say so plainly.
-2. If the user declines, stop and hand them the diff. Do not add the new
-   collector to a seam that cannot hold it.
-3. If the user accepts, apply it, then proceed.
+2. **Ask once, for both halves, and be explicit that this is one ask.** A
+   `v0.3.0` repository goes through this section's steps *and* the
+   `pre-modules` migration's steps below, which carries a consent gate of
+   its own. On this path the two are **one migration presented in two
+   parts**, not two independent decisions: show the combined diff (this
+   section's rewrites plus the wiring block below), state the combined blast
+   radius (the flag rename above, and the wiring change described at the
+   `pre-modules` gate), and take a single yes or no. Say which files each
+   part touches, so the user can see they are being asked about the whole
+   thing exactly once.
+3. If the user declines, stop and hand them the diff. Do not add the new
+   collector to a seam that cannot hold it, and do not apply just the first
+   half: a repository stopped between the two parts compiles against neither
+   seam.
+4. If the user accepts, apply this section's steps, then continue
+   immediately into the `pre-modules` migration below and apply its steps
+   too, in the same pass, **without asking again**: that gate was already
+   answered by the combined ask in step 2. A `v0.3.0` repository is not
+   fully migrated until both are done. (A repository detected as
+   `pre-modules` in the first place never passes through here, so its own
+   gate below is the only ask it ever sees.)
 
-**If the shape is `current`**, proceed directly.
+**If the shape is `modules`**, proceed directly.
 
-Then materialize the collector exactly as for single-target (the five-piece
-shape, the test triad, the `docs/metrics.md` entry, the proposed business
-alert), and append **one** `probe.NamedFactory` block at the
-`// @@PROBE_FACTORIES@@` marker in `cmd/*/main.go`.
+**If the shape is `pre-modules`** (or you just finished the `v0.3.0` steps
+above and are continuing straight into this one), the repository has the
+N-collector seam but not per-module credentials: every collector is still
+probed with the one global `http_client_config:`. Four files are in scope:
 
-First, run the same configuration-layer check the single-target http variant
-uses in step 5 below:
-
-```sh
-grep -q 'cfg, err := config.Load(' cmd/*/main.go && echo has-config || echo pre-config-layer
-```
-
-**`pre-config-layer`**: this repository predates `--config.file`, so there is
-no `cfg` variable in scope at `@@PROBE_FACTORIES@@` either. Paste only the
-plain factory below, with no shared client:
+- `internal/probe/probe.go` and `internal/probe/probe_test.go`: rewrite
+  wholesale from
+  `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/assets/internal/probe/probe.go.tmpl`
+  and `probe_test.go.tmpl`, substituting the repository's real
+  `@@NAMESPACE@@` and `@@MODULE_PATH@@` (`probe_test.go.tmpl` has no
+  `@@NAMESPACE@@`). Generic shipped plumbing; a user has no reason to have
+  hand-edited either. Skipping `probe_test.go` leaves a test still calling an
+  older `NewHandler` signature, which no longer compiles once `probe.go` is
+  migrated. `make test` is where that surfaces.
+- `internal/config/config.go` and `internal/config/config_test.go`: rewrite
+  wholesale from
+  `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/assets/internal/config/config.go.tmpl`
+  and `config_test.go.tmpl`, with no substitution at all: neither file names
+  the repository's namespace or module path (`config_test.go.tmpl` is an
+  in-package test with no cross-package import to substitute). Skipping this
+  pair is what leaves a migrated `main.go` calling `cfg.ResolveModules()`, a
+  method the pre-migration `config.go` does not declare at all: a compile
+  error at step 8, after the consent gate below has already rewritten the
+  other files.
+- `cmd/*/main.go`'s probe-wiring block only, **not the whole file**, matching
+  `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/assets/mains/multi/main.go.tmpl`.
+  `"sort"` joins the import block. Every existing `factories = append(...)`
+  closure gains the fourth parameter `hc *http.Client` and, in its body, the
+  `if hc != nil { ... NewClientFor(target, hc) ... }` branch (see the append
+  block below for the exact shape); every per-collector `var <name>HTTP
+  *http.Client` build block is **deleted**, since main builds the clients
+  now. The block right after the `// @@PROBE_FACTORIES@@` marker (in a
+  `pre-modules` repository this is the existing `probe.ParseModules`/
+  `probe.ValidateModules`/`probe.NewHandler` sequence; in a repository that
+  just finished the `v0.3.0` steps above, it is empty) becomes, in full:
 
 ```go
-	factories = append(factories, probe.NamedFactory{
-		Name: "<name>",
-		New: func(ctx context.Context, target string, timeout time.Duration) (prometheus.Collector, error) {
-			return collector.New<Name>Collector(ctx, log, collector.NewClient(target, timeout)), nil
-		},
-	})
-```
+	// Modules come from exactly one source. --probe.module is the deprecated
+	// flag form, which can only express collector subsets; the configuration
+	// file's modules: section can also carry per-module authentication. Both at
+	// once would give one module name two definitions, so it is refused rather
+	// than resolved by a precedence nobody documented.
+	if len(cfg.Modules) > 0 && len(*probeModules) > 0 {
+		log.Error("--probe.module and a \"modules:\" section in the config file cannot both be used; --probe.module is deprecated, prefer the configuration file")
+		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+		os.Exit(1) //nolint:gocritic // stop() called explicitly above
+	}
 
-**`has-config`**: pasting only the block above would leave this one collector
-probing unauthenticated even when the operator has an `http_client_config:`
-section, an asymmetry with the scaffolded `example` collector, which already
-honors it. Build this collector's own shared client once, before the
-`factories = append(...)` call, named after the collector being added rather
-than reused from `example`'s: one shared client per collector stays bounded
-and keeps collectors independent from each other; it is only a client built
-per PROBE (per request) that connection reuse rules out.
+	modules, err := probe.ParseModules(*probeModules)
+	if err != nil {
+		log.Error("Invalid --probe.module", "err", err)
+		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+		os.Exit(1) //nolint:gocritic // stop() called explicitly above
+	}
 
-```go
-	// Built once, before the closure: see NewHTTPClient on why building a
-	// client per probe would defeat connection reuse. An unreadable CA or
-	// credentials file is a configuration fault, so it stops the exporter
-	// here rather than surfacing on the first probe.
-	var <name>HTTP *http.Client
+	resolved, err := cfg.ResolveModules()
+	if err != nil {
+		log.Error("Invalid \"modules:\" section", "err", err)
+		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+		os.Exit(1) //nolint:gocritic // stop() called explicitly above
+	}
+
+	// One client per credential-bearing module, built ONCE here rather than per
+	// probe or per collector: NewClientFromConfig mints a fresh transport on
+	// every call and caches nothing. An unreadable CA or credentials file is a
+	// configuration fault, so it stops the exporter here rather than surfacing
+	// on the first probe. Sorted so a file with two broken modules always fails
+	// on the same one.
+	moduleNames := make([]string, 0, len(resolved))
+	for name := range resolved {
+		moduleNames = append(moduleNames, name)
+	}
+	sort.Strings(moduleNames)
+	for _, name := range moduleNames {
+		rm := resolved[name]
+		m := probe.Module{Collectors: rm.Collectors}
+		if rm.ClientConfig != nil {
+			hc, cerr := collector.NewHTTPClient(*rm.ClientConfig, *probeTimeout)
+			if cerr != nil {
+				log.Error("Failed to build HTTP client for module", "module", name, "err", cerr)
+				stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+				os.Exit(1) //nolint:gocritic // stop() called explicitly above
+			}
+			m.Client = hc
+		}
+		modules[name] = m
+	}
+
+	// The top-level http_client_config, which the configuration layer accepts
+	// only when no modules: section exists. It is what a probe falls back to,
+	// and it is what keeps a pre-modules configuration behaving identically.
+	var defaultClient *http.Client
 	if cfg.HTTPClientConfig != nil {
-		<name>HTTP, err = collector.NewHTTPClient(*cfg.HTTPClientConfig, *probeTimeout)
+		defaultClient, err = collector.NewHTTPClient(*cfg.HTTPClientConfig, *probeTimeout)
 		if err != nil {
 			log.Error("Failed to build HTTP client from http_client_config", "err", err)
 			stop()     // release the signal handler explicitly before bypassing defer via os.Exit
@@ -165,28 +289,60 @@ per PROBE (per request) that connection reuse rules out.
 		}
 	}
 
+	if err := probe.ValidateModules(factories, modules); err != nil {
+		log.Error("Invalid module definition", "err", err)
+		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+		os.Exit(1) //nolint:gocritic // stop() called explicitly above
+	}
+
+	probeHandler := probe.NewHandler(log, factories, *probeTargetAllowlist, *probeTimeout, *probeTimeoutOffset, modules, defaultClient)
+```
+
+**Show the diff before writing any of it.** Unlike the `v0.3.0` migration,
+this one renames no flag and changes no URL: every existing
+`/probe?target=...` and every existing `--probe.module` answers identically
+afterwards. The only observable change is that N identical HTTP clients
+become one, so the exporter opens one connection pool where it opened N. Say
+that plainly, then apply it only if the user accepts. If they decline, stop
+and hand them the diff; do not append a collector to a seam whose shape you
+were not allowed to fix.
+
+**Arriving here from the `v0.3.0` section above? This gate is already
+answered.** That section's step 2 asks once, for both halves, precisely so a
+`v0.3.0` repository is never stopped half-migrated. State what you are
+applying and continue; do not ask a second time. The gate above is the only
+ask for a repository that was detected as `pre-modules` in the first place.
+
+Then materialize the collector exactly as for single-target (the five-piece
+shape, the test triad, the `docs/metrics.md` entry, the proposed business
+alert), and append **one** `probe.NamedFactory` block at the
+`// @@PROBE_FACTORIES@@` marker in `cmd/*/main.go`:
+
+```go
 	factories = append(factories, probe.NamedFactory{
 		Name: "<name>",
-		New: func(ctx context.Context, target string, timeout time.Duration) (prometheus.Collector, error) {
-			if <name>HTTP != nil {
-				return collector.New<Name>Collector(ctx, log, collector.NewClientFor(target, <name>HTTP)), nil
+		New: func(ctx context.Context, target string, timeout time.Duration, hc *http.Client) (prometheus.Collector, error) {
+			if hc != nil {
+				return collector.New<Name>Collector(ctx, log, collector.NewClientFor(target, hc)), nil
 			}
 			return collector.New<Name>Collector(ctx, log, collector.NewClient(target, timeout)), nil
 		},
 	})
 ```
 
-Unlike the single-target http variant's `@@CLIENT_BUILD@@` step, nothing here
-needs deferred assignment: `cfg`, `log`, `stop`, and `err` are all already in
-scope at `@@PROBE_FACTORIES@@`, which sits AFTER `kingpin.Parse()` and after
-the logger is built, so `<name>HTTP` can be built directly, right where it's
-declared.
+Nothing else is needed. `hc` is the client the handler resolved from the
+module the request named, built once at boot in `main` and shared by every
+collector, so this collector honours whatever authentication the operator
+configured without building a client of its own. Earlier versions of this
+command pasted a per-collector client-build block here; that is what the
+current seam exists to remove.
 
 Append, never replace: the marker stays in place for the next collector.
 
-**Never touch modules.** `--probe.module` values are runtime flags that
-reference collector names. Adding a collector cannot invalidate an existing
-module, and composing scrape profiles is an operator decision, not yours.
+**Never touch modules.** `--probe.module` values and the config file's
+`modules:` section both reference collector names. Adding a collector cannot
+invalidate an existing module, and composing scrape profiles is an operator
+decision, not yours.
 
 **Refuse `--variant background` on a multi-target scaffold.** A background
 collector refreshes a cache from a goroutine on a fixed interval. In multi,
@@ -194,6 +350,45 @@ collectors are built fresh per request and discarded when the probe returns:
 a goroutine per probe is an unbounded leak, and the cache it fills would
 never be read twice. Say exactly that, and offer the standard variant
 instead.
+
+**On a multi-instance scaffold, the mirror rule holds: refuse the SYNCHRONOUS
+variant.** Every collector there is a background poller by construction (a
+scrape serves N instances through one /metrics and must never block on a dead
+machine). A synchronous collector would reintroduce exactly that coupling. Say
+so and use the background variant.
+
+**Multi-instance wiring.** Read the collector's identity (step 2) and
+materialize the BACKGROUND collector file and its test (step 3-4, background
+templates) exactly as for a single-target background collector. Then, at the
+`// @@INSTANCE_FACTORIES@@` marker in `cmd/*/main.go`, append (after the last
+existing `factories = append(...)` block, never replacing the marker):
+
+```go
+	<name>Timeout := kingpin.Flag("collector.<name>.timeout", "Per-request timeout for the <name> collector.").Default("5s").Duration()
+	<name>Interval := kingpin.Flag("collector.<name>.interval", "Background refresh interval for the <name> collector.").Default("5m").Duration()
+	<name>Enabled := kingpin.Flag("collector.<name>", "Enable the <name> collector.").Default("true").Bool()
+	factories = append(factories, instance.Factory{
+		Name:    "<name>",
+		Enabled: <name>Enabled,
+		New: func(addr string, hcfg *promconfig.HTTPClientConfig) (instance.BackgroundCollector, error) {
+			var client *collector.Client
+			if hcfg != nil {
+				var err error
+				client, err = collector.NewClientWithConfig(addr, *<name>Timeout, *hcfg)
+				if err != nil {
+					return nil, err
+				}
+			} else {
+				client = collector.NewClient(addr, *<name>Timeout)
+			}
+			return collector.New<Name>Collector(log, client, *<name>Interval), nil
+		},
+	})
+```
+
+There is no `@@CLIENT_INIT@@`/`@@CLIENT_BUILD@@`/`@@COLLECTOR_REGISTRY@@` in a
+multi-instance main (it carries only `@@INSTANCE_FACTORIES@@`), and no
+`--collector.<name>.target` flag (the target is each instance's address).
 
 ## 1. Read this repo's real values
 
@@ -255,6 +450,16 @@ If either is true, **stop and refuse**: tell the user a collector named
 `<name>` already exists (naming the colliding file/registration) and do not
 overwrite or double-register it. Pick a different name, or this is the wrong
 command if the goal is to *change* an existing collector.
+
+The `register("<name>"` grep above only matches the **single** target
+model's registry call. Neither multi model calls `register(` at all: `multi`
+appends a `probe.NamedFactory{Name: "<name>", ...}` and `multi-instance`
+appends an `instance.Factory{Name: "<name>", ...}`, the same struct-literal
+shape in both. On either multi model, replace that grep with:
+
+```sh
+grep -q 'Name: *"<name>"' cmd/*/main.go
+```
 
 **Derive `<Name>`** (PascalCase) from `<name>` mechanically: uppercase the
 first letter and the first letter following each underscore, then drop the

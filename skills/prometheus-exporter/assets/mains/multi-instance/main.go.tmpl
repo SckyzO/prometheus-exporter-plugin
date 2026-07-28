@@ -1,0 +1,238 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/alecthomas/kingpin/v2"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	promconfig "github.com/prometheus/common/config"
+	"github.com/prometheus/common/version"
+	"github.com/prometheus/exporter-toolkit/web"
+	webflag "github.com/prometheus/exporter-toolkit/web/kingpinflag"
+
+	"@@MODULE_PATH@@/internal/collector"
+	"@@MODULE_PATH@@/internal/config"
+	"@@MODULE_PATH@@/internal/instance"
+	"@@MODULE_PATH@@/internal/logger"
+)
+
+// namespace is this exporter's Prometheus metric prefix (used by the landing
+// page and startup log). See internal/collector for how @@NAMESPACE@@ is
+// substituted into each collector's own metric names.
+const namespace = "@@NAMESPACE@@"
+
+// instanceLabel is the identifying label this exporter applies to every series
+// of every watched machine (see WrapRegistererWith below). It is fixed at
+// scaffold time by scaffold.sh --instance-label (default "target"), never a
+// runtime knob: a config edit that renamed every series at once would make
+// docs/metrics.md unverifiable by make docs-check.
+const instanceLabel = "@@INSTANCE_LABEL@@"
+
+var (
+	logLevel     = kingpin.Flag("log.level", "Only log messages with the given severity or above. One of: [debug, info, warn, error]").Default("info").Enum("debug", "info", "warn", "error")
+	logFormat    = kingpin.Flag("log.format", "Log format. One of: [json, text]").Default("text").Enum("json", "text")
+	toolkitFlags = webflag.AddFlags(kingpin.CommandLine, ":@@DEFAULT_PORT@@")
+
+	// disableExporterMetrics removes Go runtime and process metrics from /metrics.
+	disableExporterMetrics = kingpin.Flag(
+		"web.disable-exporter-metrics",
+		"Exclude Go runtime and process metrics from the /metrics endpoint.",
+	).Default("false").Bool()
+
+	// configFile is REQUIRED for this target model: without it there are no
+	// instances to watch. Its value is read straight from os.Args below, before
+	// parsing, because it decides which arguments the parser is given.
+	configFile = kingpin.Flag(
+		"config.file",
+		"Path to the YAML configuration file listing the instances to watch (required). Unrelated to --web.config.file, which configures the TLS server this exporter exposes.",
+	).Default("").String()
+)
+
+// indexHTML is the landing page served at /.
+var indexHTML = fmt.Sprintf(`<html>
+	<head><title>%s Exporter</title></head>
+	<body>
+		<h1>%s Exporter (multi-instance)</h1>
+		<p>This exporter watches a fixed list of instances from its configuration file and serves them all through <a href='/metrics'>/metrics</a>.</p>
+	</body>
+</html>`, namespace, namespace)
+
+func main() {
+	var log *logger.Logger
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stop()
+
+	// backgroundCollector is the shutdown-wait seam every background collector
+	// satisfies. Every instance's every collector is a background poller,
+	// appended here as it is built, and waited on under ONE shared budget below.
+	type backgroundCollector interface{ Done() <-chan struct{} }
+	var backgroundCollectors []backgroundCollector
+
+	// factories holds one entry per collector, in declaration order. scaffold.sh
+	// injects the starter at the marker below, and /add-collector appends every
+	// collector added later. Leave the marker in place.
+	var factories []instance.Factory
+
+	// @@INSTANCE_FACTORIES@@
+
+	kingpin.Version(version.Print("@@EXPORTER_NAME@@"))
+	kingpin.HelpFlag.Short('h')
+
+	// --config.file is mandatory here; read it before parsing (its value decides
+	// which arguments the parser is given).
+	configPath := config.ExtractFlagValue(os.Args[1:], "config.file")
+	if configPath == "" {
+		fmt.Fprintln(os.Stderr, "the multi-instance target model requires --config.file (it lists the instances to watch)")
+		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+		os.Exit(1) //nolint:gocritic // stop() called explicitly above
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+		os.Exit(1) //nolint:gocritic // stop() called explicitly above
+	}
+	if err := cfg.Validate(kingpin.CommandLine); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+		os.Exit(1) //nolint:gocritic // stop() called explicitly above
+	}
+	kingpin.MustParse(kingpin.CommandLine.Parse(
+		append(cfg.ToArgs(config.CLIFlagNames(os.Args[1:])), os.Args[1:]...),
+	))
+
+	if *logFormat == "json" {
+		log = logger.NewJSONLogger(*logLevel)
+	} else {
+		log = logger.NewTextLogger(*logLevel)
+	}
+
+	warnIfExposedAndUnauthenticated(log, *toolkitFlags.WebListenAddresses, *toolkitFlags.WebConfigFile)
+
+	// Validate and resolve the instance list, fail-fast: at least one instance,
+	// unique names, http/https addresses, resolvable module references, no
+	// instance label colliding with the identifying label. Each module's
+	// http_client_config was already validated by config.Load.
+	// "collector" is the variable label StatusTracker's health metrics carry; an
+	// instance label reusing it would collide at registration.
+	instances, err := cfg.ResolveInstances(instanceLabel, "collector")
+	if err != nil {
+		log.Error("Invalid instance configuration", "err", err)
+		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+		os.Exit(1) //nolint:gocritic // stop() called explicitly above
+	}
+
+	// Filter to the globally-enabled collectors once (enablement is global under
+	// this model), preserving declaration order.
+	var enabled []instance.Factory
+	for _, f := range factories {
+		if *f.Enabled {
+			enabled = append(enabled, f)
+			log.Info("Collector enabled", "collector", f.Name)
+		} else {
+			log.Info("Collector disabled", "collector", f.Name)
+		}
+	}
+
+	// Custom registry (no global state or third-party metric pollution).
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(collectors.NewBuildInfoCollector())
+	if !*disableExporterMetrics {
+		reg.MustRegister(
+			collectors.NewGoCollector(),
+			collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+		)
+	}
+	reg.MustRegister(collector.RequestDuration)
+
+	// Build every instance's collectors at boot. Each instance's series carry
+	// the identifying label plus the instance's own extra labels, applied by
+	// WrapRegistererWith as ConstLabels. Two instances registering the same
+	// collector never collide because ConstLabels are part of a Desc's identity.
+	for _, inst := range instances {
+		labels := prometheus.Labels{instanceLabel: inst.Name}
+		for k, v := range inst.Labels {
+			labels[k] = v
+		}
+		instReg := prometheus.WrapRegistererWith(labels, reg)
+
+		tracker := collector.NewStatusTracker(log)
+		for _, f := range enabled {
+			bg, err := f.New(inst.Address, inst.ClientConfig)
+			if err != nil {
+				// A transport that cannot be built (unreadable CA or secret
+				// file) is a configuration fault: stop at boot rather than
+				// surface it on the first scrape.
+				log.Error("Failed to build collector for instance", "collector", f.Name, "instance", inst.Name, "err", err)
+				stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+				os.Exit(1) //nolint:gocritic // stop() called explicitly above
+			}
+			bg.Start(ctx)
+			backgroundCollectors = append(backgroundCollectors, bg)
+			tracker.Add(f.Name, bg)
+		}
+		instReg.MustRegister(tracker)
+		log.Info("Watching instance", "instance", inst.Name, "address", inst.Address)
+	}
+
+	log.Info("Starting multi-instance exporter server...", "namespace", namespace, "instances", len(instances))
+
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(indexHTML))
+	})
+	http.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{
+		EnableOpenMetrics: true,
+		ErrorHandling:     promhttp.ContinueOnError,
+	}))
+	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+
+	server := &http.Server{
+		ReadHeaderTimeout: 5 * time.Second, // Mitigate Slowloris attacks (G112).
+	}
+
+	go func() {
+		<-ctx.Done()
+		log.Info("Shutdown signal received, draining in-flight requests...")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			log.Error("Graceful shutdown failed", "err", err)
+		}
+	}()
+
+	if err := web.ListenAndServe(server, toolkitFlags, log.Logger); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Error("Failed to start HTTP server", "err", err)
+		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+		os.Exit(1) //nolint:gocritic // stop() called explicitly above
+	}
+
+	log.Info("Server stopped")
+
+	// ONE shared 5s budget for ALL background collectors, not 5s each: with N
+	// instances x M collectors, a per-collector wait would worst-case at
+	// N*M*5s. time.After returns a single channel; once it fires, the loop
+	// returns, capping the TOTAL wait at 5s.
+	deadline := time.After(5 * time.Second)
+	for _, bc := range backgroundCollectors { //nolint:gosec // G602: for-range over a slice never indexes out of bounds
+		select {
+		case <-bc.Done():
+		case <-deadline:
+			log.Warn("background collectors did not all stop within 5s; exiting anyway")
+			return
+		}
+	}
+}
