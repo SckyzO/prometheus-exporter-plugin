@@ -54,8 +54,9 @@
 #   - Strips the .tmpl suffix from file names.
 #   - Selects mains/<target-model>/main.go.tmpl as the one cmd/<name>/main.go,
 #     then removes the whole mains/ staging tree; drops internal/probe/ unless
-#     --target-model multi, and drops internal/instance/ unless --target-model
-#     multi-instance.
+#     --target-model multi, drops internal/instance/ unless --target-model
+#     multi-instance, and drops internal/reload/ unless --target-model multi
+#     or multi-instance.
 #   - Fills main.go's structural markers: // @@CLIENT_INIT@@,
 #     // @@CLIENT_BUILD@@ and // @@COLLECTOR_REGISTRY@@ (single-target),
 #     // @@PROBE_FACTORIES@@ (multi-target), // @@INSTANCE_FACTORIES@@
@@ -308,6 +309,15 @@ fi
 # internal/instance/ is multi-instance-only: no other model ships it.
 if [ "$target_model" != multi-instance ]; then
   rm -rf "$dst/internal/instance"
+fi
+
+# internal/reload/ is for the configuration-file-driven models only. A
+# single-target scaffold's file holds "flags:" (which cannot be reloaded, see
+# internal/config) and "http_client_config:" (whose file-backed secrets and TLS
+# material prometheus/common already re-reads per request), so there would be
+# nothing left for a reload to do there.
+if [ "$target_model" != multi ] && [ "$target_model" != multi-instance ]; then
+  rm -rf "$dst/internal/reload"
 fi
 
 # client_model is a direct dependency ONLY for a multi-target scaffold:

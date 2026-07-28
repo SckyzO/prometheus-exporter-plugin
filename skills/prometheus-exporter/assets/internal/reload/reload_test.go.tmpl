@@ -1,0 +1,220 @@
+package reload
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
+
+	"@@MODULE_PATH@@/internal/config"
+	"@@MODULE_PATH@@/internal/logger"
+)
+
+func writeConfig(t *testing.T, dir, body string) string {
+	t.Helper()
+	p := filepath.Join(dir, "config.yml")
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return p
+}
+
+// TestReloadAppliesAValidFile is the happy path, and the one assertion that
+// proves a reload CHANGED something rather than merely answering.
+func TestReloadAppliesAValidFile(t *testing.T) {
+	dir := t.TempDir()
+	p := writeConfig(t, dir, "modules:\n  prod: {}\n")
+	boot, err := config.Load(p)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	var applied *config.Config
+	r := New(logger.NewTextLogger("error"), p, boot, func(c *config.Config) error {
+		applied = c
+		return nil
+	})
+
+	writeConfig(t, dir, "modules:\n  prod: {}\n  staging: {}\n")
+	if err := r.Reload(); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if applied == nil {
+		t.Fatal("apply was never called")
+	}
+	if _, ok := applied.Modules["staging"]; !ok {
+		t.Fatal("apply received a config without the module the new file added")
+	}
+	if v := testGaugeValue(t, r.successful); v != 1 {
+		t.Fatalf("config_last_reload_successful is %v after a successful reload, want 1", v)
+	}
+	if testGaugeValue(t, r.successTime) == 0 {
+		t.Fatal("the success timestamp was never advanced")
+	}
+}
+
+// TestReloadKeepsTheOldConfigWhenTheNewOneIsInvalid is the assertion that
+// proves atomicity: a broken file must not be applied, and must not disturb
+// what is running.
+func TestReloadKeepsTheOldConfigWhenTheNewOneIsInvalid(t *testing.T) {
+	dir := t.TempDir()
+	p := writeConfig(t, dir, "modules:\n  prod: {}\n")
+	boot, _ := config.Load(p)
+
+	calls := 0
+	r := New(logger.NewTextLogger("error"), p, boot, func(*config.Config) error {
+		calls++
+		return nil
+	})
+
+	writeConfig(t, dir, "modules:\n  prod: {\n") // not YAML
+	if err := r.Reload(); err == nil {
+		t.Fatal("reload accepted a file that does not parse")
+	}
+	if calls != 0 {
+		t.Fatalf("apply ran %d times on an unparseable file; it must never be reached", calls)
+	}
+	if v := testGaugeValue(t, r.successful); v != 0 {
+		t.Fatalf("config_last_reload_successful is %v after a failed reload, want 0", v)
+	}
+}
+
+// TestReloadRefusesAChangedFlagsSection pins the whole-file refusal and the
+// message naming the offending keys.
+func TestReloadRefusesAChangedFlagsSection(t *testing.T) {
+	dir := t.TempDir()
+	p := writeConfig(t, dir, "flags:\n  log.level: info\nmodules:\n  prod: {}\n")
+	boot, _ := config.Load(p)
+
+	calls := 0
+	r := New(logger.NewTextLogger("error"), p, boot, func(*config.Config) error {
+		calls++
+		return nil
+	})
+
+	writeConfig(t, dir, "flags:\n  log.level: debug\nmodules:\n  prod: {}\n")
+	err := r.Reload()
+	if err == nil {
+		t.Fatal("reload accepted a changed flags: section")
+	}
+	if !strings.Contains(err.Error(), "log.level") {
+		t.Fatalf("the refusal does not name the offending key: %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("apply ran %d times despite the refusal", calls)
+	}
+}
+
+// TestReloadIsSerialized proves two concurrent reloads never overlap, which is
+// what lets the HTTP handler report the status of ITS OWN reload.
+func TestReloadIsSerialized(t *testing.T) {
+	dir := t.TempDir()
+	p := writeConfig(t, dir, "modules:\n  prod: {}\n")
+	boot, _ := config.Load(p)
+
+	var mu sync.Mutex
+	inFlight, peak := 0, 0
+	r := New(logger.NewTextLogger("error"), p, boot, func(*config.Config) error {
+		mu.Lock()
+		inFlight++
+		if inFlight > peak {
+			peak = inFlight
+		}
+		mu.Unlock()
+		time.Sleep(5 * time.Millisecond)
+		mu.Lock()
+		inFlight--
+		mu.Unlock()
+		return nil
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go r.Run(ctx)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); _ = r.Reload() }()
+	}
+	wg.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if peak > 1 {
+		t.Fatalf("%d reloads ran at once; they must be serialized", peak)
+	}
+}
+
+// TestHandlerRejectsGET and TestHandlerReportsItsOwnFailure pin the HTTP
+// surface.
+func TestHandlerRejectsGET(t *testing.T) {
+	dir := t.TempDir()
+	p := writeConfig(t, dir, "modules:\n  prod: {}\n")
+	boot, _ := config.Load(p)
+	r := New(logger.NewTextLogger("error"), p, boot, func(*config.Config) error { return nil })
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/-/reload", nil)
+	r.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET /-/reload returned %d, want 405", rec.Code)
+	}
+}
+
+func TestHandlerReportsItsOwnFailure(t *testing.T) {
+	dir := t.TempDir()
+	p := writeConfig(t, dir, "modules:\n  prod: {}\n")
+	boot, _ := config.Load(p)
+	r := New(logger.NewTextLogger("error"), p, boot, func(*config.Config) error { return nil })
+
+	writeConfig(t, dir, "modules:\n  prod: {\n")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/-/reload", nil)
+	r.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("POST /-/reload on a broken file returned %d, want 500", rec.Code)
+	}
+}
+
+// TestCollectorsRegistersBothGauges pins the contract main.go relies on to
+// wire this package's metrics onto its own registry: exactly the successful
+// and success-timestamp gauges, both registrable.
+func TestCollectorsRegistersBothGauges(t *testing.T) {
+	dir := t.TempDir()
+	p := writeConfig(t, dir, "modules:\n  prod: {}\n")
+	boot, _ := config.Load(p)
+	r := New(logger.NewTextLogger("error"), p, boot, func(*config.Config) error { return nil })
+
+	reg := prometheus.NewRegistry()
+	for _, c := range r.Collectors() {
+		if err := reg.Register(c); err != nil {
+			t.Fatalf("register: %v", err)
+		}
+	}
+	mfs, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+	if len(mfs) != 2 {
+		t.Fatalf("Collectors() registered %d metric families, want 2 (successful, successTime)", len(mfs))
+	}
+}
+
+// testGaugeValue reads a gauge without going through a registry.
+func testGaugeValue(t *testing.T, g prometheus.Gauge) float64 {
+	t.Helper()
+	var m dto.Metric
+	if err := g.Write(&m); err != nil {
+		t.Fatalf("read gauge: %v", err)
+	}
+	return m.GetGauge().GetValue()
+}
