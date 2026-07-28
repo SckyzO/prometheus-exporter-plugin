@@ -184,6 +184,11 @@ func main() {
 			probeHandler.SetConfig(newModules, newDefault)
 			closeIdle(current.modules, current.defaultClient)
 			current.modules, current.defaultClient = newModules, newDefault
+			// Logging cannot fail, so this stays in the commit phase: a
+			// reload can move an allow-any exporter into exactly the state
+			// this warning exists to flag (unrestricted AND credentialed),
+			// and nothing else re-checks that combination after boot.
+			warnIfProbeUnrestricted(log, *probeTargetAllowlist, next)
 			return nil
 		})
 	go reloader.Run(ctx)
@@ -331,6 +336,15 @@ func closeIdle(modules map[string]probe.Module, defaultClient *http.Client) {
 // credentials presented there, which is a wider exposure than SSRF alone. It
 // stays a warning: allow-any is the ecosystem's default and changing it under
 // a running deployment would be the breaking change, not the fix.
+//
+// Called at boot AND again on every successful reload, not just at boot: a
+// reload can add credentials to a configuration that started out with none,
+// moving a running exporter into exactly the state the second warning exists
+// to flag. allowlist itself never changes across a reload, since it comes
+// from a flag and "flags:" changes are refused (see DiffFlags); only cfg's
+// credentials can. cfg is whichever configuration just became the running
+// one, boot's or a reload's, not necessarily the one this process started
+// with.
 func warnIfProbeUnrestricted(log *logger.Logger, allowlist []string, cfg *config.Config) {
 	if len(allowlist) > 0 {
 		return

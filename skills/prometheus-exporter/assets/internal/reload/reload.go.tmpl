@@ -209,13 +209,22 @@ func (r *Reloader) fail(err error) error {
 	return fmt.Errorf("reload refused: %w", err)
 }
 
-// Handler serves POST /-/reload. main.go registers it only when
-// --web.enable-lifecycle is set, so an exporter that did not opt in answers 404
-// like any unknown path, which is Prometheus's own posture.
+// Handler serves POST /-/reload. Gate it behind --web.enable-lifecycle: a
+// mutating endpoint on an exporter that is unauthenticated by default is the
+// reason for that flag. --web.config.file covers this route once it is set,
+// but it is not set by default, and SIGHUP already requires being on the
+// machine.
 //
-// A mutating endpoint on an exporter that is unauthenticated by default is the
-// reason for that flag: --web.config.file covers this route once it is set, but
-// it is not set by default, and SIGHUP already requires being on the machine.
+// main.go must register this handler UNCONDITIONALLY and refuse inside it
+// when the flag is unset (http.NotFound, then return, before calling this
+// Handler), rather than only calling http.Handle when the flag is set.
+// Exporter main.go files register a catch-all "/" landing-page handler, and
+// Go's http.ServeMux treats a bare "/" pattern as a subtree match for any
+// path with no more specific registration: leaving /-/reload entirely
+// unregistered does not make it 404, it makes it fall through to that
+// catch-all and answer 200 with the landing page. Checking the flag inside
+// the handler is what actually gives an exporter that did not opt in a real
+// 404 on this path.
 func (r *Reloader) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.Method != http.MethodPost {
