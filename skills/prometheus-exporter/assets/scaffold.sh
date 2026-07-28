@@ -320,30 +320,33 @@ if [ "$target_model" != multi ] && [ "$target_model" != multi-instance ]; then
   rm -rf "$dst/internal/reload"
 fi
 
-# client_model is a direct dependency ONLY for a multi-target scaffold:
-# internal/probe imports "github.com/prometheus/client_model/go" directly,
-# but nothing under a single-target tree does (client_golang itself needs it
-# only transitively). go.mod.tmpl therefore ships client_model in the
-# INDIRECT require() block unconditionally, and this reclassifies it to the
-# direct block here, at scaffold time, ONLY for --target-model multi,
-# deliberately NOT a static go.mod.tmpl edit, which would leave a
-# single-target scaffold's go.mod direct/indirect split permanently out of
-# sync with what `go mod tidy` would produce (verified empirically:
-# `go mod tidy` immediately demotes it back to indirect on a single-target
-# tree, since nothing there imports it directly), a real regression against
-# this plan's own single-target-tree-is-unchanged constraint. Anchored on the
-# module path only (no version pin) for BOTH the client_golang insertion
-# point and the client_model line being deleted: the version spliced into
-# the direct block is READ OFF that deleted indirect line at scaffold time,
-# never hardcoded here, so a future Dependabot bump of client_model's version
-# in go.mod.tmpl can't silently desync the inserted line from the deleted
-# one. (A prior version of this block hardcoded the version on both sides:
-# a go.mod.tmpl bump would then leave the version-pinned delete regex no
+# client_model is a direct dependency for a multi-target OR multi-instance
+# scaffold, never for single: internal/probe (multi only) and
+# internal/reload's own test file (multi AND multi-instance, see
+# internal/reload/reload_test.go.tmpl's "dto" import) both import
+# "github.com/prometheus/client_model/go" directly, but nothing under a
+# single-target tree does (client_golang itself needs it only transitively).
+# go.mod.tmpl therefore ships client_model in the INDIRECT require() block
+# unconditionally, and this reclassifies it to the direct block here, at
+# scaffold time, for --target-model multi OR multi-instance, deliberately
+# NOT a static go.mod.tmpl edit, which would leave a single-target
+# scaffold's go.mod direct/indirect split permanently out of sync with what
+# `go mod tidy` would produce (verified empirically: `go mod tidy`
+# immediately demotes it back to indirect on a single-target tree, since
+# nothing there imports it directly), a real regression against this plan's
+# own single-target-tree-is-unchanged constraint. Anchored on the module
+# path only (no version pin) for BOTH the client_golang insertion point and
+# the client_model line being deleted: the version spliced into the direct
+# block is READ OFF that deleted indirect line at scaffold time, never
+# hardcoded here, so a future Dependabot bump of client_model's version in
+# go.mod.tmpl can't silently desync the inserted line from the deleted one.
+# (A prior version of this block hardcoded the version on both sides: a
+# go.mod.tmpl bump would then leave the version-pinned delete regex no
 # longer matching the now-bumped indirect line (so it survived) while the
 # insert still fired with the stale hardcoded version, landing client_model
 # TWICE with two conflicting versions and breaking `go build`/`go mod tidy`
-# for multi-target scaffolds only.)
-if [ "$target_model" = multi ] && [ -f "$dst/go.mod.tmpl" ]; then
+# for multi/multi-instance scaffolds only.)
+if { [ "$target_model" = multi ] || [ "$target_model" = multi-instance ]; } && [ -f "$dst/go.mod.tmpl" ]; then
   # [[:blank:]]* here, not a literal tab: unlike the sed addresses below (GNU
   # sed treats \t as tab, verified empirically), GNU grep's default (non -P)
   # mode does NOT expand \t to a tab in the pattern, so a \t-anchored grep
@@ -351,7 +354,7 @@ if [ "$target_model" = multi ] && [ -f "$dst/go.mod.tmpl" ]; then
   # this fix. Mirrors this same script's own marker-matching grep further
   # down ("^[[:blank:]]*// $marker[[:blank:]]*\$").
   clientmodelline=$(grep '^[[:blank:]]*github\.com/prometheus/client_model[[:blank:]]' "$dst/go.mod.tmpl" | head -n 1)
-  [ -n "$clientmodelline" ] || die "go.mod.tmpl has no github.com/prometheus/client_model require line to reclassify for --target-model multi"
+  [ -n "$clientmodelline" ] || die "go.mod.tmpl has no github.com/prometheus/client_model require line to reclassify for --target-model $target_model"
   clientmodelversion=$(printf '%s\n' "$clientmodelline" | awk '{print $2}')
   [ -n "$clientmodelversion" ] || die "could not read a version out of go.mod.tmpl's client_model line: $clientmodelline"
   clientmodelfrag=$(mktemp)
