@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **`--probe.module`.** Deprecated in v0.5.0 in favour of the configuration
+  file's `modules:` section, removed here under the two-phase rule announced
+  at deprecation. Modules now come from `modules:` and nowhere else; the
+  mutual-exclusion refusal between the flag and `modules:` is gone with it,
+  since there is no longer a second source to conflict with. The refusal of a
+  `modules:` section alongside a top-level `http_client_config:` is unrelated
+  and stays.
 - **`/add-collector`'s in-place seam migrations.** The command no longer
   rewrites an older repository's `internal/probe/` and `cmd/*/main.go` to
   the current shape. It detects an outdated seam, stops, and points at

@@ -113,44 +113,6 @@ func NewHandler(log *logger.Logger, factories []NamedFactory, allowlist []string
 	}
 }
 
-// ParseModules turns repeatable --probe.module=<name>:<collector>[,<collector>…]
-// flag values into a module map. Collector names are Go identifiers, so they can
-// never contain the ':' or ',' separators and the split is unambiguous.
-//
-// A module is a scrape profile: it selects among collectors that are already
-// compiled in. It does not define probe behavior the way a Blackbox YAML module
-// does, because here the collectors are Go code, not configuration.
-func ParseModules(vals []string) (map[string]Module, error) {
-	modules := make(map[string]Module, len(vals))
-	for _, v := range vals {
-		name, list, ok := strings.Cut(v, ":")
-		if !ok {
-			return nil, fmt.Errorf("malformed --probe.module %q: want <module>:<collector>[,<collector>...]", v)
-		}
-		name = strings.TrimSpace(name)
-		if name == "" {
-			return nil, fmt.Errorf("malformed --probe.module %q: empty module name", v)
-		}
-		if _, dup := modules[name]; dup {
-			// Silently keeping one of two conflicting definitions would hide an
-			// operator mistake.
-			return nil, fmt.Errorf("module %q declared twice", name)
-		}
-		var cols []string
-		for _, c := range strings.Split(list, ",") {
-			if c = strings.TrimSpace(c); c != "" {
-				cols = append(cols, c)
-			}
-		}
-		if len(cols) == 0 {
-			// A module that runs nothing is always a typo, never an intent.
-			return nil, fmt.Errorf("module %q declares no collectors", name)
-		}
-		modules[name] = Module{Collectors: cols}
-	}
-	return modules, nil
-}
-
 // moduleNames flattens the module parameter, which is both repeatable and
 // comma-separated: ?module=a&module=b,c selects a, b and c. This is SNMP's
 // grammar, and a scrape config should not have to care which spelling it used.

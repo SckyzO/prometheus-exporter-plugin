@@ -92,13 +92,6 @@ func main() {
 		"Subtracted from Prometheus's scrape timeout when computing a probe's deadline.",
 	).Default("0.5s").Duration()
 
-	// Modules are scrape profiles: named subsets of this exporter's collectors,
-	// selected per request with /probe?target=…&module=…. Repeatable.
-	probeModules := kingpin.Flag(
-		"probe.module",
-		"Deprecated, prefer the config file's \"modules:\" section. Declare a module: <name>:<collector>[,<collector>...] (repeatable).",
-	).Strings()
-
 	kingpin.Version(version.Print("@@EXPORTER_NAME@@"))
 	kingpin.HelpFlag.Short('h')
 
@@ -145,24 +138,8 @@ func main() {
 
 	// @@PROBE_FACTORIES@@
 
-	// Modules come from exactly one source. --probe.module is the deprecated
-	// flag form, which can only express collector subsets; the configuration
-	// file's modules: section can also carry per-module authentication. Both at
-	// once would give one module name two definitions, so it is refused rather
-	// than resolved by a precedence nobody documented.
-	if len(cfg.Modules) > 0 && len(*probeModules) > 0 {
-		log.Error("--probe.module and a \"modules:\" section in the config file cannot both be used; --probe.module is deprecated, prefer the configuration file")
-		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
-		os.Exit(1) //nolint:gocritic // stop() called explicitly above
-	}
-
-	modules, err := probe.ParseModules(*probeModules)
-	if err != nil {
-		log.Error("Invalid --probe.module", "err", err)
-		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
-		os.Exit(1) //nolint:gocritic // stop() called explicitly above
-	}
-
+	// Modules come from the configuration file's modules: section and nowhere
+	// else.
 	resolved, err := cfg.ResolveModules()
 	if err != nil {
 		log.Error("Invalid \"modules:\" section", "err", err)
@@ -176,6 +153,7 @@ func main() {
 	// configuration fault, so it stops the exporter here rather than surfacing
 	// on the first probe. Sorted so a file with two broken modules always fails
 	// on the same one.
+	modules := make(map[string]probe.Module, len(resolved))
 	moduleNames := make([]string, 0, len(resolved))
 	for name := range resolved {
 		moduleNames = append(moduleNames, name)
