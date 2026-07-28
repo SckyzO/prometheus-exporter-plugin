@@ -13,6 +13,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -78,9 +79,11 @@ type Module struct {
 // never writes it, so a pointer load costs no lock. It also makes "a reader
 // observed a half-replaced table" impossible by construction rather than by
 // discipline, since the value is never mutated in place, only swapped, AND
-// SetConfig gives it a private copy of modules (see its own doc comment), so
-// no caller-held reference can reach in and mutate a handlerConfig once a
-// reader has loaded it.
+// SetConfig gives it a private copy of modules AND of every module's own
+// Collectors slice (see its own doc comment for exactly what is copied and
+// what is deliberately shared), so no caller-held reference, at either
+// level, can reach in and mutate a handlerConfig once a reader has loaded
+// it.
 type handlerConfig struct {
 	modules       map[string]Module
 	defaultClient *http.Client // top-level http_client_config; nil unless it was set
@@ -124,22 +127,43 @@ func NewHandler(log *logger.Logger, factories []NamedFactory, allowlist []string
 // SetConfig installs a new module table, atomically. A probe already in flight
 // finishes against the table it started with; the next one sees this.
 //
-// SetConfig clones modules before storing it: the map handed to a
-// handlerConfig is this method's own private copy, never the caller's map
-// value. Without that, a caller that keeps its map around and mutates it (or
-// simply reuses one map value across successive reloads) after calling
-// SetConfig would be writing to the same map a probe goroutine can be
-// ranging over right now: "concurrent map read and map write", a process
-// abort, not a degraded probe. Cloning here is what lets the handlerConfig
+// What is copied and what is shared, precisely, because a caller writing its
+// own apply function for a configuration reload has to know which of its own
+// values it may still touch afterward:
+//
+//   - The modules map itself is cloned (maps.Clone). Without that, a caller
+//     that keeps its map and mutates it (or reuses one map value across
+//     successive reloads) after calling SetConfig would be writing to the
+//     same map a probe goroutine can be ranging over right now: "concurrent
+//     map read and map write", a process abort, not a degraded probe.
+//   - Each Module's Collectors slice is ALSO cloned (slices.Clone), one level
+//     deeper. maps.Clone only copies the map's key/value pairs; a Module
+//     value's Collectors field is a slice HEADER, so without this second
+//     clone the handler's "private" map would still share its backing arrays
+//     with the caller's. A caller that kept a slice and mutated an element in
+//     place after SetConfig (no append or reallocation required to trigger
+//     it) would race selectFactories ranging over that same backing array.
+//   - Each Module's Client is DELIBERATELY left shared, by reference, never
+//     cloned. net/http documents *http.Client as safe for concurrent use, so
+//     sharing it is not a race, and the reload design depends on the caller
+//     still holding the exact pointer it handed in: that is what lets the
+//     caller call CloseIdleConnections on a client this call replaces (see
+//     below). Cloning it would sever that.
+//
+// Cloning the map and the Collectors slices is what lets the handlerConfig
 // doc comment say a half-replaced view is impossible BY CONSTRUCTION rather
 // than by the caller's discipline. This is a cold path, called once at boot
-// and at most once per reload, so the copy costs nothing that matters.
+// and at most once per reload, so the copying costs nothing that matters.
 //
 // The caller is responsible for calling CloseIdleConnections on any
 // *http.Client this replaces. Doing it here would be wrong: this Handler cannot
 // know whether the caller still references the old clients elsewhere.
 func (h *Handler) SetConfig(modules map[string]Module, defaultClient *http.Client) {
 	modules = maps.Clone(modules)
+	for name, m := range modules {
+		m.Collectors = slices.Clone(m.Collectors)
+		modules[name] = m
+	}
 
 	// Precomputed for the guard rule 5 applies, and sorted so a credential-less
 	// probe names the candidates in the same order every time.

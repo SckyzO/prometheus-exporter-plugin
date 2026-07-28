@@ -670,3 +670,46 @@ func TestSetConfigRecomputesTheCredentialedList(t *testing.T) {
 		t.Fatal("after a module carrying credentials was added, a credential-less probe must be refused")
 	}
 }
+
+// TestSetConfigClonesEachModulesCollectorsSlice proves SetConfig's private
+// copy goes one level deeper than the map itself. maps.Clone only copies the
+// map's key/value pairs; a Module value's Collectors field is a slice HEADER,
+// so a caller that keeps its own Collectors slice and mutates an element
+// after calling SetConfig would still be writing into the same backing array
+// selectFactories ranges over on every probe, unless SetConfig clones that
+// slice too. Run under -race, this test fails on a shallow clone: it is the
+// regression test for that exact gap.
+func TestSetConfigClonesEachModulesCollectorsSlice(t *testing.T) {
+	collectors := []string{"alpha"}
+	h := NewHandler(testLogger(), []NamedFactory{(&recordingFactory{}).named("alpha")}, nil,
+		time.Second, 0, map[string]Module{"m": {Collectors: collectors}}, nil)
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			h.selectFactories([]string{"m"})
+		}
+	}()
+
+	// The caller still holds `collectors` and mutates an element in place
+	// after SetConfig, the way a sloppy apply function reusing a buffer
+	// might. No append or reallocation involved: this only exercises the
+	// slice's backing array, which is exactly what a shallow clone leaves
+	// shared. Time-bound rather than a fixed iteration count, so the write
+	// loop overlaps the read goroutine for a real stretch of wall-clock
+	// time instead of finishing before the reader is even scheduled.
+	deadline := time.Now().Add(100 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		collectors[0] = "alpha"
+	}
+	close(stop)
+	wg.Wait()
+}
