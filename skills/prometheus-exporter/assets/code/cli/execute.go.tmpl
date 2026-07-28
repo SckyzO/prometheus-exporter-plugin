@@ -38,6 +38,18 @@ var CommandDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 	Help: "Duration in seconds of external commands issued by this exporter's collectors, by outcome.",
 }, []string{"outcome"})
 
+// CommandLimiter bounds how many invocations of the target command run at
+// once. nil means unlimited, the default, so the common path costs one nil
+// check. See internal/collector/limiter.go.
+//
+// A package-level var, not a field on some Client, because this flavor's I/O
+// boundary is the package-level Execute var below, not a struct built per
+// target: there is nothing to hang a per-instance limiter off of. Exported,
+// and settable directly (collector.CommandLimiter = collector.NewLimiter(n)),
+// the same way main.go's wiring is free to reassign Execute itself for
+// tests: see Execute's own doc comment for that precedent.
+var CommandLimiter *Limiter
+
 // Execute is the I/O boundary every collector in this flavor calls through,
 // instead of shelling out via os/exec directly. It is a package-level var,
 // not a plain function, specifically so tests can swap it for a stub that
@@ -54,6 +66,19 @@ var CommandDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 // free of any mutable package state of its own.
 var Execute = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 	start := time.Now()
+
+	// The per-command deadline is already live on ctx by the time Execute
+	// runs: every caller applies it before calling Execute (see, for example,
+	// exampleData's context.WithTimeout in collector.go), never inside
+	// Execute itself. So the wait for a CommandLimiter slot, below, is
+	// automatically charged against that same budget rather than added on top
+	// of it, the same ordering the http flavor's Fetch applies deliberately
+	// for its own Limiter (see that Client.Fetch's own comment).
+	release, err := CommandLimiter.Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("wait for a run slot: %w", err)
+	}
+	defer release()
 
 	cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // G204: name is a fixed, developer-controlled command baked into each collector's own *Data method, never end-user input
 	out, err := cmd.CombinedOutput()

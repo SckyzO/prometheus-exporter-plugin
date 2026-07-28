@@ -237,6 +237,32 @@ func TestExecute_CommandNotFound(t *testing.T) {
 	}
 }
 
+// TestExecute_RespectsCommandLimiter proves CommandLimiter actually reaches
+// the real Execute var (not the swapped stub every other test in this file
+// uses): with the only slot already held, a second call fails on its own
+// deadline instead of running the command, the same property
+// TestLimiterAcquireHonoursContext pins for Limiter itself. The short
+// deadline here bounds a channel wait inside Acquire, not a real command, so
+// this needs no slow subprocess and is not the timing-sensitive shape
+// TestExecute_CommandNotFound's own comment warns against.
+func TestExecute_RespectsCommandLimiter(t *testing.T) {
+	oldLimiter := CommandLimiter
+	defer func() { CommandLimiter = oldLimiter }()
+	CommandLimiter = NewLimiter(1)
+
+	release, err := CommandLimiter.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("acquire the only slot: %v", err)
+	}
+	defer release()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := Execute(ctx, "echo", "hello"); err == nil {
+		t.Fatal("Execute ran echo while the only CommandLimiter slot was held")
+	}
+}
+
 // TestCommandDuration_CustomRegistryReachable locks the same Critical-bug
 // shape the HTTP flavor's RequestDuration test guards against: CommandDuration
 // must be a plain, exported *prometheus.HistogramVec that this exporter's own

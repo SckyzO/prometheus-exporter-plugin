@@ -1,0 +1,149 @@
+package collector
+
+import (
+	"context"
+	"sync"
+	"testing"
+	"time"
+)
+
+// TestNilLimiterIsPassThrough pins the default: --exporter.max-requests-per-target
+// is 0, NewLimiter returns nil for that, and a nil *Limiter must cost nothing
+// and never block.
+func TestNilLimiterIsPassThrough(t *testing.T) {
+	var l *Limiter
+	if NewLimiter(0) != nil {
+		t.Fatal("NewLimiter(0) returned a limiter; 0 must mean unlimited")
+	}
+	if NewLimiter(-1) != nil {
+		t.Fatal("NewLimiter(-1) returned a limiter; a non-positive ceiling must mean unlimited")
+	}
+	release, err := l.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("nil limiter refused an acquisition: %v", err)
+	}
+	release()
+}
+
+// TestLimiterEnforcesItsCeiling proves the third caller waits while two hold
+// slots, and proceeds as soon as one is released.
+func TestLimiterEnforcesItsCeiling(t *testing.T) {
+	l := NewLimiter(2)
+
+	r1, err := l.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("first acquire: %v", err)
+	}
+	r2, err := l.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("second acquire: %v", err)
+	}
+
+	third := make(chan struct{})
+	go func() {
+		r3, err := l.Acquire(context.Background())
+		if err == nil {
+			r3()
+		}
+		close(third)
+	}()
+
+	select {
+	case <-third:
+		t.Fatal("the third acquire proceeded while both slots were held")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	r1()
+	select {
+	case <-third:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the third acquire did not proceed after a slot was released")
+	}
+	r2()
+}
+
+// TestLimiterAcquireHonoursContext is the property that keeps a ceiling from
+// degrading silently: a starved caller fails on its own deadline instead of
+// queueing forever while its ticker drops ticks.
+func TestLimiterAcquireHonoursContext(t *testing.T) {
+	l := NewLimiter(1)
+	release, err := l.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("first acquire: %v", err)
+	}
+	defer release()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := l.Acquire(ctx); err == nil {
+		t.Fatal("Acquire returned success on an expired context while the only slot was held")
+	}
+}
+
+// TestLimiterReleaseIsSafeUnderConcurrency runs the ceiling under -race with
+// more callers than slots, and asserts the ceiling was never exceeded.
+func TestLimiterReleaseIsSafeUnderConcurrency(t *testing.T) {
+	const ceiling = 3
+	l := NewLimiter(ceiling)
+
+	var mu sync.Mutex
+	inFlight, peak := 0, 0
+
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			release, err := l.Acquire(context.Background())
+			if err != nil {
+				t.Errorf("acquire: %v", err)
+				return
+			}
+			mu.Lock()
+			inFlight++
+			if inFlight > peak {
+				peak = inFlight
+			}
+			mu.Unlock()
+
+			time.Sleep(time.Millisecond)
+
+			mu.Lock()
+			inFlight--
+			mu.Unlock()
+			release()
+		}()
+	}
+	wg.Wait()
+
+	if peak > ceiling {
+		t.Fatalf("peak concurrency was %d, ceiling is %d", peak, ceiling)
+	}
+	if peak == 0 {
+		t.Fatal("no goroutine was ever observed in flight; the test proved nothing")
+	}
+}
+
+// TestLimiterSetGroupsByTarget proves two collectors on the same address share
+// one ceiling and two collectors on different addresses do not.
+func TestLimiterSetGroupsByTarget(t *testing.T) {
+	s := NewLimiterSet(4)
+	// Two separate calls, each stored before comparing: calling For twice
+	// inline on the same line (s.For(x) != s.For(x)) reads to staticcheck's
+	// SA4000 as comparing an expression to itself, a false positive here
+	// since For is stateful, but named variables sidestep the false alarm
+	// the same way TestNewClientForSharesOneTransport's a.tr.Get() !=
+	// b.tr.Get() already does elsewhere in this package.
+	first := s.For("http://a.example")
+	second := s.For("http://a.example")
+	if first != second {
+		t.Fatal("LimiterSet handed out two limiters for one target")
+	}
+	if s.For("http://a.example") == s.For("http://b.example") {
+		t.Fatal("LimiterSet shared one limiter across two targets")
+	}
+	if NewLimiterSet(0).For("http://a.example") != nil {
+		t.Fatal("a LimiterSet built with ceiling 0 handed out a non-nil limiter")
+	}
+}

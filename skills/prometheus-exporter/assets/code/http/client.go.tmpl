@@ -94,6 +94,7 @@ type Client struct {
 	tr      *Transport
 	baseURL string
 	timeout time.Duration // 0 means "the deadline is on the shared-nothing http.Client"
+	limiter *Limiter      // nil means unlimited, see limiter.go
 }
 
 // NewClient builds a Client bound to target (a base URL, for example
@@ -127,6 +128,14 @@ func NewClient(target string, timeout time.Duration) *Client {
 // this Client's own timeout stops being the only deadline in play, silently.
 func NewClientOn(tr *Transport, target string, timeout time.Duration) *Client {
 	return &Client{tr: tr, baseURL: target, timeout: timeout}
+}
+
+// WithLimiter returns the same Client bound to lim, which bounds how many
+// requests this exporter has in flight against one machine at a time. A nil
+// limiter means unlimited, which is the default.
+func (c *Client) WithLimiter(lim *Limiter) *Client {
+	c.limiter = lim
+	return c
 }
 
 // NewHTTPClient builds the *http.Client carrying the authentication and TLS
@@ -222,11 +231,23 @@ func (c *Client) Fetch(ctx context.Context, path string) (data []byte, err error
 	// NewClientOn). A Client built with NewClient never reaches this: its
 	// deadline lives on its own private http.Client.Timeout, so its c.timeout
 	// stays zero and this block is a no-op for it.
+	//
+	// Applied before the limiter below on purpose: time spent waiting for a
+	// slot is charged against this collector's own budget, never added on top
+	// of it, so a starved poller fails its refresh and says so instead of
+	// silently stretching its effective interval while time.Ticker drops its
+	// ticks.
 	if c.timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, c.timeout)
 		defer cancel()
 	}
+
+	release, err := c.limiter.Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("wait for a request slot for %s: %w", path, err)
+	}
+	defer release()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {

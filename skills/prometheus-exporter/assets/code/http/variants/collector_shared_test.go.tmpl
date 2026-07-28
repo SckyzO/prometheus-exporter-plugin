@@ -216,3 +216,56 @@ func TestNewHTTPClientLeavesZeroTimeoutForASharedTransport(t *testing.T) {
 		t.Fatalf("NewHTTPClient(cfg, 0).Timeout = %v, want 0: a *http.Client meant to back a shared Transport must carry no deadline of its own", hc.Timeout)
 	}
 }
+
+// TestClientWithLimiterBlocksASecondConcurrentFetch proves WithLimiter
+// actually reaches Fetch, not merely that the field gets set: with the
+// ceiling at 1, a second Fetch blocks while the first holds the only slot,
+// and proceeds the moment the first releases it. Duplicated from
+// code/http/collector_test.go.tmpl rather than shared, for the same reason
+// TestTransportSetIsVisibleToExistingClients above is: this file replaces
+// collector_test.go.tmpl wholesale for --target-model multi-instance, so
+// WithLimiter needs a caller here too, or deadcode -test ./... finds it
+// unreachable.
+func TestClientWithLimiterBlocksASecondConcurrentFetch(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		once.Do(func() { close(started) })
+		<-release
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+
+	tr := NewTransport(&http.Client{})
+	c := NewClientOn(tr, srv.URL, 5*time.Second).WithLimiter(NewLimiter(1))
+
+	first := make(chan struct{})
+	go func() {
+		_, _ = c.Fetch(context.Background(), "/")
+		close(first)
+	}()
+	<-started // the first Fetch has acquired the only slot and reached the handler
+
+	second := make(chan struct{})
+	go func() {
+		_, _ = c.Fetch(context.Background(), "/")
+		close(second)
+	}()
+
+	select {
+	case <-second:
+		t.Fatal("the second Fetch proceeded while the first held the only limiter slot")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+
+	select {
+	case <-second:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the second Fetch did not proceed after the first released its slot")
+	}
+	<-first
+}
