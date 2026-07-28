@@ -96,7 +96,7 @@ func TestNewClientForSharesOneTransport(t *testing.T) {
 	a := NewClientFor("http://a.example", hc)
 	b := NewClientFor("http://b.example", hc)
 
-	if a.httpClient != b.httpClient {
+	if a.tr.Get() != b.tr.Get() {
 		t.Error("two targets built their own http.Client; the transport must be shared")
 	}
 	if a.baseURL == b.baseURL {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -42,22 +43,82 @@ var RequestDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 	Help: "Duration in seconds of HTTP requests issued by this exporter's collectors, by outcome.",
 }, []string{"outcome"})
 
+// Transport holds the *http.Client every Client bound to one machine shares.
+// The pointer is atomic so a configuration reload can replace the transport
+// underneath collectors that are already running: their next request uses the
+// new credentials, their goroutine is never stopped, and their cache survives.
+//
+// A nil-safe zero value is deliberately NOT offered: a Transport with no
+// client would fail every request with a confusing nil dereference, and every
+// construction path here supplies one.
+type Transport struct {
+	hc atomic.Pointer[http.Client]
+}
+
+// NewTransport wraps an already-built *http.Client. Build the client with
+// NewHTTPClient so its authentication and TLS come from the configuration.
+func NewTransport(hc *http.Client) *Transport {
+	t := &Transport{}
+	t.hc.Store(hc)
+	return t
+}
+
+// Set replaces the shared client. Callers should call CloseIdleConnections on
+// the one they replaced: it only closes IDLE connections, so a request already
+// in flight on the old client finishes undisturbed.
+func (t *Transport) Set(hc *http.Client) { t.hc.Store(hc) }
+
+// Get returns the client in force right now. Fetch calls it once per request,
+// so a request that starts before a reload completes runs entirely on the
+// transport it started with.
+func (t *Transport) Get() *http.Client { return t.hc.Load() }
+
 // Client is the HTTP boundary every collector in this flavor talks to.
 // Building it around a base URL, instead of reaching for http.DefaultClient
 // directly from a collector, is what makes collectors testable: point
 // NewClient at an httptest.Server instead of a real target.
+//
+// There are two deadline mechanisms here and exactly one is active per
+// construction path, which is what keeps the pre-v0.7 path unchanged:
+//
+//   - NewClient owns a PRIVATE *http.Client and puts the deadline on its
+//     Timeout field, leaving c.timeout at zero. This is what every shipped
+//     collector test and every repository scaffolded before v0.7 uses, and its
+//     connection behaviour is identical to what it always was.
+//   - NewClientOn SHARES a Transport with the other collectors of one machine,
+//     so the deadline cannot live on http.Client.Timeout (it would be the same
+//     for all of them). It goes in c.timeout and Fetch applies it as a context
+//     deadline instead, which is what lets one collector wait fifteen minutes
+//     while its sibling waits five seconds.
 type Client struct {
-	httpClient *http.Client
-	baseURL    string
+	tr      *Transport
+	baseURL string
+	timeout time.Duration // 0 means "the deadline is on the shared-nothing http.Client"
 }
 
 // NewClient builds a Client bound to target (a base URL, for example
-// "http://localhost:9100"), applying timeout to every request.
+// "http://localhost:9100"), applying timeout to every request. Unchanged
+// since v0.1: its transport is private to this Client and its deadline is
+// http.Client.Timeout.
 func NewClient(target string, timeout time.Duration) *Client {
 	return &Client{
-		httpClient: &http.Client{Timeout: timeout},
-		baseURL:    target,
+		tr:      NewTransport(&http.Client{Timeout: timeout}),
+		baseURL: target,
 	}
+}
+
+// NewClientOn binds a Client to a SHARED Transport, with its own per-collector
+// deadline. This is the multi-instance construction path: one Transport per
+// watched machine, one Client per collector polling it. A concurrency ceiling
+// on that same machine sits beside this Client, not inside it: see Limiter.
+//
+// A non-positive timeout is a programming error rather than "no deadline": the
+// shared http.Client carries no Timeout of its own, so a collector reaching
+// here without one would hang its poller forever. Callers that take the
+// timeout from a flag should reject a non-positive value at boot; see
+// instance.Handle.ClientFor, which returns an error for exactly this.
+func NewClientOn(tr *Transport, target string, timeout time.Duration) *Client {
+	return &Client{tr: tr, baseURL: target, timeout: timeout}
 }
 
 // NewHTTPClient builds the *http.Client carrying the authentication and TLS
@@ -69,13 +130,34 @@ func NewClient(target string, timeout time.Duration) *Client {
 // and credential files from disk, and leave the discarded transport holding
 // idle connections until IdleConnTimeout. An *http.Client and the transport
 // inside it are safe for concurrent use, which is what makes sharing correct.
+//
+// timeout of 0 is accepted on purpose, not a bug: a Client built with
+// NewClientOn shares the *http.Client returned here through a Transport with
+// other collectors that each carry their own deadline in Client.timeout
+// instead. Setting hc.Timeout to anything but 0 in that case would cap every
+// collector on the Transport to whichever one happened to build it first, so
+// the caller that shares this client passes 0 here and lets Fetch apply the
+// per-collector deadline as a context instead.
+//
+// NewClientFromConfig's own transport already sizes its idle connection pool
+// for many callers sharing one host, not one: it sets MaxIdleConnsPerHost to
+// 1000 (see prometheus/common/config, which cites
+// https://github.com/golang/go/issues/13801 for why net/http's own default of
+// 2 is too small to share), far above what even a few dozen collectors on one
+// machine would hold open at once. That is deliberate on the dependency's
+// part and is why this function does not also set idle connection limits of
+// its own: doing so would either duplicate a value already generous enough or
+// require reaching through whatever http.RoundTripper this config wraps the
+// base *http.Transport in (authentication, TLS reload, HTTP/2), which is not
+// guaranteed to be a *http.Transport at the top level.
 func NewHTTPClient(httpCfg promconfig.HTTPClientConfig, timeout time.Duration) (*http.Client, error) {
 	hc, err := promconfig.NewClientFromConfig(httpCfg, "@@NAMESPACE@@")
 	if err != nil {
 		return nil, fmt.Errorf("build HTTP client from http_client_config: %w", err)
 	}
 	// NewClientFromConfig sets no overall deadline, so apply the same
-	// per-request timeout NewClient applies.
+	// per-request timeout NewClient applies. 0 is left as 0: see this
+	// function's own doc comment on why that matters for a shared Transport.
 	hc.Timeout = timeout
 	return hc, nil
 }
@@ -83,7 +165,7 @@ func NewHTTPClient(httpCfg promconfig.HTTPClientConfig, timeout time.Duration) (
 // NewClientFor binds an already-built *http.Client to one base URL. Many
 // targets share one *http.Client, each paying only this struct.
 func NewClientFor(target string, hc *http.Client) *Client {
-	return &Client{httpClient: hc, baseURL: target}
+	return &Client{tr: NewTransport(hc), baseURL: target}
 }
 
 // NewClientWithConfig builds a Client whose transport carries the
@@ -119,12 +201,22 @@ func (c *Client) Fetch(ctx context.Context, path string) (data []byte, err error
 		RequestDuration.WithLabelValues(outcome).Observe(time.Since(start).Seconds())
 	}()
 
+	// The per-collector deadline, for Clients sharing a Transport (see
+	// NewClientOn). A Client built with NewClient never reaches this: its
+	// deadline lives on its own private http.Client.Timeout, so its c.timeout
+	// stays zero and this block is a no-op for it.
+	if c.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.timeout)
+		defer cancel()
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build request for %s: %w", path, err)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.tr.Get().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch %s: %w", path, err)
 	}
