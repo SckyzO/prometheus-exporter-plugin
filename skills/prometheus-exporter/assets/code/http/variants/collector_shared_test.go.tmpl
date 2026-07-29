@@ -314,8 +314,8 @@ func TestClientWithLimiterBoundsTheAcquireWaitOnNewClient(t *testing.T) {
 // acquire wait. WithLimiter is reachable from a live probe request goroutine
 // (see its own doc comment), where a panic would crash that request instead
 // of failing loudly at boot, so validating this combination belongs at
-// flag-parse time in whichever change wires
-// --exporter.max-requests-per-target, not here. Duplicated from
+// flag-parse time, in code/http/wiring/client_build.frag (the boot-time
+// check ahead of WithLimiter), not here. Duplicated from
 // code/http/collector_test.go.tmpl for the same reason the other Client
 // tests in this file are.
 func TestClientWithLimiterIsTotalEvenWithoutABoundedAcquireWait(t *testing.T) {

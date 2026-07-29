@@ -165,23 +165,19 @@ func NewClientOn(tr *Transport, target string, timeout time.Duration) *Client {
 // therefore wait unboundedly inside Fetch's acquire (see its own comment):
 // that is a real gap, left open on purpose rather than guarded badly here.
 //
-// The check belongs at flag-parse time, in whichever change wires
-// --exporter.max-requests-per-target and turns a ceiling on for the first
-// time: that change MUST reject, at boot, any collector whose own
-// --collector.<name>.timeout is non-positive while a ceiling is configured,
-// the same way instance.Handle.ClientFor already rejects a non-positive
-// NewClientOn timeout (see NewClientOn's own doc comment) by returning an
-// error instead of proceeding. Skipping that check would let
-// --collector.<name>.timeout=0s, a flag combination that works today with no
-// ceiling configured, combine with a configured ceiling to produce exactly
-// the unbounded wait this comment describes, and this method has no way to
-// catch that at the point it runs.
-//
-// That check now exists: see the single target model's
+// The check lives at flag-parse time instead: the single target model's
 // code/http/wiring/client_build.frag, spliced into main.go at
-// // @@CLIENT_BUILD@@, right before the exampleClient this method is called
-// on gets built. The multi-instance model needs no equivalent of its own:
-// instance.Handle.ClientFor above is that model's own flag-parse-time (well,
+// // @@CLIENT_BUILD@@, rejects at boot any collector whose own
+// --collector.<name>.timeout is non-positive while a ceiling is configured,
+// the same way instance.Handle.ClientFor rejects a non-positive NewClientOn
+// timeout (see NewClientOn's own doc comment) by returning an error instead
+// of proceeding, right before the exampleClient this method is called on
+// gets built. Skipping that check would let --collector.<name>.timeout=0s, a
+// flag combination that works today with no ceiling configured, combine
+// with a configured ceiling to produce exactly the unbounded wait described
+// above, and this method has no way to catch that at the point it runs. The
+// multi-instance model needs no equivalent of its own: instance.Handle.
+// ClientFor above is that model's own flag-parse-time (well,
 // reload-prepare-time) check, and it runs before this method ever does.
 func (c *Client) WithLimiter(lim *Limiter) *Client {
 	c.limiter = lim
@@ -364,6 +360,11 @@ func (c *Client) Fetch(ctx context.Context, path string) (data []byte, err error
 // existed.
 func (c *Client) acquire(ctx context.Context) (func(), error) {
 	if c.limiter == nil {
+		// Not a nil dereference: Acquire's own nil check (see its doc
+		// comment) is what decides "no limiter" means unlimited, and calling
+		// through the nil *Limiter here, rather than duplicating that
+		// no-op release here, keeps this the ONE place that decision is
+		// made.
 		return c.limiter.Acquire(ctx)
 	}
 	if c.acquireTimeout > 0 {

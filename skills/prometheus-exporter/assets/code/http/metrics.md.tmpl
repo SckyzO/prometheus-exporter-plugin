@@ -47,13 +47,17 @@ you adapt `ExampleCollector` into your real collector.
 
 ## Self-instrumentation
 
-Emitted regardless of which `--collector.*` flags are set: see
-[docs/configuration.md](configuration.md).
+On a `single` build, each row below is gated by its own `--collector.<name>`
+flag (`--collector.http_client_requests`, `--collector.http_client_request_wait`;
+both default `true`, negate with `--no-collector.<name>`), the same as any
+other collector. A `multi` build (which shares this file, see the `/probe`
+section below) registers both unconditionally instead, with no such flag.
+See [docs/configuration.md](configuration.md).
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
 | `@@NAMESPACE@@_exporter_request_duration_seconds` | Histogram | `outcome` | Duration in seconds of HTTP requests issued by this exporter's collectors, by outcome (`success` or `error`). Defined in `internal/collector/client.go`. |
-| `@@NAMESPACE@@_exporter_request_wait_seconds` | Histogram | - | Duration in seconds a request waited for a per-target concurrency slot before being issued. Only nonzero once `--exporter.max-requests-per-target` is set; a multi-target build never sets a ceiling, so this series is a permanent zero there. Defined in `internal/collector/limiter.go`. |
+| `@@NAMESPACE@@_exporter_request_wait_seconds` | Histogram | - | Duration in seconds a request waited for a per-target concurrency slot, whether or not one was granted. Only nonzero once `--exporter.max-requests-per-target` is set; a multi-target build never sets a ceiling, so this series is a permanent zero there. Defined in `internal/collector/limiter.go`. |
 | `@@NAMESPACE@@_exporter_collector_success` | Gauge | `collector` | Whether the last scrape of the collector succeeded (1=success, 0=failure). Defined in `internal/collector/status_tracker.go`. |
 | `@@NAMESPACE@@_exporter_collector_duration_seconds` | Gauge | `collector` | Duration of the last scrape for the collector, in seconds. Defined in `internal/collector/status_tracker.go`. |
 

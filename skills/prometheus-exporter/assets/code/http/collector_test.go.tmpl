@@ -530,8 +530,8 @@ func TestClientWithLimiterBoundsTheAcquireWaitOnNewClient(t *testing.T) {
 // reserves that for). WithLimiter is reachable from a live probe request
 // goroutine (see its own doc comment), where a panic would crash that
 // request instead of failing loudly at boot, so validating this combination
-// belongs at flag-parse time in whichever change wires
-// --exporter.max-requests-per-target, not here.
+// belongs at flag-parse time, in code/http/wiring/client_build.frag (the
+// boot-time check ahead of WithLimiter), not here.
 func TestClientWithLimiterIsTotalEvenWithoutABoundedAcquireWait(t *testing.T) {
 	c := NewClientFor("http://example.invalid", &http.Client{}) // Timeout left at zero
 	lim := NewLimiter(1)

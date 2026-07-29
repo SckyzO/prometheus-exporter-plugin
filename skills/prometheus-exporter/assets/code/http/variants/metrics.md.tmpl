@@ -45,13 +45,15 @@ serves the last cached result. Replace this section's rows when you adapt
 
 ## Self-instrumentation
 
-Emitted regardless of which `--collector.*` flags are set: see
+Always registered on this target model, with no `--collector.*` flag gating
+either row below: unlike a `single` build, `multi-instance` exposes no
+per-metric enable/disable flag for its own self-instrumentation. See
 [docs/configuration.md](configuration.md).
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
 | `@@NAMESPACE@@_exporter_request_duration_seconds` | Histogram | `outcome` | Duration in seconds of HTTP requests issued by this exporter's collectors, by outcome (`success` or `error`). Defined in `internal/collector/client.go`. |
-| `@@NAMESPACE@@_exporter_request_wait_seconds` | Histogram | - | Duration in seconds a request waited for a per-target concurrency slot before being issued. Only nonzero once `--exporter.max-requests-per-target` is set. Defined in `internal/collector/limiter.go`. |
+| `@@NAMESPACE@@_exporter_request_wait_seconds` | Histogram | - | Duration in seconds a request waited for a per-target concurrency slot, whether or not one was granted. Only nonzero once `--exporter.max-requests-per-target` is set. Defined in `internal/collector/limiter.go`. |
 | `@@NAMESPACE@@_exporter_collector_success` | Gauge | `collector` | Whether the last scrape of the collector succeeded (1=success, 0=failure). Defined in `internal/collector/status_tracker.go`. |
 | `@@NAMESPACE@@_exporter_collector_duration_seconds` | Gauge | `collector` | Duration of the last scrape for the collector, in seconds. Defined in `internal/collector/status_tracker.go`. |
 

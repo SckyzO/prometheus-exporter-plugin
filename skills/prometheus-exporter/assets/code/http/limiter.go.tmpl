@@ -8,8 +8,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// RequestWait records how long a request waited for a concurrency slot before
-// it was issued. Unlabelled, like RequestDuration next to it: the exporter's
+// RequestWait records how long a request waited for a concurrency slot,
+// whether it was eventually granted one or gave up when ctx was done first
+// (see Acquire below: both paths observe). Unlabelled, like RequestDuration
+// next to it: the exporter's
 // own registry carries no per-instance label, and the per-collector freshness
 // gauge the background variant already emits is what identifies WHICH
 // collector is starving. This one answers whether anything is queueing at all.
@@ -32,7 +34,7 @@ import (
 // wait on.
 var RequestWait = prometheus.NewHistogram(prometheus.HistogramOpts{
 	Name: "@@NAMESPACE@@_exporter_request_wait_seconds",
-	Help: "Duration in seconds a request waited for a per-target concurrency slot before being issued.",
+	Help: "Duration in seconds a request waited for a per-target concurrency slot, whether or not one was granted.",
 })
 
 // Limiter bounds how many requests this exporter has in flight against one
