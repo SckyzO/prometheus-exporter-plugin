@@ -59,6 +59,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`multi-instance`) or per module (`multi`), replacing a transport built
   fresh on every use. This is what makes both the reload and the
   concurrency ceiling above possible without a connection-pool explosion.
+- **`instance.Factory.New` takes a `*instance.Handle`, not an address and a
+  client config.** Affects repositories scaffolded with `--target-model
+  multi-instance`. The signature moves from
+  `func(addr string, hcfg *promconfig.HTTPClientConfig) (BackgroundCollector, error)`
+  to `func(h *instance.Handle) (BackgroundCollector, error)`: the Handle
+  owns the transport every collector of that machine now shares, built once
+  per machine so a reload can swap it underneath them without restarting
+  any poller. `/add-collector` detects the older, pre-Handle shape and
+  refuses to append to it rather than generate code that will not compile;
+  the supported route for a repository on that shape is to rescaffold with
+  `/new-prometheus-exporter` and port collector bodies across, the same
+  no-migration posture v0.6.0 already applies to `/add-collector`'s other
+  seam checks.
+- **The systemd unit's `ExecReload` is now per-target-model.** A
+  single-target scaffold no longer ships it active: `single` installs no
+  SIGHUP handler, so an active `ExecReload` there would let `systemctl
+  reload` deliver SIGHUP's OS default (terminate the process) instead of
+  the harmless `Job type reload is not applicable` refusal it gave before
+  this exporter had any reload mechanism at all. `multi` and
+  `multi-instance` keep it active: they install `internal/reload`'s own
+  SIGHUP handler.
 
 ## [0.6.0] - 2026-07-28
 
