@@ -57,7 +57,14 @@ type Handle struct {
 
 	tr      *collector.Transport
 	limiter *collector.Limiter
-	labels  prometheus.Labels
+
+	// labels are the identifying and extra labels this machine's series
+	// carry. Applied by prometheus.WrapRegistererWith at REGISTRATION, with
+	// the wrapper adding them at Collect time, so the collectors and their
+	// caches know nothing about them: that is what makes a label change
+	// cost a re-registration (see Registry.Commit's relabel handling) and
+	// not a poller restart.
+	labels prometheus.Labels
 
 	// clientConfig is the RESOLVED module content this machine's transport was
 	// built from, remembered so a reload can tell a real credential change from
@@ -113,13 +120,6 @@ func (h *Handle) SetTransport(hc *http.Client) *http.Client {
 	h.tr.Set(hc)
 	return old
 }
-
-// Labels returns the identifying and extra labels this machine's series carry.
-// They are applied by prometheus.WrapRegistererWith at REGISTRATION, and the
-// wrapper adds them at Collect time, so the collectors and their caches know
-// nothing about them. That is what makes a label change cost a re-registration
-// and not a poller restart.
-func (h *Handle) Labels() prometheus.Labels { return h.labels }
 
 // Factory builds one instance-bound background collector.
 //
