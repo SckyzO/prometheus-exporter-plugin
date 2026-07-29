@@ -61,11 +61,28 @@ var (
 		"Expose POST /-/reload, which reloads --config.file. SIGHUP always works and needs no flag.",
 	).Default("false").Bool()
 
-	// maxRequestsPerTarget bounds how many requests this exporter has in flight
-	// against ONE target at a time. 0, the default, means unlimited, which is
-	// the same posture --probe.target-allowlist takes with its empty value:
-	// this is opt-in hardening, not a default that moves under an operator who
-	// configured nothing.
+	// maxRequestsPerTarget bounds how many requests this exporter has in
+	// flight per WATCHED INSTANCE, not per physical address, despite its flag
+	// name (kept identical to the single target model's own
+	// --exporter.max-requests-per-target, which really is per-address there;
+	// see mains/single/main.go.tmpl). On this target model the enforcement
+	// boundary is instance.Handle, one per --config.file entry: instance.NewHandle
+	// gives each Handle its own Limiter, so two instances that happen to
+	// share one physical address are bounded INDEPENDENTLY, not together,
+	// and this exporter's aggregate concurrency against that one machine can
+	// exceed the configured value. This is a deliberate Task 8 design choice
+	// (a per-address index would need to be pre-populated to cover an
+	// instance a reload adds later, or rebuilt on every reload; per-Handle
+	// does neither), not an oversight, but it means this flag is not a hard
+	// cap on a physical machine watched under two different instance names.
+	// The help text below says so; see also the flag doc comment in
+	// mains/single/main.go.tmpl, where the same name means the stricter,
+	// per-address thing.
+	//
+	// 0, the default, means unlimited, which is the same posture
+	// --probe.target-allowlist takes with its empty value: this is opt-in
+	// hardening, not a default that moves under an operator who configured
+	// nothing.
 	//
 	// A ceiling turns a slow collector into a source of starvation for its
 	// siblings, so it is a deliberate choice with a visible cost. The wait is
@@ -74,7 +91,7 @@ var (
 	// visible rather than silent.
 	maxRequestsPerTarget = kingpin.Flag(
 		"exporter.max-requests-per-target",
-		"Maximum concurrent requests this exporter issues to one target. 0 (default) means unlimited.",
+		"Maximum concurrent requests this exporter issues per watched instance. 0 (default) means unlimited. Two instances sharing one physical address are bounded independently, not together.",
 	).Default("0").Int()
 
 	// configFile is REQUIRED for this target model: without it there are no

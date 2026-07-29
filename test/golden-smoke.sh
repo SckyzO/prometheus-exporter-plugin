@@ -533,6 +533,28 @@ if ! ( cd "$work" && ./bin/demo_exporter --config.file=config.example.yml --help
 fi
 echo "confirmed: config.example.yml loads ($flavor/$forge)"
 
+# --exporter.max-requests-per-target's boot-time guard (Task 10, obligation
+# 1): --collector.example.timeout=0s combined with a configured ceiling must
+# refuse to boot, naming the collector, rather than silently building a
+# Client whose limiter wait is unbounded. http-only and single-only: this
+# guard lives in the http flavor's client_build.frag, and only the single
+# target model builds a Client from --collector.<name>.timeout this way (cli
+# needs no equivalent guard: exampleData's context.WithTimeout(ctx, 0)
+# already bounds the wait instead of leaving it unbounded, and multi/
+# multi-instance never reach this flag combination the same way). Neither
+# make build nor make docs-check can catch a regression here: this is a
+# runtime refusal, not a compile-time or source-scan property.
+if [ "$flavor" = http ] && [ "$target_model" = single ]; then
+  echo "== --exporter.max-requests-per-target boot-time guard ($flavor/$forge) =="
+  refuse_log="$work/.golden-smoke-max-requests-refusal.log"
+  if ( cd "$work" && ./bin/demo_exporter --collector.example.timeout=0s --exporter.max-requests-per-target=1 >"$refuse_log" 2>&1 ); then
+    die "boot-time guard: exporter started with --collector.example.timeout=0s and a configured ceiling; it must refuse to boot ($flavor/$forge), see $refuse_log"
+  fi
+  grep -q 'a positive --collector.example.timeout is required' "$refuse_log" \
+    || die "boot-time guard: refusal message does not name the collector/timeout as expected ($flavor/$forge), see $refuse_log"
+  echo "confirmed: --collector.example.timeout=0s with a configured ceiling refuses to boot, naming the collector ($flavor/$forge)"
+fi
+
 # promtool check rules (Task 12): monitoring/prometheus/{alerts,rules}.yml must
 # be valid Prometheus rule files — the same anti-lie bar as docs-check, just
 # for PromQL instead of Go source. promtool itself is not in the tools image
@@ -836,6 +858,18 @@ EOF
       || die "http-multi-instance: /metrics is missing demo_exporter_collector_success{collector=\"example\",target=\"$inst\"}=1 ($flavor/$forge)"
   done
   echo "confirmed: /metrics carries collector_success=1 for both target=\"alpha\" and target=\"beta\", despite both backends being unreachable ($flavor/$forge)"
+
+  # --exporter.max-requests-per-target's own self-instrumentation series
+  # (Task 10): registered in mains/multi-instance/main.go.tmpl regardless of
+  # whether a ceiling was configured on THIS run (it was not, above), so it
+  # must still expose its HELP/TYPE line and a zero-valued _count, the same
+  # "declared, always present, a permanent zero without a ceiling" contract
+  # docs/metrics.md documents. Catches a registration line silently dropped
+  # or renamed, which neither make build nor make docs-check can see: both
+  # are source-level checks, not a live /metrics check.
+  grep -q '^demo_exporter_request_wait_seconds_count 0$' "$mi_out" \
+    || die "http-multi-instance: /metrics is missing demo_exporter_request_wait_seconds_count=0 ($flavor/$forge)"
+  echo "confirmed: /metrics carries demo_exporter_request_wait_seconds, registered and zero with no ceiling configured ($flavor/$forge)"
 
   echo "== http-multi-instance: promtool check metrics on /metrics ($flavor/$forge) =="
   if command -v promtool >/dev/null 2>&1; then
@@ -1387,14 +1421,20 @@ if [ "$flavor" = http ] && [ "$forge" = none ] && [ "$target_model" = single ]; 
   # and registry alone leaves queueTimeout declared and not used, which is a
   # compile error, so this sub-check is the executable contract that
   # /add-collector must fill all three.
-  # registry.frag also carries the http_client_requests self-instrumentation
-  # registration (shared, already wired once by scaffold.sh), filtered out
-  # of this copy so it is not registered a second time.
+  # registry.frag also carries the http_client_requests and
+  # http_client_request_wait self-instrumentation registrations (shared,
+  # already wired once by scaffold.sh), both filtered out of this copy so
+  # neither is registered a second time: kingpin panics on a duplicate long
+  # flag name ("--collector.http_client_requests"/"--collector.http_client_request_wait"),
+  # which make build cannot catch (it only fails at process startup, not at
+  # compile time), so a filter that misses either name here would leave a
+  # binary that builds clean and then dies on its first run.
   sed -e 's/example/queue/g' -e 's/Example/Queue/g' "$addc_client_frag" \
     | sed -e 's/@@DATA_SOURCE@@/http:\/\/localhost:9999/g' > "$addc_qclient"
   sed -e 's/example/queue/g' -e 's/Example/Queue/g' "$addc_build_frag" > "$addc_qbuild"
   sed -e 's/example/queue/g' -e 's/Example/Queue/g' "$addc_registry_frag" \
-    | grep -v 'register("http_client_requests"' > "$addc_qregistry"
+    | grep -v 'register("http_client_requests"' \
+    | grep -v 'register("http_client_request_wait"' > "$addc_qregistry"
 
   grep -q '^[[:blank:]]*// @@CLIENT_INIT@@[[:blank:]]*$' "$addc_main" || die "add-collector sub-check: no standalone // @@CLIENT_INIT@@ marker in $addc_main"
   sed -e '\|^[[:blank:]]*// @@CLIENT_INIT@@[[:blank:]]*$|r '"$addc_qclient" "$addc_main" > "$addc_main.tmp" && mv "$addc_main.tmp" "$addc_main"

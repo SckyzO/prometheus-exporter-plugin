@@ -370,6 +370,7 @@ collector's own test file. Copying them again is a Go compile error
 | cli | `func TestExecute_Success` | the shared `Execute` var in `execute.go` |
 | cli | `func TestExecute_CommandNotFound` | the shared `Execute` var in `execute.go` |
 | cli | `func TestCommandDuration_CustomRegistryReachable` | the shared `CommandDuration` histogram in `execute.go` |
+| cli | `func TestExecute_RecordsCommandDurationOnAnAbandonedLimiterWait` | the shared `CommandDuration`/`CommandLimiter` interaction in `execute.go` |
 
 Reuse `statusTrackerSuccessMetric` (already in scope, package-wide) in your
 own `Test<Name>Collector_StatusTracker*` tests instead of redeclaring it.

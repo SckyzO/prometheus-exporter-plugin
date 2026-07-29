@@ -41,10 +41,11 @@ var RequestWait = prometheus.NewHistogram(prometheus.HistogramOpts{
 // ticker, entirely outside the sequential collection StatusTracker performs, so
 // nothing else caps how many of them hit one machine at once.
 //
-// A nil *Limiter is a valid, unlimited limiter, which is the default today:
-// nothing in this scaffold constructs a non-nil one yet (that is a later
-// change's job, alongside the flag that will turn a ceiling on). The common
-// path, nil, costs one nil check and no allocation regardless.
+// A nil *Limiter is a valid, unlimited limiter, which is the default: it
+// takes a positive --exporter.max-requests-per-target to construct a real
+// one (see Limiters below and instance.NewHandle for the multi-instance
+// model's own construction site). The common path, nil, costs one nil check
+// and no allocation regardless.
 type Limiter struct {
 	slots chan struct{}
 }
@@ -125,3 +126,16 @@ func (s *LimiterSet) For(target string) *Limiter {
 	s.byTarget[target] = l
 	return l
 }
+
+// Limiters is the single, shared LimiterSet every single-target-model
+// collector's client_build wiring consults. It is a package-level var, not a
+// local one, specifically so it can be built exactly once no matter how many
+// collectors' client_build.frag runs in the same main(): the wiring that
+// constructs it (see code/http/wiring/client_build.frag) does so only when
+// this is still nil, so the first collector's frag builds the real
+// *LimiterSet and every later one, including anything /add-collector
+// appends, reuses that same set instead of silently replacing it. Reusing
+// the same set is what makes For's own promise hold across collectors, not
+// just within one: two collectors naming the same --collector.<name>.target
+// share one Limiter only if they consult the same LimiterSet.
+var Limiters *LimiterSet
