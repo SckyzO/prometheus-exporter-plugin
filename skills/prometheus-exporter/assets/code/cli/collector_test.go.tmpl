@@ -237,6 +237,83 @@ func TestExecute_CommandNotFound(t *testing.T) {
 	}
 }
 
+// TestExecute_RespectsCommandLimiter proves CommandLimiter actually reaches
+// the real Execute var (not the swapped stub every other test in this file
+// uses): with the only slot already held, a second call fails on its own
+// deadline instead of running the command, the same property
+// TestLimiterAcquireHonoursContext pins for Limiter itself. The short
+// deadline here bounds a channel wait inside Acquire, not a real command, so
+// this needs no slow subprocess and is not the timing-sensitive shape
+// TestExecute_CommandNotFound's own comment warns against.
+func TestExecute_RespectsCommandLimiter(t *testing.T) {
+	oldLimiter := CommandLimiter
+	defer func() { CommandLimiter = oldLimiter }()
+	CommandLimiter = NewLimiter(1)
+
+	release, err := CommandLimiter.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("acquire the only slot: %v", err)
+	}
+	defer release()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := Execute(ctx, "echo", "hello"); err == nil {
+		t.Fatal("Execute ran echo while the only CommandLimiter slot was held")
+	}
+}
+
+// TestExecute_RecordsCommandDurationOnAnAbandonedLimiterWait proves the fix
+// for the asymmetry between this flavor and the http one: CommandDuration
+// must observe an outcome even when CommandLimiter.Acquire never lets Execute
+// reach cmd.CombinedOutput, the same way the http flavor's Fetch already
+// records RequestDuration through its own deferred, named-return observation.
+// Before this fix, the observation was a plain inline call placed after
+// CombinedOutput returned, so a limiter timeout (which returns before
+// CombinedOutput ever runs) recorded nothing on this histogram at all.
+//
+// Swaps CommandDuration for a fresh, private HistogramVec so this assertion
+// does not depend on which label combinations earlier tests in this file
+// already touched: CommandDuration is a package-level singleton every other
+// test here also observes on, the same reason TestExecute_RespectsCommandLimiter
+// swaps CommandLimiter instead of reusing whatever the package default is.
+func TestExecute_RecordsCommandDurationOnAnAbandonedLimiterWait(t *testing.T) {
+	oldDuration := CommandDuration
+	defer func() { CommandDuration = oldDuration }()
+	CommandDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name: "test_command_duration_seconds",
+		Help: "private CommandDuration standing in for this test only.",
+	}, []string{"outcome"})
+
+	oldLimiter := CommandLimiter
+	defer func() { CommandLimiter = oldLimiter }()
+	CommandLimiter = NewLimiter(1)
+
+	release, err := CommandLimiter.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("acquire the only slot: %v", err)
+	}
+	defer release()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := Execute(ctx, "echo", "hello"); err == nil {
+		t.Fatal("Execute ran echo while the only CommandLimiter slot was held")
+	}
+
+	reg := prometheus.NewRegistry()
+	if err := reg.Register(CommandDuration); err != nil {
+		t.Fatalf("Register(CommandDuration): %v", err)
+	}
+	count, err := testutil.GatherAndCount(reg, "test_command_duration_seconds")
+	if err != nil {
+		t.Fatalf("GatherAndCount: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf(`GatherAndCount = %d, want 1: Execute's abandoned CommandLimiter wait must still record an observation on CommandDuration (outcome="error"), not skip it`, count)
+	}
+}
+
 // TestCommandDuration_CustomRegistryReachable locks the same Critical-bug
 // shape the HTTP flavor's RequestDuration test guards against: CommandDuration
 // must be a plain, exported *prometheus.HistogramVec that this exporter's own

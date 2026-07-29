@@ -45,12 +45,15 @@ serves the last cached result. Replace this section's rows when you adapt
 
 ## Self-instrumentation
 
-Emitted regardless of which `--collector.*` flags are set: see
+Always registered on this target model, with no `--collector.*` flag gating
+either row below: unlike a `single` build, `multi-instance` exposes no
+per-metric enable/disable flag for its own self-instrumentation. See
 [docs/configuration.md](configuration.md).
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
 | `@@NAMESPACE@@_exporter_request_duration_seconds` | Histogram | `outcome` | Duration in seconds of HTTP requests issued by this exporter's collectors, by outcome (`success` or `error`). Defined in `internal/collector/client.go`. |
+| `@@NAMESPACE@@_exporter_request_wait_seconds` | Histogram | - | Duration in seconds a request waited for a per-target concurrency slot, whether or not one was granted. Only nonzero once `--exporter.max-requests-per-target` is set. Defined in `internal/collector/limiter.go`. |
 | `@@NAMESPACE@@_exporter_collector_success` | Gauge | `collector` | Whether the last scrape of the collector succeeded (1=success, 0=failure). Defined in `internal/collector/status_tracker.go`. |
 | `@@NAMESPACE@@_exporter_collector_duration_seconds` | Gauge | `collector` | Duration of the last scrape for the collector, in seconds. Defined in `internal/collector/status_tracker.go`. |
 
@@ -62,7 +65,35 @@ per-collector health metrics (`@@NAMESPACE@@_exporter_collector_success` /
 `_duration_seconds`) additionally carry the `@@INSTANCE_LABEL@@` label (plus any
 per-instance labels you declare), applied by the exporter per instance rather
 than by the collector, so it is not part of the collector's own descriptor and
-`make docs-check` does not see it. The one exception is
-`@@NAMESPACE@@_exporter_request_duration_seconds`: a single process-wide
-histogram shared across every instance, so it is labeled only by `outcome`,
-never by `@@INSTANCE_LABEL@@`. See [docs/configuration.md](configuration.md).
+`make docs-check` does not see it. The two exceptions are
+`@@NAMESPACE@@_exporter_request_duration_seconds` and
+`@@NAMESPACE@@_exporter_request_wait_seconds`: both single, process-wide
+histograms shared across every instance (the concurrency ceiling itself is
+per-instance, see `internal/instance/instance.go`'s `Handle`, but the
+histogram recording it is not), so neither carries `@@INSTANCE_LABEL@@`; the
+first is labeled only by `outcome`, the second carries no labels at all. See
+[docs/configuration.md](configuration.md).
+
+## Configuration reload metrics
+
+Two gauges, defined in `internal/reload/reload.go`, a sibling package to
+`internal/collector/`. Listed here as prose rather than a
+`docs-check`-parsed table row on purpose: `make docs-check` (see this file's
+own header comment) only scans `internal/collector/*.go`, so it can never
+see `internal/reload`'s metrics either way; documenting them as a regular
+table row would make `docs-check` report them as a lie against a directory
+it was never told to look at.
+
+- `@@NAMESPACE@@_exporter_config_last_reload_successful` (Gauge, no labels):
+  whether the last configuration reload attempt succeeded (`1`) or failed
+  (`0`). Set to `1` before the server starts serving, so the gauge is
+  meaningful from the very first scrape rather than absent until somebody
+  reloads.
+- `@@NAMESPACE@@_exporter_config_last_reload_success_timestamp_seconds`
+  (Gauge, no labels): Unix time of the last SUCCESSFUL configuration reload.
+
+This target model always wires reload: `SIGHUP` needs no flag, and
+`POST /-/reload` is available behind `--web.enable-lifecycle`. Neither gauge
+carries the `@@INSTANCE_LABEL@@` label: a reload is a property of the
+configuration file as a whole, not of any one watched instance. See
+[docs/configuration.md](configuration.md) and `SECURITY.md`.

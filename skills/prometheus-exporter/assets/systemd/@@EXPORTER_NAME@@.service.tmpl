@@ -34,6 +34,24 @@ ExecStart=/usr/local/bin/@@EXPORTER_NAME@@ --web.listen-address=":@@DEFAULT_PORT
 Restart=on-failure
 RestartSec=5
 
+# `systemctl reload @@EXPORTER_NAME@@` sends SIGHUP. On a multi-target or
+# multi-instance build (--target-model multi / multi-instance), this exporter
+# handles SIGHUP itself: it re-reads --config.file in place and keeps serving,
+# no restart, no dropped connection (see docs/configuration.md's
+# "Configuration reload" section), so ExecReload below is wired.
+#
+# On a single-target build (the default), this exporter installs no SIGHUP
+# handler at all, so scaffold.sh comments ExecReload out for that target
+# model: without it, `systemctl reload` refuses at the systemd level ("Job
+# type reload is not applicable") instead of ever reaching the process. Were
+# it left active, that same command would deliver SIGHUP's OS default
+# (terminate) to the DEFAULT target model, and Restart=on-failure above would
+# then turn every `systemctl reload` into a five-second outage and a scrape
+# gap instead of the harmless no-op it was before this exporter had any
+# reload mechanism at all. Use `systemctl restart` to pick up an edited
+# --config.file or changed flags on a single-target build.
+ExecReload=/bin/kill -HUP $MAINPID
+
 # --- Hardening --------------------------------------------------------------
 # Safe unconditionally for this binary (it never needs to gain privileges via
 # a setuid/setgid/file-capability helper) - mirrors the

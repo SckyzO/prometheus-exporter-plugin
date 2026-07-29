@@ -123,6 +123,25 @@ groups:
           summary: '@@EXPORTER_NAME@@ collector {{ $labels.collector }} critically slow'
           description: 'Collector {{ $labels.collector }} on {{ $labels.@@COLLECTOR_LOCATION@@ }} took {{ printf "%.1f" $value }}s on its last scrape (threshold: 20s). Approaching a typical scrape_timeout. The next scrape may fail outright.'
 
+      # A configuration reload was refused: the running process is still on
+      # its previous configuration, not the one on disk. Only a multi-target
+      # or multi-instance build ever emits this gauge (internal/reload,
+      # wired into --target-model multi and multi-instance; a single-target
+      # build has no reload at all, see docs/configuration.md), so this rule
+      # simply never fires there: the metric it selects is absent, not zero.
+      - alert: ConfigReloadFailed
+        expr: @@NAMESPACE@@_exporter_config_last_reload_successful == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: exporter
+        annotations:
+          summary: '{{ $labels.job }} rejected its last configuration reload'
+          description: >
+            The exporter is still running its previous configuration. The file on
+            disk and the running process disagree, so the next restart will pick up
+            whatever is wrong. Check the exporter's log for the refusal.
+
       # ──────────────────────────────────────────────────────────────────
       # EXAMPLE: business alert (commented out: not loaded by Prometheus)
       # ──────────────────────────────────────────────────────────────────

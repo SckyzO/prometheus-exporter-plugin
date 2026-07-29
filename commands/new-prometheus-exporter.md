@@ -203,6 +203,37 @@ instead (including a residual-`@@VAR@@`-sentinel error), that means a
 variable above is missing or wrong; fix the invocation and retry rather than
 working around the failure.
 
+## 3b. Apply the concurrency ceiling, if the brief recorded one
+
+If the brief consumed in step 0 carries a `Concurrency ceiling:` line under
+`## Architecture decisions` (only present when `/design-exporter` asked its
+follow-up: target model `multi-instance`, or `single` with at least one
+background collector), set `exporter.max-requests-per-target` in the
+just-scaffolded `<target-dir>/config.example.yml`'s `flags:` section to:
+
+- **`Concurrency ceiling: unlimited`**: commented out, e.g.
+  `# exporter.max-requests-per-target: 4`, documenting the option without
+  changing the shipped unlimited default.
+- **`Concurrency ceiling: <N>`**: active, `exporter.max-requests-per-target:
+  <N>`, using the number the user gave.
+
+Edit in place, don't just append. Check first whether a line naming
+`exporter.max-requests-per-target` (commented or not) already exists under
+`flags:` (it will: `config.example.yml.tmpl` ships one, commented out): if
+so, rewrite that line to the state above; if not, add one, alongside the
+other top-level flags. Either way the file must end
+up with exactly one `exporter.max-requests-per-target` line: `flags:` reads
+each key once, and duplicating it would violate the file's own header
+comment, which promises no setting is ever expressible in two places.
+
+No brief, or a brief with no `Concurrency ceiling:` line: leave
+`config.example.yml` exactly as scaffold.sh produced it; there is nothing to
+apply. This never triggers on a `multi` scaffold: `/design-exporter` never
+asks the follow-up there, and `--exporter.max-requests-per-target` does not
+exist on a multi-target binary in the first place, since a probed target
+arrives per request rather than accumulating a persistent per-target
+limiter.
+
 ## 4. Initialize git and make the first commit
 
 ```sh
@@ -263,3 +294,9 @@ credentials), `b` is the block marked "Convention 1", `c` is the block marked
 "Convention 2". Point them at `docs/configuration.md`'s `### Selecting a
 module` section either way, for the scrape config that goes with whichever
 block they uncomment.
+
+If the architecture brief recorded a concurrency ceiling
+(`Concurrency ceiling: unlimited|<N>` under `## Architecture decisions`),
+step 3b above already applied it to `config.example.yml`; point the user
+there, and at `<namespace>_exporter_request_wait_seconds` in
+`docs/metrics.md`, to see it in effect once the exporter is running.

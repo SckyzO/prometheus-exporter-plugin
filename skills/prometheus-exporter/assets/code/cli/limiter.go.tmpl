@@ -1,0 +1,88 @@
+package collector
+
+import (
+	"context"
+	"sync"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+)
+
+// RequestWait records how long a command invocation waited for a
+// concurrency slot, whether it was eventually granted one or gave up when
+// ctx was done first (see Acquire below: both paths observe). Unlabelled,
+// matching CommandDuration next to it in execute.go: this flavor has one
+// shared command-execution boundary (the package-level Execute var), not
+// one Client per target, so there is nothing to label a wait by.
+//
+// Registered alongside --exporter.max-requests-per-target, the flag that
+// turns a ceiling on: registry.frag registers it the same way it registers
+// CommandDuration, so it reaches this flavor's only target model's /metrics.
+//
+// Observed whenever CommandLimiter is actually set to a real ceiling, even
+// when a slot is immediately free (the wait is then near zero). On the nil
+// fast path (no ceiling configured, the default) Acquire returns before
+// touching this histogram at all, matching the "costs one nil check and no
+// allocation" contract below: there is nothing to report when there is no
+// ceiling to wait on.
+var RequestWait = prometheus.NewHistogram(prometheus.HistogramOpts{
+	Name: "@@NAMESPACE@@_exporter_request_wait_seconds",
+	Help: "Duration in seconds a command invocation waited for a concurrency slot, whether or not one was granted.",
+})
+
+// Limiter bounds how many invocations of the target command this exporter
+// runs at once. It exists because a background-refresh collector variant
+// runs Execute from its own goroutine on its own ticker, entirely outside
+// any scrape, so nothing else caps how many commands run concurrently.
+//
+// A nil *Limiter is a valid, unlimited limiter. That is the default (no
+// ceiling configured), so the common path costs one nil check and no
+// allocation. See CommandLimiter in execute.go, the package-level var this
+// type exists to back.
+//
+// Unlike the http flavor's sibling limiter.go, this file carries no
+// LimiterSet. That type indexes one Limiter per target address, for a model
+// where several Clients can each name a different --collector.<name>.target
+// and must share a ceiling only when their addresses match. This flavor has
+// no per-target Client at all, only the one shared Execute boundary every
+// collector calls through, so there is no address to index by: one Limiter
+// is already everything a ceiling here needs.
+type Limiter struct {
+	slots chan struct{}
+}
+
+// NewLimiter returns a limiter admitting at most limit concurrent
+// invocations, or nil when limit is not positive, meaning unlimited.
+func NewLimiter(limit int) *Limiter {
+	if limit <= 0 {
+		return nil
+	}
+	return &Limiter{slots: make(chan struct{}, limit)}
+}
+
+// Acquire blocks until a slot is free or ctx is done, and returns the
+// function that gives the slot back. The returned release is always safe to
+// call, and is a no-op when err is non-nil, so callers can defer it
+// unconditionally after checking the error.
+//
+// Honouring ctx is what makes a ceiling safe to turn on: the caller's own
+// deadline (a collector's --collector.<name>.timeout, already applied to ctx
+// before Execute runs, see execute.go's own comment) bounds the wait, so a
+// starved collector fails its refresh, logs, and keeps its previous cache.
+// Without it a collector would sit in the queue with nothing bounding how
+// long, and nothing reporting that it was stuck.
+func (l *Limiter) Acquire(ctx context.Context) (func(), error) {
+	if l == nil {
+		return func() {}, nil
+	}
+	start := time.Now()
+	select {
+	case l.slots <- struct{}{}:
+		RequestWait.Observe(time.Since(start).Seconds())
+		var once sync.Once
+		return func() { once.Do(func() { <-l.slots }) }, nil
+	case <-ctx.Done():
+		RequestWait.Observe(time.Since(start).Seconds())
+		return func() {}, ctx.Err()
+	}
+}

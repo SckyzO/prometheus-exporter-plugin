@@ -111,6 +111,42 @@ Whatever the ladder grounded, and whatever gaps it left, run
    signalled it. A "yes" is recorded here, under this same decision, and
    becomes the signal for `/add-collector --variant background <name>` once
    scaffolding begins.
+
+   Once the collector list is settled, and only if the target model is
+   `multi-instance`, or `single` with at least one collector marked
+   background above, ask one more follow-up. Like the credential-convention
+   follow-up under decision 2, it decides a `config.example.yml` setting,
+   not any code:
+
+   > Does this target tolerate several requests at once? Some devices and
+   > appliances serialize internally, or degrade sharply, and this exporter
+   > can hold at most N requests open against one machine at a time. Leave
+   > it unlimited unless you know otherwise; a ceiling makes a slow
+   > collector delay its siblings, which the freshness gauge and
+   > `<namespace>_exporter_request_wait_seconds` will show.
+
+   Never ask this for `multi`: it has no background pollers and no ceiling
+   flag at all. Where it does apply, what "at most N requests open against
+   one machine at a time" actually bounds depends on both the model and the
+   I/O flavor, not just the model, so state the real scope rather than let
+   the user assume the same shape everywhere:
+
+   - `multi-instance` bounds each watched *instance* independently: two
+     `instances:` entries that happen to share one physical address are
+     still bounded on their own, not jointly.
+   - `single` with the `http` flavor bounds each collector's own
+     `--collector.<name>.target` *address*: two collectors pointed at the
+     same address share one ceiling; collectors on different addresses do
+     not.
+   - `single` with the `cli` flavor has no per-target client and no
+     per-address index to key by, only one shared command-execution
+     boundary every collector calls through. The ceiling there is
+     exporter-wide: it caps total concurrent command invocations across
+     every collector combined, regardless of which machine each one
+     targets.
+
+   Record the answer under `## Architecture decisions` in the brief, as
+   `Concurrency ceiling: unlimited` or `Concurrency ceiling: <N>`.
 5. **Cardinality budget** per collector: labels, worst-case series count,
    any reduction flag.
 6. **Business-alert candidates** per collector, one line each.

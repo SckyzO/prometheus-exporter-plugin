@@ -54,8 +54,9 @@
 #   - Strips the .tmpl suffix from file names.
 #   - Selects mains/<target-model>/main.go.tmpl as the one cmd/<name>/main.go,
 #     then removes the whole mains/ staging tree; drops internal/probe/ unless
-#     --target-model multi, and drops internal/instance/ unless --target-model
-#     multi-instance.
+#     --target-model multi, drops internal/instance/ unless --target-model
+#     multi-instance, and drops internal/reload/ unless --target-model multi
+#     or multi-instance.
 #   - Fills main.go's structural markers: // @@CLIENT_INIT@@,
 #     // @@CLIENT_BUILD@@ and // @@COLLECTOR_REGISTRY@@ (single-target),
 #     // @@PROBE_FACTORIES@@ (multi-target), // @@INSTANCE_FACTORIES@@
@@ -310,30 +311,69 @@ if [ "$target_model" != multi-instance ]; then
   rm -rf "$dst/internal/instance"
 fi
 
-# client_model is a direct dependency ONLY for a multi-target scaffold:
-# internal/probe imports "github.com/prometheus/client_model/go" directly,
-# but nothing under a single-target tree does (client_golang itself needs it
-# only transitively). go.mod.tmpl therefore ships client_model in the
-# INDIRECT require() block unconditionally, and this reclassifies it to the
-# direct block here, at scaffold time, ONLY for --target-model multi,
-# deliberately NOT a static go.mod.tmpl edit, which would leave a
-# single-target scaffold's go.mod direct/indirect split permanently out of
-# sync with what `go mod tidy` would produce (verified empirically:
-# `go mod tidy` immediately demotes it back to indirect on a single-target
-# tree, since nothing there imports it directly), a real regression against
-# this plan's own single-target-tree-is-unchanged constraint. Anchored on the
-# module path only (no version pin) for BOTH the client_golang insertion
-# point and the client_model line being deleted: the version spliced into
-# the direct block is READ OFF that deleted indirect line at scaffold time,
-# never hardcoded here, so a future Dependabot bump of client_model's version
-# in go.mod.tmpl can't silently desync the inserted line from the deleted
-# one. (A prior version of this block hardcoded the version on both sides:
-# a go.mod.tmpl bump would then leave the version-pinned delete regex no
+# internal/reload/ is for the configuration-file-driven models only. A
+# single-target scaffold's file holds "flags:" (which cannot be reloaded, see
+# internal/config) and "http_client_config:" (whose file-backed secrets and TLS
+# material prometheus/common already re-reads per request), so there would be
+# nothing left for a reload to do there.
+if [ "$target_model" != multi ] && [ "$target_model" != multi-instance ]; then
+  rm -rf "$dst/internal/reload"
+fi
+
+# The systemd unit's ExecReload is per-target-model surgery for the same
+# reason internal/reload/ itself is: a single-target build installs no SIGHUP
+# handler (the block above just removed the only package that would), so
+# leaving ExecReload active would let `systemctl reload` reach the process
+# and hit SIGHUP's OS default (terminate) instead of the harmless
+# "Job type reload is not applicable" refusal systemd gives when no
+# ExecReload= is set at all. Comment the line out rather than delete it, so
+# it stays discoverable (and correct) for anyone who copies this unit
+# elsewhere. multi and multi-instance keep it active: they installed
+# internal/reload above, which does handle SIGHUP.
+if [ "$target_model" = single ]; then
+  svc=""
+  for f in "$dst"/systemd/*.service.tmpl; do
+    [ -f "$f" ] || continue
+    [ -z "$svc" ] || die "expected exactly one systemd/*.service.tmpl, found more than one"
+    svc=$f
+  done
+  # No unit at all is legitimate, not a fault: this engine also materializes
+  # reduced template trees (test/fixtures/mini-template is one), and a tree
+  # that ships no systemd/ has nothing to disable. Dying here would make every
+  # such caller fail on a step that does not apply to it.
+  if [ -n "$svc" ]; then
+    sed -e 's/^ExecReload=/# ExecReload=/' "$svc" > "$svc.scaffoldtmp"
+    mv "$svc.scaffoldtmp" "$svc"
+  fi
+fi
+
+# client_model is a direct dependency for a multi-target OR multi-instance
+# scaffold, never for single: internal/probe (multi only) and
+# internal/reload's own test file (multi AND multi-instance, see
+# internal/reload/reload_test.go.tmpl's "dto" import) both import
+# "github.com/prometheus/client_model/go" directly, but nothing under a
+# single-target tree does (client_golang itself needs it only transitively).
+# go.mod.tmpl therefore ships client_model in the INDIRECT require() block
+# unconditionally, and this reclassifies it to the direct block here, at
+# scaffold time, for --target-model multi OR multi-instance, deliberately
+# NOT a static go.mod.tmpl edit, which would leave a single-target
+# scaffold's go.mod direct/indirect split permanently out of sync with what
+# `go mod tidy` would produce (verified empirically: `go mod tidy`
+# immediately demotes it back to indirect on a single-target tree, since
+# nothing there imports it directly), a real regression against this plan's
+# own single-target-tree-is-unchanged constraint. Anchored on the module
+# path only (no version pin) for BOTH the client_golang insertion point and
+# the client_model line being deleted: the version spliced into the direct
+# block is READ OFF that deleted indirect line at scaffold time, never
+# hardcoded here, so a future Dependabot bump of client_model's version in
+# go.mod.tmpl can't silently desync the inserted line from the deleted one.
+# (A prior version of this block hardcoded the version on both sides: a
+# go.mod.tmpl bump would then leave the version-pinned delete regex no
 # longer matching the now-bumped indirect line (so it survived) while the
 # insert still fired with the stale hardcoded version, landing client_model
 # TWICE with two conflicting versions and breaking `go build`/`go mod tidy`
-# for multi-target scaffolds only.)
-if [ "$target_model" = multi ] && [ -f "$dst/go.mod.tmpl" ]; then
+# for multi/multi-instance scaffolds only.)
+if { [ "$target_model" = multi ] || [ "$target_model" = multi-instance ]; } && [ -f "$dst/go.mod.tmpl" ]; then
   # [[:blank:]]* here, not a literal tab: unlike the sed addresses below (GNU
   # sed treats \t as tab, verified empirically), GNU grep's default (non -P)
   # mode does NOT expand \t to a tab in the pattern, so a \t-anchored grep
@@ -341,7 +381,7 @@ if [ "$target_model" = multi ] && [ -f "$dst/go.mod.tmpl" ]; then
   # this fix. Mirrors this same script's own marker-matching grep further
   # down ("^[[:blank:]]*// $marker[[:blank:]]*\$").
   clientmodelline=$(grep '^[[:blank:]]*github\.com/prometheus/client_model[[:blank:]]' "$dst/go.mod.tmpl" | head -n 1)
-  [ -n "$clientmodelline" ] || die "go.mod.tmpl has no github.com/prometheus/client_model require line to reclassify for --target-model multi"
+  [ -n "$clientmodelline" ] || die "go.mod.tmpl has no github.com/prometheus/client_model require line to reclassify for --target-model $target_model"
   clientmodelversion=$(printf '%s\n' "$clientmodelline" | awk '{print $2}')
   [ -n "$clientmodelversion" ] || die "could not read a version out of go.mod.tmpl's client_model line: $clientmodelline"
   clientmodelfrag=$(mktemp)

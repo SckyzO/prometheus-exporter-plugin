@@ -56,8 +56,12 @@ so treat that file as a secret.
   rotate separately, and keep it out of the configuration you might paste into
   an issue. `password`, `bearer_token`, `credentials` and `key` accept the
   value inline; that is supported, not recommended.
-- **Restrict the file's permissions.** It is read once at startup by the user
-  running the exporter, so `0600` owned by that user is enough. The same goes
+- **Restrict the file's permissions.** `0600` owned by the user running the
+  exporter is enough, whether it is read once at startup only (a
+  single-target build, or `multi`/`multi-instance` before their first
+  reload) or re-read later by SIGHUP/`POST /-/reload` (see below): every
+  read, at startup or at reload, is done by that same process running as
+  that same user, so the permission bound does not change. The same goes
   for any file a `_file` key points at.
 - **Paths inside the file resolve relative to the file itself**, not to the
   working directory the exporter was started from. A unit started from `/` and
@@ -73,12 +77,35 @@ so treat that file as a secret.
   shipped.
 
 Credentials declared in `--config.file`, whether in the top-level
-`http_client_config:` or in a `modules:` entry, are read once at startup.
-There is no reload on SIGHUP, so rotating a credential means restarting the
-process. A module is selected per request (`?module=` on a multi-target
-build's `/probe`) or once at boot (an instance's `module:` key on a
-multi-instance build); either way it is never a metric label and never
-reaches any series this exporter exposes.
+`http_client_config:` or in a `modules:` entry, are read at startup. On a
+multi-target build (`--target-model multi`) or a multi-instance build
+(`--target-model multi-instance`), SIGHUP (always) and `POST /-/reload`
+(once `--web.enable-lifecycle` is set) re-read them without restarting the
+process. A single-target build (`--target-model single`, the default) has no
+reload at all: its configuration file holds only a `flags:` section, applied
+once at startup and never revisited, and an `http_client_config:` section
+whose file-backed secrets and TLS material (`password_file`,
+`bearer_token_file`, `ca_file`, `cert_file`, `key_file`) `prometheus/common`
+already re-reads from disk on every outbound request, so there is nothing
+left for a reload to apply there. Rotating a `_file`-backed credential on a
+single-target build therefore takes effect on its own, with no restart and
+no reload; rotating an inline value (`password`, `bearer_token`, `key`, none
+of which are recommended, see above) still means restarting the process,
+since nothing re-parses the configuration file to pick it up. A module is
+selected per request (`?module=` on a multi-target build's `/probe`) or once
+at boot (an instance's `module:` key on a multi-instance build); either way
+it is never a metric label and never reaches any series this exporter
+exposes.
+
+`POST /-/reload` is a mutating endpoint. It is gated behind
+`--web.enable-lifecycle`, default `false`: the same conservative-default
+reasoning as everything else in this file, since shipping every generated
+exporter an unauthenticated way to force a configuration reload would be the
+one change here that degrades the default posture of an operator who
+configured nothing. SIGHUP needs no flag: sending it already requires being
+on the machine. See [docs/configuration.md](docs/configuration.md) for the
+full reload surface (what SIGHUP and `POST /-/reload` do, and what a refused
+reload leaves running).
 
 See [docs/configuration.md](docs/configuration.md) for the file's format and
 the precedence rules.

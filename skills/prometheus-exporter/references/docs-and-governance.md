@@ -65,6 +65,23 @@ reason to track; without `-count=1` a doc-only edit could serve a stale
 cached `PASS`, exactly the failure mode a drift-detector must never have:
 see `makefile-and-tooling.md`).
 
+**Only `internal/collector/*.go` is ever scanned, non-recursively.** A
+metric defined anywhere else, `internal/probe/probe.go`'s `probe_success`/
+`probe_duration_seconds` or `internal/reload/reload.go`'s two
+configuration-reload gauges, is invisible to this check by construction, in
+both directions: it can never be flagged as undocumented, and a plain
+`| \`metric_name\` | ... |` table row naming it would be flagged as a LIE
+(documented, but absent from `internal/collector/*.go`), on every build,
+regardless of whether that metric is actually registered somewhere else.
+`docs/metrics.md`'s shipped template files document both of these as prose
+bullet points instead of parseable table rows, specifically to stay outside
+`parseMetricsDoc`'s table-row regex: the existing "Multi-target `/probe`
+metrics" section is the original worked example of this technique, and the
+"Configuration reload metrics" section added once `internal/reload/` exists
+follows the identical shape. Reach for the same technique for any future
+metric that lives outside `internal/collector/`; never for one that already
+lives inside it, where a real table row is both possible and required.
+
 **What it does, precisely**: parses every non-test `*.go` file directly
 under `internal/collector/` via `go/ast`, statically resolving every
 `prometheus.NewDesc(...)` call and every Opts-based constructor

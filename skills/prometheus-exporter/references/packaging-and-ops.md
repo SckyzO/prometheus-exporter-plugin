@@ -188,8 +188,29 @@ Group=@@EXPORTER_NAME@@
 ExecStart=/usr/local/bin/@@EXPORTER_NAME@@ --web.listen-address=":@@DEFAULT_PORT@@"
 Restart=on-failure
 RestartSec=5
+# ExecReload=/bin/kill -HUP $MAINPID
 NoNewPrivileges=true
 ```
+
+`ExecReload` is what makes `systemctl reload @@EXPORTER_NAME@@` do anything
+at all: without it, `reload` fails outright with "Job type reload is not
+applicable". Whether it ships active or commented out is per-target-model
+surgery `scaffold.sh` performs after rendering, because what `SIGHUP` does
+is decided by the generated `cmd/@@EXPORTER_NAME@@/main.go`, not by the
+unit file itself. On a multi-target or multi-instance build,
+`internal/reload` catches `SIGHUP` and reloads `--config.file` in place: no
+restart, no dropped connection, so `scaffold.sh` leaves `ExecReload` active.
+On a single-target build (the default, shown above), nothing in `main.go`
+installs a `SIGHUP` handler at all (`internal/reload` is not shipped there,
+see `exporter-architecture.md`'s three-model comparison), so a `SIGHUP`
+reaching the process would fall through to its OS default and terminate it;
+`Restart=on-failure` immediately above would then turn every `systemctl
+reload` into a five-second outage instead of the harmless in-place reload
+the other two target models get. `scaffold.sh` comments the line out for
+that target model rather than deleting it, so it stays discoverable (and
+correct) for anyone who copies the unit elsewhere; use `systemctl restart`
+to pick up an edited `--config.file` or changed flags on a single-target
+build instead.
 
 The unit's own comment is explicit that this user must be created *before*
 enabling the service (`useradd --system --no-create-home --shell
@@ -281,6 +302,12 @@ cache, and neither file needs to `COPY` the other's contents into an image.
       `NoNewPrivileges=true` is active unconditionally, and the stricter
       block below it is uncommented progressively, re-testing after each
       directive.
+- [ ] `ExecReload=/bin/kill -HUP $MAINPID` is active for `multi` and
+      `multi-instance` builds (they ship `internal/reload` and handle
+      `SIGHUP` in place) and commented out (`# ExecReload=...`) for
+      `single` builds (the default), which install no `SIGHUP` handler and
+      would otherwise turn every `systemctl reload` into a
+      `Restart=on-failure` outage.
 - [ ] `.dockerignore` excludes build artifacts, fixtures, docs, and packaging
       assets, never `go.mod`/`go.sum`/`cmd/`/`internal/`, which the
       multi-stage builds actually need in context.

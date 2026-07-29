@@ -573,3 +573,44 @@ func TestResolveModulesRejectsTopLevelClientConfigAlongsideModules(t *testing.T)
 		t.Errorf("error does not name the offending section: %v", err)
 	}
 }
+
+func TestDiffFlagsNamesEveryChangedKey(t *testing.T) {
+	boot := &Config{Flags: map[string]interface{}{
+		"log.level":          "info",
+		"web.listen-address": []interface{}{":9999"},
+	}}
+	next := &Config{Flags: map[string]interface{}{
+		"log.level":         "debug", // changed
+		"collector.example": false,   // added
+		// web.listen-address removed
+	}}
+
+	got := DiffFlags(boot, next)
+	want := []string{"collector.example", "log.level", "web.listen-address"}
+	if len(got) != len(want) {
+		t.Fatalf("DiffFlags returned %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("DiffFlags returned %v, want %v (sorted)", got, want)
+		}
+	}
+}
+
+func TestDiffFlagsIsEmptyForIdenticalSections(t *testing.T) {
+	a := &Config{Flags: map[string]interface{}{"log.level": "info", "x": []interface{}{1, 2}}}
+	b := &Config{Flags: map[string]interface{}{"x": []interface{}{1, 2}, "log.level": "info"}}
+	if got := DiffFlags(a, b); len(got) != 0 {
+		t.Fatalf("DiffFlags reported %v for two identical sections", got)
+	}
+}
+
+func TestDiffFlagsHandlesAbsentSections(t *testing.T) {
+	if got := DiffFlags(&Config{}, &Config{}); len(got) != 0 {
+		t.Fatalf("DiffFlags reported %v for two configs with no flags section", got)
+	}
+	got := DiffFlags(&Config{}, &Config{Flags: map[string]interface{}{"log.level": "debug"}})
+	if len(got) != 1 || got[0] != "log.level" {
+		t.Fatalf("DiffFlags returned %v; adding a flags section must be reported", got)
+	}
+}

@@ -45,6 +45,22 @@ var (
 		"Exclude Go runtime and process metrics from /metrics endpoint.",
 	).Default("false").Bool()
 
+	// maxRequestsPerTarget bounds how many requests this exporter has in flight
+	// against ONE target at a time. 0, the default, means unlimited, which is
+	// the same posture --probe.target-allowlist takes with its empty value:
+	// this is opt-in hardening, not a default that moves under an operator who
+	// configured nothing.
+	//
+	// A ceiling turns a slow collector into a source of starvation for its
+	// siblings, so it is a deliberate choice with a visible cost. The wait is
+	// charged against each collector's own timeout, and
+	// @@NAMESPACE@@_exporter_request_wait_seconds is what makes queueing
+	// visible rather than silent.
+	maxRequestsPerTarget = kingpin.Flag(
+		"exporter.max-requests-per-target",
+		"Maximum concurrent requests this exporter issues to one target. 0 (default) means unlimited.",
+	).Default("0").Int()
+
 	// configFile is declared like any other flag so kingpin accepts it on the
 	// command line and lists it in --help. Its VALUE is read straight from
 	// os.Args below, before parsing, because it decides which arguments the

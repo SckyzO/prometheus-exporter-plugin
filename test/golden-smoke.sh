@@ -49,7 +49,15 @@
 # instances at unreachable addresses and confirms both instances' health
 # series (target="alpha", target="beta") appear on /metrics immediately, via
 # the always-emitted freshness gauge - see the http-multi-instance guarded
-# block below.
+# block below. Both the http-multi and http-multi-instance blocks are each
+# followed by their own reload sub-check (Task 14, config-reload-and-
+# concurrency epic): --web.enable-lifecycle off means POST /-/reload 404s,
+# a config edit that reloads cleanly is proven USABLE afterwards (not just
+# answered 200), a config edit that fails to parse is proven to still be
+# SERVING the last-good configuration (the atomicity property), and a
+# changed flags: section is refused by name. The http-multi-instance one
+# also carries the one cell in the whole --all matrix that sets
+# --exporter.max-requests-per-target above its default of 0.
 #
 # --all (Task 22, extended by Task 2, extended again by Task 12) runs all 4
 # matrix cells PLUS a 5th, additional http-multi cell (flavor=http,
@@ -533,6 +541,54 @@ if ! ( cd "$work" && ./bin/demo_exporter --config.file=config.example.yml --help
 fi
 echo "confirmed: config.example.yml loads ($flavor/$forge)"
 
+# --exporter.max-requests-per-target's boot-time guard (Task 10, obligation
+# 1): --collector.example.timeout=0s combined with a configured ceiling must
+# refuse to boot, naming the collector, rather than silently building a
+# Client whose limiter wait is unbounded. http-only and single-only: this
+# guard lives in the http flavor's client_build.frag, and only the single
+# target model builds a Client from --collector.<name>.timeout this way (cli
+# needs no equivalent guard: exampleData's context.WithTimeout(ctx, 0)
+# already bounds the wait instead of leaving it unbounded, and multi/
+# multi-instance never reach this flag combination the same way). Neither
+# make build nor make docs-check can catch a regression here: this is a
+# runtime refusal, not a compile-time or source-scan property.
+#
+# Run under `timeout`, on an explicit loopback port, unlike a live-server
+# check elsewhere in this script: this is a negative test (the process is
+# expected to exit almost immediately, not become ready), so there is no
+# /healthz to poll. If this guard ever regresses, the process does not exit
+# at all: os.Exit(1) at // @@CLIENT_BUILD@@ is what would normally fire well
+# before web.ListenAndServe runs, so a regression here means the binary goes
+# on to bind a port and serve forever, exactly the "hangs the harness on
+# regression instead of failing it" defect this shape fixes. `-k 2` escalates
+# to SIGKILL 2s after the initial TERM, in case a stuck process ignores it;
+# without --preserve-status, GNU timeout always reports 124 on an actual
+# timeout, regardless of how the underlying process responds to the signal,
+# which is what lets rc=124 below be read unambiguously as "did not refuse".
+if [ "$flavor" = http ] && [ "$target_model" = single ]; then
+  echo "== --exporter.max-requests-per-target boot-time guard ($flavor/$forge) =="
+  refuse_log="$work/.golden-smoke-max-requests-refusal.log"
+  refuse_port=9989
+  # This script runs under `set -eu`: the correct-refusal outcome exits
+  # non-zero (1) by design, so the subshell must be on the LEFT of `||`, not
+  # a bare statement, or `set -e` would abort the whole harness right here on
+  # the very PASS path this guard exists to confirm. refuse_rc=0 first, then
+  # `||` only overwrites it with the subshell's real exit status when that
+  # subshell itself is non-zero; `$?` inside the `||` arm still refers to the
+  # command that just failed, not to the assignment.
+  refuse_rc=0
+  ( cd "$work" && timeout -k 2 5 ./bin/demo_exporter --collector.example.timeout=0s --exporter.max-requests-per-target=1 --web.listen-address="127.0.0.1:$refuse_port" >"$refuse_log" 2>&1 ) || refuse_rc=$?
+  if [ "$refuse_rc" -eq 124 ]; then
+    die "boot-time guard: exporter did NOT refuse to boot within 5s with --collector.example.timeout=0s and a configured ceiling (it kept running and had to be killed) ($flavor/$forge), see $refuse_log"
+  fi
+  if [ "$refuse_rc" -eq 0 ]; then
+    die "boot-time guard: exporter exited 0 instead of refusing --collector.example.timeout=0s under a configured ceiling ($flavor/$forge), see $refuse_log"
+  fi
+  grep -q 'a positive --collector.example.timeout is required' "$refuse_log" \
+    || die "boot-time guard: refusal message does not name the collector/timeout as expected ($flavor/$forge), see $refuse_log"
+  echo "confirmed: --collector.example.timeout=0s with a configured ceiling refuses to boot, naming the collector ($flavor/$forge)"
+fi
+
 # promtool check rules (Task 12): monitoring/prometheus/{alerts,rules}.yml must
 # be valid Prometheus rule files — the same anti-lie bar as docs-check, just
 # for PromQL instead of Go source. promtool itself is not in the tools image
@@ -766,6 +822,277 @@ EOF
   echo "confirmed: http-multi modules sub-check PASSED ($flavor/$forge)"
 fi
 
+# http-multi reload sub-check (Task 14, config-reload-and-concurrency epic):
+# the four reload assertions this epic exists to prove. Two server
+# lifecycles on the SAME port: first WITHOUT --web.enable-lifecycle
+# (assertion 1, the closed default), then a fresh restart WITH it
+# (assertions 2-4, all against that one running process, so the gauge and
+# the module table carry state across them the way a real operator's
+# sequence would). Every launch is backgrounded behind an explicit
+# --web.listen-address plus the same bounded 15x1s ready-wait loop used
+# throughout this script (see the boot-time-guard block above and this
+# task's own brief): a hung foreground launch here would eat the CI job
+# timeout instead of failing loudly, and has done exactly that once before
+# in this file's history.
+#
+# Assertions 2 and 3 deliberately CHANGE the file's content between reloads
+# (a module added, then a file that no longer parses at all) rather than
+# re-POSTing the unchanged file: reloading an unchanged file is a
+# documented no-op in internal/reload (Task 9's own hard-won lesson, cited
+# in this task's brief) that never calls apply, so an assertion built on
+# one would stay green even against a broken reload implementation.
+if [ "$target_model" = multi ]; then
+  echo "== http-multi: reload sub-check ($flavor/$forge) =="
+  bin="$work/bin/demo_exporter"
+  [ -x "$bin" ] || die "http-multi reload: $bin missing or not executable after make build ($flavor/$forge)"
+
+  reload_port=9999
+  reload_cfg="$work/.golden-smoke-reload-config.yml"
+  reload_body="$work/.golden-smoke-reload-body.txt"
+  reload_metrics="$work/.golden-smoke-reload-metrics.txt"
+  cat > "$reload_cfg" <<'EOF'
+modules:
+  default:
+    http_client_config:
+      basic_auth: { username: monitor, password: hunter2 }
+EOF
+
+  reload_post() {
+    curl -s -o "$reload_body" -w '%{http_code}' -X POST "http://127.0.0.1:$reload_port/-/reload"
+  }
+  reload_probe_code() {
+    curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$reload_port/probe?target=http://127.0.0.1:$reload_port/metrics&module=$1"
+  }
+  # Shared by both the EXIT trap below (so a die() anywhere in this block
+  # still cleans up) and this block's own normal-completion path: see the
+  # comment on the final cleanup call for why this specifically matters
+  # for assertions 3 and 3b, which make the exporter log its own absolute
+  # --config.file path.
+  reload_cleanup() {
+    rm -f "$reload_log1" "$reload_log2" "$reload_cfg" "$reload_body" "$reload_metrics"
+  }
+  # Declared empty here, before it is ever assigned (right before the
+  # restart, below): reload_cleanup and the first trap installation both
+  # reference it, and this script runs under `set -u`, so it must exist as
+  # at least an empty string before assertion 1's trap could ever fire.
+  reload_log2=""
+
+  # Assertion 0 (final fix wave, this same epic): a multi build started with
+  # NO --config.file must treat SIGHUP as a no-op SUCCESS, not a failure.
+  # --config.file defaults to "" on multi (the documented allow-any starting
+  # posture, see docs/configuration.md), so before this fix a SIGHUP
+  # delivered there fell into reloadOnce's fail() path and pinned
+  # demo_exporter_config_last_reload_successful at 0 forever: nothing ever
+  # runs a second reload to clear it, so ConfigReloadFailed fires 5m later on
+  # an otherwise perfectly healthy exporter. Own port and own trap, entirely
+  # separate from assertions 1-4 below, so this process's lifetime (which
+  # never sees --config.file at all) never overlaps theirs.
+  noconfig_port=9997
+  noconfig_log="$work/.golden-smoke-reload-noconfig.log"
+  "$bin" --web.listen-address="127.0.0.1:$noconfig_port" --log.level=info >"$noconfig_log" 2>&1 &
+  server_pid=$!
+  trap 'kill "$server_pid" >/dev/null 2>&1 || true; rm -f "$noconfig_log"' EXIT
+
+  ready=0
+  i=0
+  while [ "$i" -lt 15 ]; do
+    if curl -fsS -o /dev/null "http://127.0.0.1:$noconfig_port/healthz" 2>/dev/null; then
+      ready=1
+      break
+    fi
+    kill -0 "$server_pid" 2>/dev/null || die "http-multi reload: server exited before becoming ready (assertion 0, no --config.file), see $noconfig_log ($flavor/$forge)"
+    i=$((i + 1))
+    sleep 1
+  done
+  [ "$ready" -eq 1 ] || die "http-multi reload: server did not become ready within 15s (assertion 0, no --config.file) ($flavor/$forge)"
+
+  # Confirm the gauge starts at 1 (Run sets it before serving even the first
+  # scrape) before SIGHUP ever fires, so a later read of "1" cannot be
+  # mistaken for "never checked" instead of "never moved".
+  curl -fsS "http://127.0.0.1:$noconfig_port/metrics" -o "$reload_metrics" \
+    || die "http-multi reload: assertion 0 curl /metrics (pre-SIGHUP) FAILED ($flavor/$forge)"
+  command grep -q '^demo_exporter_config_last_reload_successful 1$' "$reload_metrics" \
+    || die "http-multi reload: assertion 0 gauge is not 1 before SIGHUP ($flavor/$forge)"
+
+  kill -HUP "$server_pid" || die "http-multi reload: sending SIGHUP to a --config.file-less process failed ($flavor/$forge)"
+  # No synchronous signal from the process itself once SIGHUP is sent: give
+  # reloadOnce a moment to run, then poll like every other wait in this file.
+  sleep 1
+  kill -0 "$server_pid" 2>/dev/null \
+    || die "http-multi reload: process exited after SIGHUP with no --config.file; SIGHUP must be a no-op there, not fatal ($flavor/$forge)"
+  curl -fsS "http://127.0.0.1:$noconfig_port/metrics" -o "$reload_metrics" \
+    || die "http-multi reload: assertion 0 curl /metrics (post-SIGHUP) FAILED ($flavor/$forge)"
+  command grep -q '^demo_exporter_config_last_reload_successful 1$' "$reload_metrics" \
+    || die "http-multi reload: assertion 0 - SIGHUP with no --config.file moved the gauge away from 1; a --config.file-less exporter must never trip ConfigReloadFailed ($flavor/$forge)"
+  echo "confirmed: assertion 0 - SIGHUP with no --config.file is a no-op success, gauge stays at 1 ($flavor/$forge)"
+
+  kill "$server_pid" >/dev/null 2>&1 || true
+  wait "$server_pid" 2>/dev/null || true
+  rm -f "$noconfig_log"
+  trap - EXIT
+
+  # Assertion 1: no --web.enable-lifecycle -> POST /-/reload is a plain 404,
+  # the closed default (the same answer as any other unknown path, not a
+  # 405 or a 401 from a route that exists but refuses).
+  reload_log1="$work/.golden-smoke-reload-server-1.log"
+  "$bin" --config.file="$reload_cfg" --web.listen-address="127.0.0.1:$reload_port" --log.level=info >"$reload_log1" 2>&1 &
+  server_pid=$!
+  trap 'kill "$server_pid" >/dev/null 2>&1 || true; reload_cleanup' EXIT
+
+  ready=0
+  i=0
+  while [ "$i" -lt 15 ]; do
+    if curl -fsS -o /dev/null "http://127.0.0.1:$reload_port/healthz" 2>/dev/null; then
+      ready=1
+      break
+    fi
+    kill -0 "$server_pid" 2>/dev/null || die "http-multi reload: server exited before becoming ready (assertion 1), see $reload_log1 ($flavor/$forge)"
+    i=$((i + 1))
+    sleep 1
+  done
+  [ "$ready" -eq 1 ] || die "http-multi reload: server did not become ready within 15s (assertion 1) ($flavor/$forge)"
+
+  code=$(reload_post)
+  [ "$code" = 404 ] || die "http-multi reload: POST /-/reload without --web.enable-lifecycle returned $code, want 404 ($flavor/$forge)"
+  echo "confirmed: assertion 1 - POST /-/reload without --web.enable-lifecycle is 404 ($flavor/$forge)"
+
+  kill "$server_pid" >/dev/null 2>&1 || true
+  wait "$server_pid" 2>/dev/null || true
+  trap - EXIT
+
+  # Restart WITH --web.enable-lifecycle. One process now carries assertions
+  # 2, 3, 3b and 4 in sequence.
+  reload_log2="$work/.golden-smoke-reload-server-2.log"
+  "$bin" --config.file="$reload_cfg" --web.enable-lifecycle --web.listen-address="127.0.0.1:$reload_port" --log.level=info >"$reload_log2" 2>&1 &
+  server_pid=$!
+  trap 'kill "$server_pid" >/dev/null 2>&1 || true; reload_cleanup' EXIT
+
+  ready=0
+  i=0
+  while [ "$i" -lt 15 ]; do
+    if curl -fsS -o /dev/null "http://127.0.0.1:$reload_port/healthz" 2>/dev/null; then
+      ready=1
+      break
+    fi
+    kill -0 "$server_pid" 2>/dev/null || die "http-multi reload: server exited before becoming ready (restart with --web.enable-lifecycle), see $reload_log2 ($flavor/$forge)"
+    i=$((i + 1))
+    sleep 1
+  done
+  [ "$ready" -eq 1 ] || die "http-multi reload: server did not become ready within 15s after restart with --web.enable-lifecycle ($flavor/$forge)"
+
+  # Assertion 2: add a module ("staging") the boot file never declared,
+  # reload, and confirm the new module is actually USABLE afterwards
+  # (a live /probe?module=staging), not merely that the reload answered.
+  cat > "$reload_cfg" <<'EOF'
+modules:
+  default:
+    http_client_config:
+      basic_auth: { username: monitor, password: hunter2 }
+  staging:
+    http_client_config:
+      basic_auth: { username: staging, password: hunter3 }
+EOF
+  code=$(reload_post)
+  [ "$code" = 200 ] || die "http-multi reload: assertion 2 (add module) POST /-/reload returned $code, want 200 ($flavor/$forge), body: $(cat "$reload_body")"
+  curl -fsS "http://127.0.0.1:$reload_port/metrics" -o "$reload_metrics" \
+    || die "http-multi reload: assertion 2 curl /metrics FAILED ($flavor/$forge)"
+  command grep -q '^demo_exporter_config_last_reload_successful 1$' "$reload_metrics" \
+    || die "http-multi reload: assertion 2 did not leave demo_exporter_config_last_reload_successful at 1 ($flavor/$forge)"
+  code=$(reload_probe_code staging)
+  [ "$code" = 200 ] || die "http-multi reload: assertion 2's new module 'staging' is not usable after reload, /probe?module=staging returned $code ($flavor/$forge)"
+  echo "confirmed: assertion 2 - adding a module and reloading returns 200, sets the gauge to 1, and the new module probes 200 ($flavor/$forge)"
+
+  # Assertion 3: a file that does not parse at all. This is the atomicity
+  # proof at the PARSE layer: the PREVIOUS module table (both "default"
+  # and the "staging" module assertion 2 just added) must still be
+  # SERVED, not just the process still being up.
+  printf 'modules:\n  broken: [this is not valid yaml\n' > "$reload_cfg"
+  code=$(reload_post)
+  [ "$code" = 500 ] || die "http-multi reload: assertion 3 (broken file) POST /-/reload returned $code, want 500 ($flavor/$forge)"
+  curl -fsS "http://127.0.0.1:$reload_port/metrics" -o "$reload_metrics" \
+    || die "http-multi reload: assertion 3 curl /metrics FAILED ($flavor/$forge)"
+  command grep -q '^demo_exporter_config_last_reload_successful 0$' "$reload_metrics" \
+    || die "http-multi reload: assertion 3 did not drive demo_exporter_config_last_reload_successful to 0 ($flavor/$forge)"
+  code=$(reload_probe_code default)
+  [ "$code" = 200 ] || die "http-multi reload: assertion 3's PREVIOUS module 'default' stopped being served after a broken reload ($code) ($flavor/$forge)"
+  code=$(reload_probe_code staging)
+  [ "$code" = 200 ] || die "http-multi reload: assertion 3's PREVIOUS module 'staging' stopped being served after a broken reload ($code) ($flavor/$forge)"
+  echo "confirmed: assertion 3 - a broken file is refused with 500, the gauge drops to 0, and the previous modules (default, staging) are still served ($flavor/$forge)"
+
+  # Assertion 3b: the SAME atomicity property, but at a DIFFERENT layer.
+  # Assertion 3's file fails to PARSE, so internal/reload's reloadOnce
+  # returns on config.Load's own error before apply is ever entered (see
+  # reload.go.tmpl) - it can never see a commit-before-validate bug INSIDE
+  # apply, which is where the design's prepare-then-commit property
+  # actually lives. This file is valid YAML that fails one layer deeper,
+  # inside buildModules's own ValidateModules call (an unknown collector
+  # name), which DOES run inside apply, after the candidate module map is
+  # built but before probeHandler.SetConfig ever commits it. Confirmed by
+  # mutation: a real commit-before-validate bug in the apply closure keeps
+  # assertion 3 green (config.Load never reaches it) but turns this one
+  # red (see this task's report for the reproduction).
+  cat > "$reload_cfg" <<'EOF'
+modules:
+  bogus:
+    collectors: [nosuchcollector]
+EOF
+  code=$(reload_post)
+  [ "$code" = 500 ] || die "http-multi reload: assertion 3b (prepare-stage failure) POST /-/reload returned $code, want 500 ($flavor/$forge)"
+  curl -fsS "http://127.0.0.1:$reload_port/metrics" -o "$reload_metrics" \
+    || die "http-multi reload: assertion 3b curl /metrics FAILED ($flavor/$forge)"
+  command grep -q '^demo_exporter_config_last_reload_successful 0$' "$reload_metrics" \
+    || die "http-multi reload: assertion 3b did not drive demo_exporter_config_last_reload_successful to 0 ($flavor/$forge)"
+  code=$(reload_probe_code default)
+  [ "$code" = 200 ] || die "http-multi reload: assertion 3b's PREVIOUS module 'default' stopped being served after a prepare-stage-failing reload ($code) ($flavor/$forge)"
+  code=$(reload_probe_code staging)
+  [ "$code" = 200 ] || die "http-multi reload: assertion 3b's PREVIOUS module 'staging' stopped being served after a prepare-stage-failing reload ($code) ($flavor/$forge)"
+  echo "confirmed: assertion 3b - a file that fails inside the prepare phase, not just parsing, is refused with 500, the gauge drops to 0, and the previous modules (default, staging) are still served ($flavor/$forge)"
+
+  # Assertion 4: a "flags:" section the boot file never had. Refused whole,
+  # naming the offending key, rather than applying the modules: half and
+  # leaving the process describing neither file.
+  cat > "$reload_cfg" <<'EOF'
+flags:
+  log.level: debug
+modules:
+  default:
+    http_client_config:
+      basic_auth: { username: monitor, password: hunter2 }
+  staging:
+    http_client_config:
+      basic_auth: { username: staging, password: hunter3 }
+EOF
+  code=$(reload_post)
+  [ "$code" = 500 ] || die "http-multi reload: assertion 4 (flags: change) POST /-/reload returned $code, want 500 ($flavor/$forge)"
+  command grep -qF 'log.level' "$reload_body" \
+    || die "http-multi reload: assertion 4's refusal message does not name the changed flags key 'log.level' ($flavor/$forge): $(cat "$reload_body")"
+  echo "confirmed: assertion 4 - a flags: section change is refused with 500, naming the key ($flavor/$forge)"
+
+  kill "$server_pid" >/dev/null 2>&1 || true
+  wait "$server_pid" 2>/dev/null || true
+
+  # Assertions 3 and 3b deliberately feed the exporter a file that fails,
+  # and both resulting error messages name that file by its ABSOLUTE path
+  # (see internal/config's config.Load: `fmt.Errorf("parse %s: %w", path,
+  # err)`, and buildModules's own wrapped errors). That path is $work's,
+  # rooted at this repository's own checkout location, which on a
+  # maintainer's own machine can itself contain the maintainer's handle
+  # (this repository's own top-level directory does). Left behind,
+  # $reload_log2 would carry that string into test/_work, where the NEXT
+  # matrix cell's own grep-clean sweep scans the WHOLE tree, not just its
+  # own work dir, by design (see that check's own comment on catching a
+  # stale file from a PAST run) - and would misreport a leaked maintainer
+  # handle that was never in any shipped template, only in this test's own
+  # scratch output. reload_cleanup runs here on the normal-completion path,
+  # AND, via the trap it is also armed under above, on any die() inside
+  # this block: a die() bypasses the rest of this normal-completion code
+  # entirely, so relying on this call alone would leave the scratch files
+  # behind on exactly the failure path this cleanup exists for.
+  reload_cleanup
+  trap - EXIT
+  echo "confirmed: http-multi reload sub-check PASSED ($flavor/$forge)"
+fi
+
 # http-multi-instance live check (Task 12, multi-instance target model): a
 # scaffolded multi-instance exporter must actually SERVE every configured
 # instance's health series on /metrics, not just build and pass its own unit
@@ -837,6 +1164,18 @@ EOF
   done
   echo "confirmed: /metrics carries collector_success=1 for both target=\"alpha\" and target=\"beta\", despite both backends being unreachable ($flavor/$forge)"
 
+  # --exporter.max-requests-per-target's own self-instrumentation series
+  # (Task 10): registered in mains/multi-instance/main.go.tmpl regardless of
+  # whether a ceiling was configured on THIS run (it was not, above), so it
+  # must still expose its HELP/TYPE line and a zero-valued _count, the same
+  # "declared, always present, a permanent zero without a ceiling" contract
+  # docs/metrics.md documents. Catches a registration line silently dropped
+  # or renamed, which neither make build nor make docs-check can see: both
+  # are source-level checks, not a live /metrics check.
+  grep -q '^demo_exporter_request_wait_seconds_count 0$' "$mi_out" \
+    || die "http-multi-instance: /metrics is missing demo_exporter_request_wait_seconds_count=0 ($flavor/$forge)"
+  echo "confirmed: /metrics carries demo_exporter_request_wait_seconds, registered and zero with no ceiling configured ($flavor/$forge)"
+
   echo "== http-multi-instance: promtool check metrics on /metrics ($flavor/$forge) =="
   if command -v promtool >/dev/null 2>&1; then
     echo "using native promtool"
@@ -864,6 +1203,226 @@ EOF
   wait "$server_pid" 2>/dev/null || true
   trap - EXIT
   echo "confirmed: http-multi-instance live check PASSED ($flavor/$forge)"
+fi
+
+# http-multi-instance reload sub-check (Task 14, config-reload-and-concurrency
+# epic): the four reload assertions, run against the two-unreachable-instance
+# shape the live check above already exercises, PLUS Step 2's own
+# requirement: this cell must exercise --exporter.max-requests-per-target
+# with a NON-ZERO ceiling at least once across the whole --all matrix, or
+# the limiter's non-trivial path (an actual channel send inside Acquire, not
+# the nil-Limiter fast path) never runs anywhere in it: every other check in
+# this matrix leaves the ceiling at its default of 0 (see
+# code/http/limiter.go.tmpl's own NewLimiter, which returns nil for a
+# non-positive limit). Folded into the SAME restart that carries assertions
+# 2-4 below, rather than a third server lifecycle: the flag only needs to be
+# live while that server is up.
+#
+# Same discipline as the http-multi reload sub-check above: assertions 2 and
+# 3 CHANGE the file's content between reloads (an instance added, then a
+# file that no longer parses), never a re-POST of the unchanged file, which
+# internal/reload's own no-op fast path would let pass even against broken
+# reload code (Task 9's own hard-won lesson, cited in this task's brief).
+if [ "$target_model" = multi-instance ]; then
+  echo "== http-multi-instance: reload sub-check ($flavor/$forge) =="
+  bin="$work/bin/demo_exporter"
+  [ -x "$bin" ] || die "http-multi-instance reload: $bin missing or not executable after make build ($flavor/$forge)"
+
+  reload_port=9999
+  reload_cfg="$work/.golden-smoke-reload-multi-instance-config.yml"
+  reload_body="$work/.golden-smoke-reload-mi-body.txt"
+  reload_metrics="$work/.golden-smoke-reload-mi-metrics.txt"
+  cat > "$reload_cfg" <<'EOF'
+instances:
+  - { name: alpha, address: http://127.0.0.1:1 }
+EOF
+
+  reload_post() {
+    curl -s -o "$reload_body" -w '%{http_code}' -X POST "http://127.0.0.1:$reload_port/-/reload"
+  }
+  # Shared by both the EXIT trap below (so a die() anywhere in this block
+  # still cleans up) and this block's own normal-completion path: see the
+  # comment on the final cleanup call for why this specifically matters
+  # for assertions 3 and 3b, which make the exporter log its own absolute
+  # --config.file path.
+  reload_cleanup() {
+    rm -f "$reload_log1" "$reload_log2" "$reload_cfg" "$reload_body" "$reload_metrics"
+  }
+  # Declared empty here, before it is ever assigned (right before the
+  # restart, below): reload_cleanup and the first trap installation both
+  # reference it, and this script runs under `set -u`, so it must exist as
+  # at least an empty string before assertion 1's trap could ever fire.
+  reload_log2=""
+
+  # Assertion 1: no --web.enable-lifecycle -> POST /-/reload is a plain 404,
+  # the closed default.
+  reload_log1="$work/.golden-smoke-reload-mi-server-1.log"
+  "$bin" --config.file="$reload_cfg" --web.listen-address="127.0.0.1:$reload_port" --log.level=info >"$reload_log1" 2>&1 &
+  server_pid=$!
+  trap 'kill "$server_pid" >/dev/null 2>&1 || true; reload_cleanup' EXIT
+
+  ready=0
+  i=0
+  while [ "$i" -lt 15 ]; do
+    if curl -fsS -o /dev/null "http://127.0.0.1:$reload_port/healthz" 2>/dev/null; then
+      ready=1
+      break
+    fi
+    kill -0 "$server_pid" 2>/dev/null || die "http-multi-instance reload: server exited before becoming ready (assertion 1), see $reload_log1 ($flavor/$forge)"
+    i=$((i + 1))
+    sleep 1
+  done
+  [ "$ready" -eq 1 ] || die "http-multi-instance reload: server did not become ready within 15s (assertion 1) ($flavor/$forge)"
+
+  code=$(reload_post)
+  [ "$code" = 404 ] || die "http-multi-instance reload: POST /-/reload without --web.enable-lifecycle returned $code, want 404 ($flavor/$forge)"
+  echo "confirmed: assertion 1 - POST /-/reload without --web.enable-lifecycle is 404 ($flavor/$forge)"
+
+  kill "$server_pid" >/dev/null 2>&1 || true
+  wait "$server_pid" 2>/dev/null || true
+  trap - EXIT
+
+  # Restart WITH --web.enable-lifecycle AND a non-zero
+  # --exporter.max-requests-per-target (Step 2): the one cell in the whole
+  # --all matrix that ever sets it above 0.
+  reload_log2="$work/.golden-smoke-reload-mi-server-2.log"
+  "$bin" --config.file="$reload_cfg" --web.enable-lifecycle --exporter.max-requests-per-target=1 --web.listen-address="127.0.0.1:$reload_port" --log.level=info >"$reload_log2" 2>&1 &
+  server_pid=$!
+  trap 'kill "$server_pid" >/dev/null 2>&1 || true; reload_cleanup' EXIT
+
+  ready=0
+  i=0
+  while [ "$i" -lt 15 ]; do
+    if curl -fsS -o /dev/null "http://127.0.0.1:$reload_port/healthz" 2>/dev/null; then
+      ready=1
+      break
+    fi
+    kill -0 "$server_pid" 2>/dev/null || die "http-multi-instance reload: server exited before becoming ready (restart with --web.enable-lifecycle), see $reload_log2 ($flavor/$forge)"
+    i=$((i + 1))
+    sleep 1
+  done
+  [ "$ready" -eq 1 ] || die "http-multi-instance reload: server did not become ready within 15s after restart with --web.enable-lifecycle ($flavor/$forge)"
+
+  # The non-trivial limiter path: alpha's background poller ran its first
+  # refresh against an unreachable address, so Acquire returned almost
+  # immediately, but with a real, non-nil Limiter this time it still went
+  # through the channel send/receive in Acquire (see code/http/limiter.go.tmpl)
+  # and recorded an observation. Bounded poll (10 x 1s), not a single-shot
+  # read: the refresh runs in a goroutine Start launches asynchronously, so
+  # there is no guarantee it has completed by the moment /healthz first
+  # answers.
+  reload_wait_ready=0
+  reload_wait_count=0
+  i=0
+  while [ "$i" -lt 10 ]; do
+    curl -fsS "http://127.0.0.1:$reload_port/metrics" -o "$reload_metrics" 2>/dev/null || true
+    reload_wait_count=$(command grep '^demo_exporter_request_wait_seconds_count ' "$reload_metrics" 2>/dev/null | awk '{print $2}')
+    if [ -n "$reload_wait_count" ] && [ "$reload_wait_count" != "0" ]; then
+      reload_wait_ready=1
+      break
+    fi
+    i=$((i + 1))
+    sleep 1
+  done
+  [ "$reload_wait_ready" -eq 1 ] \
+    || die "http-multi-instance reload: demo_exporter_request_wait_seconds_count is still 0 after 10s with --exporter.max-requests-per-target=1 set; the non-trivial limiter path did not run ($flavor/$forge)"
+  echo "confirmed: --exporter.max-requests-per-target=1 exercises the non-trivial limiter path (demo_exporter_request_wait_seconds_count=$reload_wait_count) ($flavor/$forge)"
+
+  # Assertion 2: add an instance ("beta") the boot file never declared,
+  # reload, and confirm it is actually SERVED afterwards (its
+  # collector_success series appears), not merely that the reload answered.
+  cat > "$reload_cfg" <<'EOF'
+instances:
+  - { name: alpha, address: http://127.0.0.1:1 }
+  - { name: beta,  address: http://127.0.0.1:1 }
+EOF
+  code=$(reload_post)
+  [ "$code" = 200 ] || die "http-multi-instance reload: assertion 2 (add instance) POST /-/reload returned $code, want 200 ($flavor/$forge), body: $(cat "$reload_body")"
+  curl -fsS "http://127.0.0.1:$reload_port/metrics" -o "$reload_metrics" \
+    || die "http-multi-instance reload: assertion 2 curl /metrics FAILED ($flavor/$forge)"
+  command grep -q '^demo_exporter_config_last_reload_successful 1$' "$reload_metrics" \
+    || die "http-multi-instance reload: assertion 2 did not leave demo_exporter_config_last_reload_successful at 1 ($flavor/$forge)"
+  command grep -q 'demo_exporter_collector_success{collector="example",target="beta"} 1' "$reload_metrics" \
+    || die "http-multi-instance reload: assertion 2's new instance 'beta' is not served after reload (no collector_success series) ($flavor/$forge)"
+  echo "confirmed: assertion 2 - adding an instance and reloading returns 200, sets the gauge to 1, and the new instance 'beta' is served ($flavor/$forge)"
+
+  # Assertion 3: a file that does not parse at all. Atomicity proof at the
+  # PARSE layer: BOTH previously-live instances (alpha, added at boot;
+  # beta, added by assertion 2) must still be served.
+  printf 'instances:\n  - { name: broken, address: [this is not valid yaml\n' > "$reload_cfg"
+  code=$(reload_post)
+  [ "$code" = 500 ] || die "http-multi-instance reload: assertion 3 (broken file) POST /-/reload returned $code, want 500 ($flavor/$forge)"
+  curl -fsS "http://127.0.0.1:$reload_port/metrics" -o "$reload_metrics" \
+    || die "http-multi-instance reload: assertion 3 curl /metrics FAILED ($flavor/$forge)"
+  command grep -q '^demo_exporter_config_last_reload_successful 0$' "$reload_metrics" \
+    || die "http-multi-instance reload: assertion 3 did not drive demo_exporter_config_last_reload_successful to 0 ($flavor/$forge)"
+  for inst in alpha beta; do
+    command grep -q "demo_exporter_collector_success{collector=\"example\",target=\"$inst\"} 1" "$reload_metrics" \
+      || die "http-multi-instance reload: assertion 3's PREVIOUS instance '$inst' stopped being served after a broken reload ($flavor/$forge)"
+  done
+  echo "confirmed: assertion 3 - a broken file is refused with 500, the gauge drops to 0, and the previous instances (alpha, beta) are still served ($flavor/$forge)"
+
+  # Assertion 3b: the SAME atomicity property, at a DIFFERENT layer.
+  # Assertion 3's file fails to PARSE, so internal/reload's reloadOnce
+  # returns on config.Load's own error before apply is ever entered (see
+  # reload.go.tmpl) - it can never see a commit-before-validate bug INSIDE
+  # apply, which is where the design's prepare-then-commit property
+  # actually lives. This file is valid YAML that fails one layer deeper,
+  # inside ResolveInstances (an instance referencing an unknown module),
+  # which DOES run inside apply, before registry.Prepare is even called
+  # and long before registry.Commit could mutate anything. Confirmed by
+  # mutation: a real commit-before-validate bug in the apply closure keeps
+  # assertion 3 green (config.Load never reaches it) but turns this one
+  # red (see this task's report for the reproduction).
+  cat > "$reload_cfg" <<'EOF'
+instances:
+  - { name: gamma, address: http://127.0.0.1:1, module: nosuchmodule }
+EOF
+  code=$(reload_post)
+  [ "$code" = 500 ] || die "http-multi-instance reload: assertion 3b (prepare-stage failure) POST /-/reload returned $code, want 500 ($flavor/$forge)"
+  curl -fsS "http://127.0.0.1:$reload_port/metrics" -o "$reload_metrics" \
+    || die "http-multi-instance reload: assertion 3b curl /metrics FAILED ($flavor/$forge)"
+  command grep -q '^demo_exporter_config_last_reload_successful 0$' "$reload_metrics" \
+    || die "http-multi-instance reload: assertion 3b did not drive demo_exporter_config_last_reload_successful to 0 ($flavor/$forge)"
+  for inst in alpha beta; do
+    command grep -q "demo_exporter_collector_success{collector=\"example\",target=\"$inst\"} 1" "$reload_metrics" \
+      || die "http-multi-instance reload: assertion 3b's PREVIOUS instance '$inst' stopped being served after a prepare-stage-failing reload ($flavor/$forge)"
+  done
+  echo "confirmed: assertion 3b - a file that fails inside the prepare phase, not just parsing, is refused with 500, the gauge drops to 0, and the previous instances (alpha, beta) are still served ($flavor/$forge)"
+
+  # Assertion 4: a "flags:" section the boot file never had. Refused whole,
+  # naming the offending key.
+  cat > "$reload_cfg" <<'EOF'
+flags:
+  log.level: debug
+instances:
+  - { name: alpha, address: http://127.0.0.1:1 }
+  - { name: beta,  address: http://127.0.0.1:1 }
+EOF
+  code=$(reload_post)
+  [ "$code" = 500 ] || die "http-multi-instance reload: assertion 4 (flags: change) POST /-/reload returned $code, want 500 ($flavor/$forge)"
+  command grep -qF 'log.level' "$reload_body" \
+    || die "http-multi-instance reload: assertion 4's refusal message does not name the changed flags key 'log.level' ($flavor/$forge): $(cat "$reload_body")"
+  echo "confirmed: assertion 4 - a flags: section change is refused with 500, naming the key ($flavor/$forge)"
+
+  kill "$server_pid" >/dev/null 2>&1 || true
+  wait "$server_pid" 2>/dev/null || true
+
+  # Assertions 3 and 3b deliberately feed the exporter a file that fails,
+  # and both resulting error messages name that file by its ABSOLUTE path
+  # in the exporter's own log (see internal/config's config.Load:
+  # `fmt.Errorf("parse %s: %w", path, err)`, and ResolveInstances's own
+  # wrapped errors). Leaving that in $reload_log2 would let a LATER matrix
+  # cell's whole-tree grep-clean sweep mistake this repository's own
+  # checkout path for a leaked maintainer handle. reload_cleanup runs here
+  # on the normal-completion path, AND, via the trap it is also armed
+  # under above, on any die() inside this block: a die() bypasses the rest
+  # of this normal-completion code entirely, so relying on this call alone
+  # would leave the scratch files behind on exactly the failure path this
+  # cleanup exists for.
+  reload_cleanup
+  trap - EXIT
+  echo "confirmed: http-multi-instance reload sub-check PASSED ($flavor/$forge)"
 fi
 
 # Second-collector check (multi-target epic): the whole point of widening the
@@ -1387,14 +1946,20 @@ if [ "$flavor" = http ] && [ "$forge" = none ] && [ "$target_model" = single ]; 
   # and registry alone leaves queueTimeout declared and not used, which is a
   # compile error, so this sub-check is the executable contract that
   # /add-collector must fill all three.
-  # registry.frag also carries the http_client_requests self-instrumentation
-  # registration (shared, already wired once by scaffold.sh), filtered out
-  # of this copy so it is not registered a second time.
+  # registry.frag also carries the http_client_requests and
+  # http_client_request_wait self-instrumentation registrations (shared,
+  # already wired once by scaffold.sh), both filtered out of this copy so
+  # neither is registered a second time: kingpin panics on a duplicate long
+  # flag name ("--collector.http_client_requests"/"--collector.http_client_request_wait"),
+  # which make build cannot catch (it only fails at process startup, not at
+  # compile time), so a filter that misses either name here would leave a
+  # binary that builds clean and then dies on its first run.
   sed -e 's/example/queue/g' -e 's/Example/Queue/g' "$addc_client_frag" \
     | sed -e 's/@@DATA_SOURCE@@/http:\/\/localhost:9999/g' > "$addc_qclient"
   sed -e 's/example/queue/g' -e 's/Example/Queue/g' "$addc_build_frag" > "$addc_qbuild"
   sed -e 's/example/queue/g' -e 's/Example/Queue/g' "$addc_registry_frag" \
-    | grep -v 'register("http_client_requests"' > "$addc_qregistry"
+    | grep -v 'register("http_client_requests"' \
+    | grep -v 'register("http_client_request_wait"' > "$addc_qregistry"
 
   grep -q '^[[:blank:]]*// @@CLIENT_INIT@@[[:blank:]]*$' "$addc_main" || die "add-collector sub-check: no standalone // @@CLIENT_INIT@@ marker in $addc_main"
   sed -e '\|^[[:blank:]]*// @@CLIENT_INIT@@[[:blank:]]*$|r '"$addc_qclient" "$addc_main" > "$addc_main.tmp" && mv "$addc_main.tmp" "$addc_main"

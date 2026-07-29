@@ -28,7 +28,9 @@ internal/collector/
 internal/logger/
   logger.go              # thin log/slog wrapper
 internal/instance/
-  instance.go            # multi-instance seam: the background collector Factory the multi-instance main fans out over instances
+  instance.go            # multi-instance seam: the Registry (Prepare/Commit) the multi-instance main drives at boot and on reload
+internal/reload/
+  reload.go              # SIGHUP / POST /-/reload mechanism, shared by multi and multi-instance; absent on single (exporter-architecture.md)
 ```
 
 Neither `internal/collector` nor `internal/logger` is Prometheus-specific by
@@ -158,12 +160,33 @@ register("example", func() prometheus.Collector {
 }, true)
 ...
 // at // @@CLIENT_BUILD@@, after kingpin.MustParse:
+
+// collector.Limiters (limiter.go) is the single, shared LimiterSet every
+// collector's client_build wiring consults, one Limiter per distinct
+// --collector.<name>.target address. Guarded on nil so a second collector's
+// own client_build.frag (scaffolded, or appended later by /add-collector)
+// reuses the same set instead of replacing it.
+if collector.Limiters == nil {
+	collector.Limiters = collector.NewLimiterSet(*maxRequestsPerTarget)
+}
+
+// A limiter with no bound on its own wait would be exactly the silent-
+// queueing failure mode a concurrency ceiling exists to prevent: refuse at
+// boot, naming the collector, once a ceiling is actually configured.
+if *maxRequestsPerTarget > 0 && *exampleTimeout <= 0 {
+	fmt.Fprintln(os.Stderr, fmt.Errorf("collector %q: a positive --collector.example.timeout is required when --exporter.max-requests-per-target is set, got %v (the limiter wait would otherwise be unbounded)", "example", *exampleTimeout))
+	stop()
+	os.Exit(1)
+}
+
 if cfg.HTTPClientConfig != nil {
 	exampleClient, err = collector.NewClientWithConfig(*exampleTarget, *exampleTimeout, *cfg.HTTPClientConfig)
 	...
 } else {
 	exampleClient = collector.NewClient(*exampleTarget, *exampleTimeout)
 }
+// A nil limiter (the default ceiling of 0) leaves this a no-op.
+exampleClient = exampleClient.WithLimiter(collector.Limiters.For(*exampleTarget))
 ```
 
 `NewClientWithConfig(target string, timeout time.Duration, httpCfg
@@ -171,6 +194,21 @@ promconfig.HTTPClientConfig) (*Client, error)` sits beside `NewClient` in
 `client.go`, never replacing it: with an `http_client_config:` section, the
 wiring above calls it; without one, it keeps calling `NewClient`, because that
 transport is what every existing deployment already runs.
+
+`--exporter.max-requests-per-target` (default `0`, unlimited) is what
+`maxRequestsPerTarget` above holds; it is absent on `multi` (a `/probe`
+handler builds a client per caller-controlled request, so there is no fixed
+key space to index a ceiling by) and present on `single` and
+`multi-instance`. What it actually bounds differs by build: on `single`
+with the HTTP flavor, one ceiling per distinct `--collector.<name>.target`
+address, via the `LimiterSet` above; on `single` with the CLI flavor, one
+ceiling for the whole process (`collector.CommandLimiter`, a plain
+assignment, since CLI has no per-target `Client` to index by, only the one
+shared command-execution boundary every collector calls through); on
+`multi-instance`, one ceiling per watched *instance* (`instance.Handle`
+owns its own `Limiter`), not per physical address, so two instances naming
+the same machine are bounded independently. A request that waits for a slot
+is recorded by `collector.RequestWait` (below), never silent.
 
 All three markers survive the substitution that fills them: the scaffolding
 mechanism inserts each flavor's snippet immediately *after* the marker line
@@ -212,8 +250,10 @@ through the exact same `register(...)` call as any real collector:
 
 ```go
 register("http_client_requests", func() prometheus.Collector { return collector.RequestDuration }, true)
+register("http_client_request_wait", func() prometheus.Collector { return collector.RequestWait }, true)
 // or, CLI flavor:
 register("command_exec", func() prometheus.Collector { return collector.CommandDuration }, true)
+register("command_exec_wait", func() prometheus.Collector { return collector.RequestWait }, true)
 ```
 
 From the flag/`StatusTracker` point of view there is nothing special about
@@ -227,6 +267,17 @@ a v0.2 variant not shipped today (`collector-pattern.md`'s "Collector
 variants" section); when it lands, it would follow the same pattern (its own metric,
 wired through `register(...)`) rather than introduce a new mechanism
 alongside this one.
+
+`collector.RequestWait` (`http_client_request_wait` / `command_exec_wait`,
+same underlying histogram either flavor) is the second self-instrumentation
+metric alongside the duration one: it records how long a request or command
+waited for a slot from `--exporter.max-requests-per-target`'s ceiling before
+running, which is what makes queuing visible in `/metrics` instead of just
+quietly lengthening scrape times. It reaches `/metrics` on `single` through
+this same `register(...)` call; `multi` and `multi-instance` each hardcode
+their own `reg.MustRegister(collector.RequestWait)` beside their own
+`RequestDuration` line instead, since neither one runs `main.go`'s
+registration-driven registry loop this file describes.
 
 ## StatusTracker: one collector wrapping every collector
 
@@ -409,21 +460,26 @@ rebuilds it.
 `--target-model multi-instance` (http flavor only, and `--config.file` is
 required at runtime) is the third. Instead of a registry built once for one
 target, or a handler that builds one fresh per request, it ships
-`internal/instance/` and a boot-time loop over `instances:` from the
-configuration file: for each instance, `main` calls every enabled
-collector's `Factory.New(addr string, hcfg *promconfig.HTTPClientConfig)
-(BackgroundCollector, error)`, `Start(ctx)`s the result, wraps it in a
-`StatusTracker`, and registers that tracker under
-`prometheus.WrapRegistererWith(labels, reg)`, where `labels` carries the
-identifying label (`--instance-label`, default `target`) plus that
-instance's own `labels:` from its configuration entry. There is no `/probe`
-here: every instance is already resolved by the time the process finishes
-booting, so the one `/metrics` endpoint answers for all of them from
-whatever each instance's background pollers have already cached
-(`collector-pattern.md`'s "Collector variants" section covers why every
-collector on this model must be the background variant). `/add-collector`
-handles this model too: against a multi-instance scaffold it appends a
-factory at `// @@INSTANCE_FACTORIES@@` instead of a `register(...)` call.
+`internal/instance/` and an `instance.Registry` that boot and every later
+reload both drive through the same two calls: `Prepare(instances)` builds
+whatever a new instance list needs (a `Factory.New(h)` call, one per
+instance per enabled collector, against that instance's own `Handle`) and
+mutates nothing, so it can fail before anything already running is touched;
+`Commit(ctx, plan)` `Start(ctx)`s each new collector, wraps its
+`StatusTracker` in `prometheus.WrapRegistererWith(labels, reg)`, where
+`labels` carries the identifying label (`--instance-label`, default
+`target`) plus that instance's own `labels:` from its configuration entry,
+and cannot fail. Boot is `Prepare` against an empty live set followed by
+`Commit`, the exact same two calls a `SIGHUP` or `POST /-/reload` makes,
+which is what lets this path be exercised by every start, not only when an
+operator reloads. There is no `/probe` here: every instance is already
+resolved by the time the process finishes booting, so the one `/metrics`
+endpoint answers for all of them from whatever each instance's background
+pollers have already cached (`collector-pattern.md`'s "Collector variants"
+section covers why every collector on this model must be the background
+variant). `/add-collector` handles this model too: against a multi-instance
+scaffold it appends a factory at `// @@INSTANCE_FACTORIES@@` instead of a
+`register(...)` call.
 
 The three models are mutually exclusive per scaffold: a generated repository
 has exactly one `main.go`, and exactly one of this file's registry, the
