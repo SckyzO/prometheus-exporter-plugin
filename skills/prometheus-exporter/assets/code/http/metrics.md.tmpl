@@ -9,6 +9,15 @@ listed below that the code cannot actually produce fails the build. A metric the
 code emits but this file doesn't document is only a warning: see
 `internal/collector/docs_check_test.go`.
 
+**Scope:** this file is shared by a `single`-target and a `multi`-target build
+(a `--target-model multi-instance` build ships its own separate copy, with its
+own reload and instance-label sections). A section or row below tagged
+*(multi-target builds only)* or *(opt-in builds only)* is not a flag a
+`single`-target binary could enable: the package backing it,
+`internal/reload` or `internal/probe`, is not compiled into that binary at
+all. If you scaffolded `single`, skip those sections entirely rather than
+reading them as "off by default".
+
 <!--
 docs-check parses this file as a sequence of markdown tables, one metric per
 row, in this exact 4-cell shape:
@@ -57,7 +66,7 @@ See [docs/configuration.md](configuration.md).
 | Metric | Type | Labels | Description |
 |---|---|---|---|
 | `@@NAMESPACE@@_exporter_request_duration_seconds` | Histogram | `outcome` | Duration in seconds of HTTP requests issued by this exporter's collectors, by outcome (`success` or `error`). Defined in `internal/collector/client.go`. |
-| `@@NAMESPACE@@_exporter_request_wait_seconds` | Histogram | - | Duration in seconds a request waited for a per-target concurrency slot, whether or not one was granted. Only nonzero once `--exporter.max-requests-per-target` is set; a multi-target build never sets a ceiling, so this series is a permanent zero there. Defined in `internal/collector/limiter.go`. |
+| `@@NAMESPACE@@_exporter_request_wait_seconds` | Histogram | `outcome` | Duration in seconds a request waited for a per-target concurrency slot, by outcome (`success` if a slot was granted, `error` if the caller's own deadline expired first). Both series stay at a permanent zero once `--exporter.max-requests-per-target` is unset (the default); a multi-target build never sets a ceiling, so both are a permanent zero there. Defined in `internal/collector/limiter.go`. |
 | `@@NAMESPACE@@_exporter_collector_success` | Gauge | `collector` | Whether the last scrape of the collector succeeded (1=success, 0=failure). Defined in `internal/collector/status_tracker.go`. |
 | `@@NAMESPACE@@_exporter_collector_duration_seconds` | Gauge | `collector` | Duration of the last scrape for the collector, in seconds. Defined in `internal/collector/status_tracker.go`. |
 

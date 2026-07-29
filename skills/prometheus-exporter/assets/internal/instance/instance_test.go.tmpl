@@ -583,16 +583,18 @@ func TestPrepareMutatesNothingOnFailure(t *testing.T) {
 // timedBG closes its Done channel after a fixed duration measured from
 // Start, regardless of context cancellation, standing in for a poller whose
 // in-flight request finishes on its own schedule rather than one that is
-// cancelled. Used only by TestWaitSharesOneBudgetAcrossInstances: a
-// permanently-stuck collector (fakeBG, which exits only on ctx.Done) cannot
-// tell a shared budget apart from a per-collector one, because Wait returns
-// on the very FIRST timeout it hits either way, so a scenario of nothing but
-// stuck collectors costs roughly one budget under both the correct and the
-// broken implementation. What actually tells them apart is a collector that
-// EVENTUALLY succeeds, late: under a shared clock that lateness eats into
-// the SAME budget the next collector must also finish within; under a
-// clock re-armed per collector, each late-but-successful collector buys the
-// next one a full fresh budget it should never have had.
+// cancelled. Used by TestWaitSharesOneBudgetAcrossCollectors and
+// TestWaitSharesOneBudgetAcrossInstances: a permanently-stuck collector
+// (fakeBG, which exits only on ctx.Done) cannot tell a shared budget apart
+// from a per-collector or per-instance one, because Wait returns on the very
+// FIRST timeout it hits either way, so a scenario of nothing but stuck
+// collectors costs roughly one budget under the correct implementation and
+// every broken one alike. What actually tells them apart is a collector (or
+// instance) that EVENTUALLY succeeds, late: under a shared clock that
+// lateness eats into the SAME budget whatever comes next must also finish
+// within; under a clock re-armed per collector or per instance, the late
+// success buys whatever comes next a full fresh budget it should never have
+// had.
 type timedBG struct {
 	desc  *prometheus.Desc
 	done  chan struct{}
@@ -610,10 +612,15 @@ func (f *timedBG) Collect(ch chan<- prometheus.Metric) {
 func (f *timedBG) Start(context.Context) { go func() { time.Sleep(f.after); close(f.done) }() }
 func (f *timedBG) Done() <-chan struct{} { return f.done }
 
-// TestWaitSharesOneBudgetAcrossInstances proves Wait's own shared-budget
-// claim, on one instance with two collectors so h.bgs (a slice, built in
-// factory-declaration order) is deterministic: a map, which is how Wait's
-// OUTER loop walks r.handles, would not be.
+// TestWaitSharesOneBudgetAcrossCollectors proves Wait's shared-budget claim
+// for the INNER loop: one instance with two collectors, so h.bgs (a slice,
+// built in factory-declaration order) is deterministic. This pins only the
+// per-collector half of the N*M*budget claim; see
+// TestWaitSharesOneBudgetAcrossInstances below for the per-instance half,
+// which this fixture (one instance) cannot exercise: with only one h.bgs
+// slice ranged, moving deadline := time.After(budget) into Wait's OUTER loop
+// would still create exactly one deadline here, indistinguishable from the
+// correct placement before both loops.
 //
 // The first collector succeeds late, close to the budget; the second never
 // exits at all. Under the shared clock (correct), the first collector's
@@ -623,14 +630,14 @@ func (f *timedBG) Done() <-chan struct{} { return f.done }
 // timedBG's own doc comment for why "everything permanently stuck" cannot
 // tell the two apart), the second collector gets a full fresh budget on top
 // of however long the first one took, and the call runs measurably longer.
-func TestWaitSharesOneBudgetAcrossInstances(t *testing.T) {
+func TestWaitSharesOneBudgetAcrossCollectors(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	root := prometheus.NewRegistry()
 
 	const (
-		budget    = 200 * time.Millisecond
-		lateAfter = 160 * time.Millisecond // succeeds, but only just before the budget
+		budget    = 600 * time.Millisecond
+		lateAfter = 450 * time.Millisecond // succeeds, but only well into the budget
 	)
 	enabled := true
 	factories := []Factory{
@@ -644,14 +651,82 @@ func TestWaitSharesOneBudgetAcrossInstances(t *testing.T) {
 	r.Wait(budget)
 	elapsed := time.Since(start)
 
-	// Correct: ~1 budget (~200ms: the "late" collector's own 160ms is well
+	// Correct: ~1 budget (~600ms: the "late" collector's own 450ms is well
 	// inside the one shared deadline, which then fires for "stuck" at the
-	// 200ms mark regardless). Broken (budget re-armed per collector): ~360ms
-	// (160ms for "late" to succeed, THEN a full fresh 200ms budget for
-	// "stuck"). The threshold sits well between the two.
-	const threshold = 280 * time.Millisecond
+	// 600ms mark regardless). Broken (budget re-armed per collector): ~1050ms
+	// (450ms for "late" to succeed, THEN a full fresh 600ms budget for
+	// "stuck"). The threshold sits at the midpoint, 225ms clear on either
+	// side: wide enough to absorb scheduling jitter on a loaded CI runner,
+	// unlike an earlier version of this test (80ms of headroom against a
+	// 200ms budget), which was tight enough to flake on a busy machine.
+	const threshold = budget + lateAfter/2
 	if elapsed > threshold {
 		t.Fatalf("Wait took %v with a %v budget (one collector succeeding at %v, one never exiting); want at most ~%v (one shared budget), not ~%v (a fresh budget per collector, %v + %v)",
-			elapsed, budget, lateAfter, budget, lateAfter+budget, lateAfter, budget)
+			elapsed, budget, lateAfter, threshold, lateAfter+budget, lateAfter, budget)
+	}
+}
+
+// TestWaitSharesOneBudgetAcrossInstances proves the other half of Wait's
+// shared-budget claim: the OUTER loop, over r.handles, must not re-arm the
+// deadline per instance either. Two instances, one collector each, so this
+// exercises the outer loop the same way
+// TestWaitSharesOneBudgetAcrossCollectors exercises the inner one.
+//
+// r.handles is a map: Wait sorts instance names before ranging it
+// specifically so this scenario is deterministic (see Wait's own doc
+// comment). The instances are named "inst-a-late" and "inst-b-stuck" so
+// sorted order visits the late one first, every run, regardless of Go's
+// randomized map iteration: without that, this test would only catch a
+// broken (re-armed-per-instance) budget on whichever run happened to visit
+// the late instance first, and silently pass the other half of the time,
+// exactly the flaw the sorted iteration exists to close.
+//
+// "inst-a-late" carries one collector that succeeds partway through the
+// budget; "inst-b-stuck" carries one that never exits. Under the shared
+// clock (correct), finishing "inst-a-late" costs nothing extra: the one
+// deadline armed when Wait started is still what "inst-b-stuck" races
+// against, so the whole call finishes in roughly one budget. Under a clock
+// re-armed per instance (the mutation this test exists to catch), moving
+// on to "inst-b-stuck" re-arms a full fresh budget on top of however long
+// "inst-a-late" took to finish, and the call runs measurably longer.
+func TestWaitSharesOneBudgetAcrossInstances(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	root := prometheus.NewRegistry()
+
+	const (
+		budget    = 600 * time.Millisecond
+		lateAfter = 400 * time.Millisecond // succeeds well inside the budget
+	)
+	enabled := true
+	factories := []Factory{
+		{Name: "mixed", Enabled: &enabled, New: func(h *Handle) (BackgroundCollector, error) {
+			if h.Name == "inst-a-late" {
+				return newTimedBG("late", lateAfter), nil
+			}
+			return newFakeBG("stuck"), nil
+		}},
+	}
+	r := NewRegistry(logger.NewTextLogger("error"), root, "target", factories, 0)
+	applyOrFail(t, r, ctx, []config.ResolvedInstance{
+		inst("inst-a-late", "https://a.example", nil, nil),
+		inst("inst-b-stuck", "https://b.example", nil, nil),
+	})
+
+	start := time.Now()
+	r.Wait(budget)
+	elapsed := time.Since(start)
+
+	// Correct: ~1 budget (~600ms: "inst-a-late" finishes at 400ms, well
+	// inside the one shared deadline, which then fires for "inst-b-stuck" at
+	// the 600ms mark regardless). Broken (budget re-armed per instance):
+	// ~1000ms (400ms for "inst-a-late" to finish, THEN a full fresh 600ms
+	// budget for "inst-b-stuck"). 200ms of clearance on either side of the
+	// midpoint threshold, the same generous margin as
+	// TestWaitSharesOneBudgetAcrossCollectors above.
+	const threshold = budget + lateAfter/2
+	if elapsed > threshold {
+		t.Fatalf("Wait took %v with a %v budget (one instance finishing at %v, one never exiting); want at most ~%v (one shared budget), not ~%v (a fresh budget per instance, %v + %v)",
+			elapsed, budget, lateAfter, threshold, lateAfter+budget, lateAfter, budget)
 	}
 }

@@ -263,6 +263,24 @@ func TestExecute_RespectsCommandLimiter(t *testing.T) {
 	}
 }
 
+// TestExecute_RejectsNoDeadlineContextWhenLimiterAttached proves Execute
+// enforces the deadline contract its own doc comment states, rather than
+// merely documenting it: a collector added later by /add-collector that
+// forgets its own context.WithTimeout and calls Execute with a bare
+// context.Background() must fail fast here, not reach CommandLimiter.Acquire
+// with no bound at all and block forever. The slot is free (ceiling 1, none
+// held), so this proves the deadline check itself, not a limiter that was
+// merely busy: without the check, echo would simply run and return nil.
+func TestExecute_RejectsNoDeadlineContextWhenLimiterAttached(t *testing.T) {
+	oldLimiter := CommandLimiter
+	defer func() { CommandLimiter = oldLimiter }()
+	CommandLimiter = NewLimiter(1)
+
+	if _, err := Execute(context.Background(), "echo", "hello"); err == nil {
+		t.Fatal("Execute accepted a bare context.Background() with a real CommandLimiter attached; an added collector that forgets its own deadline would block in Acquire with no bound")
+	}
+}
+
 // TestExecute_RecordsCommandDurationOnAnAbandonedLimiterWait proves the fix
 // for the asymmetry between this flavor and the http one: CommandDuration
 // must observe an outcome even when CommandLimiter.Acquire never lets Execute

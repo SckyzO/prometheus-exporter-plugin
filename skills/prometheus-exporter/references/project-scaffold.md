@@ -270,10 +270,15 @@ alongside this one.
 
 `collector.RequestWait` (`http_client_request_wait` / `command_exec_wait`,
 same underlying histogram either flavor) is the second self-instrumentation
-metric alongside the duration one: it records how long a request or command
-waited for a slot from `--exporter.max-requests-per-target`'s ceiling before
-running, which is what makes queuing visible in `/metrics` instead of just
-quietly lengthening scrape times. It reaches `/metrics` on `single` through
+metric alongside the duration one, also labeled only by `outcome`
+(`success` if a slot was granted, `error` if the caller's own deadline
+expired first, mirroring `RequestDuration`/`CommandDuration`'s own
+convention): it records how long a request or command waited for a slot
+from `--exporter.max-requests-per-target`'s ceiling, whether or not one was
+ever granted, not "before running" alone, since the `error` outcome is
+recorded on a wait that never let anything run at all. This is what makes
+queuing, and starvation, visible in `/metrics` instead of just quietly
+lengthening scrape times. It reaches `/metrics` on `single` through
 this same `register(...)` call; `multi` and `multi-instance` each hardcode
 their own `reg.MustRegister(collector.RequestWait)` beside their own
 `RequestDuration` line instead, since neither one runs `main.go`'s

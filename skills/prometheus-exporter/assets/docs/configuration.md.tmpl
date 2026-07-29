@@ -403,8 +403,7 @@ label: `@@INSTANCE_LABEL@@` by default, for example
 The two exceptions are `@@NAMESPACE@@_exporter_request_duration_seconds` and
 `@@NAMESPACE@@_exporter_request_wait_seconds`: both single, process-wide
 histograms shared across all instances, so neither carries
-`@@INSTANCE_LABEL@@`. The first is labeled only by `outcome`; the second
-carries no labels at all.
+`@@INSTANCE_LABEL@@`. Both are labeled only by `outcome`.
 Its name is fixed at scaffold time via `scaffold.sh --instance-label`, never
 a runtime flag. It is applied by the exporter itself, per instance, rather
 than by any collector's own descriptor, so `make docs-check` cannot see or
@@ -473,7 +472,7 @@ In addition, each I/O flavor exposes a histogram timing its own outbound calls:
 |---|---|---|---|
 | `@@NAMESPACE@@_exporter_request_duration_seconds` | Duration of HTTP requests issued by collectors | `outcome` (`success`/`error`) | HTTP |
 | `@@NAMESPACE@@_exporter_command_duration_seconds` | Duration of external commands executed by collectors | `outcome` (`success`/`error`) | CLI |
-| `@@NAMESPACE@@_exporter_request_wait_seconds` | Duration a request or command waited for a concurrency slot, whether or not one was granted. Only nonzero once `--exporter.max-requests-per-target` is set; see [Bounding outbound concurrency](#bounding-outbound-concurrency) above | - | HTTP and CLI |
+| `@@NAMESPACE@@_exporter_request_wait_seconds` | Duration a request or command waited for a concurrency slot, by outcome. Both series stay at a permanent zero once `--exporter.max-requests-per-target` is unset (the default); see [Bounding outbound concurrency](#bounding-outbound-concurrency) above | `outcome` (`success`/`error`) | HTTP and CLI |
 
 On a multi-target or multi-instance build, two further gauges report the
 health of the configuration-reload mechanism itself (absent on

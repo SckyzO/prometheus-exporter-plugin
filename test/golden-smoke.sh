@@ -1172,9 +1172,20 @@ EOF
   # docs/metrics.md documents. Catches a registration line silently dropped
   # or renamed, which neither make build nor make docs-check can see: both
   # are source-level checks, not a live /metrics check.
-  grep -q '^demo_exporter_request_wait_seconds_count 0$' "$mi_out" \
-    || die "http-multi-instance: /metrics is missing demo_exporter_request_wait_seconds_count=0 ($flavor/$forge)"
-  echo "confirmed: /metrics carries demo_exporter_request_wait_seconds, registered and zero with no ceiling configured ($flavor/$forge)"
+  #
+  # Labeled by outcome ("success"/"error", see code/http/limiter.go.tmpl)
+  # since the deferred-minors fix round: a bare HistogramVec has no child
+  # series at all until a label combination is first observed, which would
+  # make this metric ABSENT rather than a truthful zero on a build that
+  # never attaches a ceiling, exactly the regression this permanent-zero
+  # contract exists to catch. limiter.go.tmpl's own init() pre-populates
+  # both outcome values for this reason; check both explicitly rather than
+  # the pre-label unlabeled shape.
+  for outcome in success error; do
+    grep -q "demo_exporter_request_wait_seconds_count{outcome=\"$outcome\"} 0" "$mi_out" \
+      || die "http-multi-instance: /metrics is missing demo_exporter_request_wait_seconds_count{outcome=\"$outcome\"}=0 ($flavor/$forge)"
+  done
+  echo "confirmed: /metrics carries demo_exporter_request_wait_seconds{outcome=\"success\"|\"error\"}, both registered and zero with no ceiling configured ($flavor/$forge)"
 
   echo "== http-multi-instance: promtool check metrics on /metrics ($flavor/$forge) =="
   if command -v promtool >/dev/null 2>&1; then
@@ -1311,12 +1322,21 @@ EOF
   # read: the refresh runs in a goroutine Start launches asynchronously, so
   # there is no guarantee it has completed by the moment /healthz first
   # answers.
+  #
+  # outcome="success" specifically, not the metric family in general: only
+  # one instance (alpha) is watched at this point in the reload sub-check
+  # (beta is added by assertion 2, below), so its poller is the only caller
+  # ever contending for the ceiling's single slot. An uncontended Acquire
+  # always takes the immediate-send branch (see limiter.go.tmpl's Acquire),
+  # never the ctx.Done() one, so outcome="error" has no way to move off its
+  # init()-seeded zero here; asserting on it would either always fail or
+  # only pass by accident.
   reload_wait_ready=0
   reload_wait_count=0
   i=0
   while [ "$i" -lt 10 ]; do
     curl -fsS "http://127.0.0.1:$reload_port/metrics" -o "$reload_metrics" 2>/dev/null || true
-    reload_wait_count=$(command grep '^demo_exporter_request_wait_seconds_count ' "$reload_metrics" 2>/dev/null | awk '{print $2}')
+    reload_wait_count=$(command grep 'demo_exporter_request_wait_seconds_count{outcome="success"} ' "$reload_metrics" 2>/dev/null | awk '{print $2}')
     if [ -n "$reload_wait_count" ] && [ "$reload_wait_count" != "0" ]; then
       reload_wait_ready=1
       break
@@ -1325,8 +1345,8 @@ EOF
     sleep 1
   done
   [ "$reload_wait_ready" -eq 1 ] \
-    || die "http-multi-instance reload: demo_exporter_request_wait_seconds_count is still 0 after 10s with --exporter.max-requests-per-target=1 set; the non-trivial limiter path did not run ($flavor/$forge)"
-  echo "confirmed: --exporter.max-requests-per-target=1 exercises the non-trivial limiter path (demo_exporter_request_wait_seconds_count=$reload_wait_count) ($flavor/$forge)"
+    || die "http-multi-instance reload: demo_exporter_request_wait_seconds_count{outcome=\"success\"} is still 0 after 10s with --exporter.max-requests-per-target=1 set; the non-trivial limiter path did not run ($flavor/$forge)"
+  echo "confirmed: --exporter.max-requests-per-target=1 exercises the non-trivial limiter path (demo_exporter_request_wait_seconds_count{outcome=\"success\"}=$reload_wait_count) ($flavor/$forge)"
 
   # Assertion 2: add an instance ("beta") the boot file never declared,
   # reload, and confirm it is actually SERVED afterwards (its

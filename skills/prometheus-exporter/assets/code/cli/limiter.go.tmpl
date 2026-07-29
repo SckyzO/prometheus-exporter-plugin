@@ -9,15 +9,20 @@ import (
 )
 
 // RequestWait records how long a command invocation waited for a
-// concurrency slot, whether it was eventually granted one or gave up when
-// ctx was done first (see Acquire below: both paths observe). Unlabelled,
-// matching CommandDuration next to it in execute.go: this flavor has one
-// shared command-execution boundary (the package-level Execute var), not
-// one Client per target, so there is nothing to label a wait by.
+// concurrency slot, labeled by outcome ("success" if a slot was granted,
+// "error" if ctx was done first, see Acquire below), matching CommandDuration
+// next to it in execute.go: this flavor has one shared command-execution
+// boundary (the package-level Execute var), not one Client per target, so
+// there is still no per-target label to add, but "outcome" is the same
+// convention CommandDuration already uses, and the same values: Acquire's
+// own two returns are exactly success (nil error) and error (ctx.Err()), so
+// this is not a second, independent vocabulary.
 //
 // Registered alongside --exporter.max-requests-per-target, the flag that
 // turns a ceiling on: registry.frag registers it the same way it registers
 // CommandDuration, so it reaches this flavor's only target model's /metrics.
+// init() below keeps both outcome series visible (zero-valued) even when no
+// ceiling is ever configured, the default: see its own comment.
 //
 // Observed whenever CommandLimiter is actually set to a real ceiling, even
 // when a slot is immediately free (the wait is then near zero). On the nil
@@ -25,10 +30,22 @@ import (
 // touching this histogram at all, matching the "costs one nil check and no
 // allocation" contract below: there is nothing to report when there is no
 // ceiling to wait on.
-var RequestWait = prometheus.NewHistogram(prometheus.HistogramOpts{
+var RequestWait = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 	Name: "@@NAMESPACE@@_exporter_request_wait_seconds",
-	Help: "Duration in seconds a command invocation waited for a concurrency slot, whether or not one was granted.",
-})
+	Help: "Duration in seconds a command invocation waited for a concurrency slot, by outcome.",
+}, []string{"outcome"})
+
+func init() {
+	// Touch both outcome values once, at package init, so RequestWait always
+	// exposes both series (each zero-valued until observed) instead of being
+	// entirely absent from /metrics whenever no ceiling is configured, which
+	// is every build's default. A HistogramVec that has never seen
+	// WithLabelValues for a given label combination reports nothing at all
+	// for it; this is what restores the plain Histogram's old "always
+	// present, permanent zero" behaviour under the new label.
+	RequestWait.WithLabelValues("success")
+	RequestWait.WithLabelValues("error")
+}
 
 // Limiter bounds how many invocations of the target command this exporter
 // runs at once. It exists because a background-refresh collector variant
@@ -78,11 +95,11 @@ func (l *Limiter) Acquire(ctx context.Context) (func(), error) {
 	start := time.Now()
 	select {
 	case l.slots <- struct{}{}:
-		RequestWait.Observe(time.Since(start).Seconds())
+		RequestWait.WithLabelValues("success").Observe(time.Since(start).Seconds())
 		var once sync.Once
 		return func() { once.Do(func() { <-l.slots }) }, nil
 	case <-ctx.Done():
-		RequestWait.Observe(time.Since(start).Seconds())
+		RequestWait.WithLabelValues("error").Observe(time.Since(start).Seconds())
 		return func() {}, ctx.Err()
 	}
 }

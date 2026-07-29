@@ -331,6 +331,15 @@ Write the result to `internal/collector/<name>.go`, applying these renames:
 | `@@DATA_SOURCE_PATH@@` (http) | the endpoint path from step 2 |
 | `"@@DATA_SOURCE@@"` (cli, inside `<name>Data`'s `Execute(ctx, ...)` call) | the command from step 2, as its own string, followed by each arg as its **own** additional string literal: `Execute(ctx, "queue-cli", "stats")`, never `Execute(ctx, "queue-cli stats")` |
 
+**cli only**: keep `<name>Data`'s `context.WithTimeout(ctx, c.timeout)` call
+immediately before its `Execute(ctx, ...)` call, exactly as `exampleData`
+already has it. `Execute` rejects a `ctx` with no deadline once
+`--exporter.max-requests-per-target` is configured (a real ceiling attached to
+`collector.CommandLimiter`), so any new call site that reaches `Execute` with
+a bare `context.Background()` fails loudly instead of hanging a poller
+forever in `CommandLimiter.Acquire`. This only bites a call site that skips
+`exampleData`'s pattern; following the rename above keeps it intact.
+
 Do **not** blindly find-and-replace `example` through the whole file text.
 That would also mangle prose. Only the identifiers/literals above move
 mechanically. Separately, **rewrite the doc comments**: drop the template's
