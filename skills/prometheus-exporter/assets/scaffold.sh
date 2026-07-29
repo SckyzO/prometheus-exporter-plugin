@@ -337,9 +337,14 @@ if [ "$target_model" = single ]; then
     [ -z "$svc" ] || die "expected exactly one systemd/*.service.tmpl, found more than one"
     svc=$f
   done
-  [ -n "$svc" ] || die "no systemd unit template found to disable ExecReload on for --target-model single"
-  sed -e 's/^ExecReload=/# ExecReload=/' "$svc" > "$svc.scaffoldtmp"
-  mv "$svc.scaffoldtmp" "$svc"
+  # No unit at all is legitimate, not a fault: this engine also materializes
+  # reduced template trees (test/fixtures/mini-template is one), and a tree
+  # that ships no systemd/ has nothing to disable. Dying here would make every
+  # such caller fail on a step that does not apply to it.
+  if [ -n "$svc" ]; then
+    sed -e 's/^ExecReload=/# ExecReload=/' "$svc" > "$svc.scaffoldtmp"
+    mv "$svc.scaffoldtmp" "$svc"
+  fi
 fi
 
 # client_model is a direct dependency for a multi-target OR multi-instance
