@@ -544,11 +544,37 @@ echo "confirmed: config.example.yml loads ($flavor/$forge)"
 # multi-instance never reach this flag combination the same way). Neither
 # make build nor make docs-check can catch a regression here: this is a
 # runtime refusal, not a compile-time or source-scan property.
+#
+# Run under `timeout`, on an explicit loopback port, unlike a live-server
+# check elsewhere in this script: this is a negative test (the process is
+# expected to exit almost immediately, not become ready), so there is no
+# /healthz to poll. If this guard ever regresses, the process does not exit
+# at all: os.Exit(1) at // @@CLIENT_BUILD@@ is what would normally fire well
+# before web.ListenAndServe runs, so a regression here means the binary goes
+# on to bind a port and serve forever, exactly the "hangs the harness on
+# regression instead of failing it" defect this shape fixes. `-k 2` escalates
+# to SIGKILL 2s after the initial TERM, in case a stuck process ignores it;
+# without --preserve-status, GNU timeout always reports 124 on an actual
+# timeout, regardless of how the underlying process responds to the signal,
+# which is what lets rc=124 below be read unambiguously as "did not refuse".
 if [ "$flavor" = http ] && [ "$target_model" = single ]; then
   echo "== --exporter.max-requests-per-target boot-time guard ($flavor/$forge) =="
   refuse_log="$work/.golden-smoke-max-requests-refusal.log"
-  if ( cd "$work" && ./bin/demo_exporter --collector.example.timeout=0s --exporter.max-requests-per-target=1 >"$refuse_log" 2>&1 ); then
-    die "boot-time guard: exporter started with --collector.example.timeout=0s and a configured ceiling; it must refuse to boot ($flavor/$forge), see $refuse_log"
+  refuse_port=9989
+  # This script runs under `set -eu`: the correct-refusal outcome exits
+  # non-zero (1) by design, so the subshell must be on the LEFT of `||`, not
+  # a bare statement, or `set -e` would abort the whole harness right here on
+  # the very PASS path this guard exists to confirm. refuse_rc=0 first, then
+  # `||` only overwrites it with the subshell's real exit status when that
+  # subshell itself is non-zero; `$?` inside the `||` arm still refers to the
+  # command that just failed, not to the assignment.
+  refuse_rc=0
+  ( cd "$work" && timeout -k 2 5 ./bin/demo_exporter --collector.example.timeout=0s --exporter.max-requests-per-target=1 --web.listen-address="127.0.0.1:$refuse_port" >"$refuse_log" 2>&1 ) || refuse_rc=$?
+  if [ "$refuse_rc" -eq 124 ]; then
+    die "boot-time guard: exporter did NOT refuse to boot within 5s with --collector.example.timeout=0s and a configured ceiling (it kept running and had to be killed) ($flavor/$forge), see $refuse_log"
+  fi
+  if [ "$refuse_rc" -eq 0 ]; then
+    die "boot-time guard: exporter exited 0 instead of refusing --collector.example.timeout=0s under a configured ceiling ($flavor/$forge), see $refuse_log"
   fi
   grep -q 'a positive --collector.example.timeout is required' "$refuse_log" \
     || die "boot-time guard: refusal message does not name the collector/timeout as expected ($flavor/$forge), see $refuse_log"
