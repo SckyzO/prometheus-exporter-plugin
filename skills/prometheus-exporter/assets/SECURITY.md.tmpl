@@ -56,8 +56,12 @@ so treat that file as a secret.
   rotate separately, and keep it out of the configuration you might paste into
   an issue. `password`, `bearer_token`, `credentials` and `key` accept the
   value inline; that is supported, not recommended.
-- **Restrict the file's permissions.** It is read once at startup by the user
-  running the exporter, so `0600` owned by that user is enough. The same goes
+- **Restrict the file's permissions.** `0600` owned by the user running the
+  exporter is enough, whether it is read once at startup only (a
+  single-target build, or `multi`/`multi-instance` before their first
+  reload) or re-read later by SIGHUP/`POST /-/reload` (see below): every
+  read, at startup or at reload, is done by that same process running as
+  that same user, so the permission bound does not change. The same goes
   for any file a `_file` key points at.
 - **Paths inside the file resolve relative to the file itself**, not to the
   working directory the exporter was started from. A unit started from `/` and
