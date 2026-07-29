@@ -215,6 +215,13 @@ place, two ways:
   method other than `POST`) instead answers `405 Method Not Allowed` with
   an `Allow: POST` header.
 
+**On a `multi` build with no `--config.file` set** (optional and empty by
+default there, see above), `SIGHUP` and `POST /-/reload` are a no-op
+success, not a failure: there is nothing on disk to re-read, so
+`@@NAMESPACE@@_exporter_config_last_reload_successful` stays at `1` rather
+than dropping to `0`. A `multi-instance` build never hits this case:
+`--config.file` is required for that target model.
+
 **A reload either fully succeeds or changes nothing.** Everything that can
 fail (re-reading the file, parsing it, validating it, building any new
 transport a credential change needs) happens before anything currently

@@ -90,6 +90,31 @@ func TestReloadKeepsTheOldConfigWhenTheNewOneIsInvalid(t *testing.T) {
 	}
 }
 
+// TestReloadWithNoConfigFileIsANoOpSuccess pins the fix for a multi build
+// that never received --config.file (path == ""): a SIGHUP or POST
+// /-/reload arriving there must not drive config_last_reload_successful to
+// 0, because there is nothing to reload, not because anything failed. Run
+// sets the gauge to 1 before serving; this proves reloadOnce leaves it
+// there rather than calling fail().
+func TestReloadWithNoConfigFileIsANoOpSuccess(t *testing.T) {
+	calls := 0
+	r := New(logger.NewTextLogger("error"), "", nil, func(*config.Config) error {
+		calls++
+		return nil
+	})
+	r.successful.Set(1) // mirrors what Run does before serving
+
+	if err := r.Reload(); err != nil {
+		t.Fatalf("reload with no configuration file returned an error, want a no-op success: %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("apply ran %d times with no configuration file to read; it must never be reached", calls)
+	}
+	if v := testGaugeValue(t, r.successful); v != 1 {
+		t.Fatalf("config_last_reload_successful is %v after a no-op reload, want 1 (nothing failed)", v)
+	}
+}
+
 // TestReloadRefusesAChangedFlagsSection pins the whole-file refusal and the
 // message naming the offending keys.
 func TestReloadRefusesAChangedFlagsSection(t *testing.T) {

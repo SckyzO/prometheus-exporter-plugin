@@ -877,6 +877,60 @@ EOF
   # at least an empty string before assertion 1's trap could ever fire.
   reload_log2=""
 
+  # Assertion 0 (final fix wave, this same epic): a multi build started with
+  # NO --config.file must treat SIGHUP as a no-op SUCCESS, not a failure.
+  # --config.file defaults to "" on multi (the documented allow-any starting
+  # posture, see docs/configuration.md), so before this fix a SIGHUP
+  # delivered there fell into reloadOnce's fail() path and pinned
+  # demo_exporter_config_last_reload_successful at 0 forever: nothing ever
+  # runs a second reload to clear it, so ConfigReloadFailed fires 5m later on
+  # an otherwise perfectly healthy exporter. Own port and own trap, entirely
+  # separate from assertions 1-4 below, so this process's lifetime (which
+  # never sees --config.file at all) never overlaps theirs.
+  noconfig_port=9997
+  noconfig_log="$work/.golden-smoke-reload-noconfig.log"
+  "$bin" --web.listen-address="127.0.0.1:$noconfig_port" --log.level=info >"$noconfig_log" 2>&1 &
+  server_pid=$!
+  trap 'kill "$server_pid" >/dev/null 2>&1 || true; rm -f "$noconfig_log"' EXIT
+
+  ready=0
+  i=0
+  while [ "$i" -lt 15 ]; do
+    if curl -fsS -o /dev/null "http://127.0.0.1:$noconfig_port/healthz" 2>/dev/null; then
+      ready=1
+      break
+    fi
+    kill -0 "$server_pid" 2>/dev/null || die "http-multi reload: server exited before becoming ready (assertion 0, no --config.file), see $noconfig_log ($flavor/$forge)"
+    i=$((i + 1))
+    sleep 1
+  done
+  [ "$ready" -eq 1 ] || die "http-multi reload: server did not become ready within 15s (assertion 0, no --config.file) ($flavor/$forge)"
+
+  # Confirm the gauge starts at 1 (Run sets it before serving even the first
+  # scrape) before SIGHUP ever fires, so a later read of "1" cannot be
+  # mistaken for "never checked" instead of "never moved".
+  curl -fsS "http://127.0.0.1:$noconfig_port/metrics" -o "$reload_metrics" \
+    || die "http-multi reload: assertion 0 curl /metrics (pre-SIGHUP) FAILED ($flavor/$forge)"
+  command grep -q '^demo_exporter_config_last_reload_successful 1$' "$reload_metrics" \
+    || die "http-multi reload: assertion 0 gauge is not 1 before SIGHUP ($flavor/$forge)"
+
+  kill -HUP "$server_pid" || die "http-multi reload: sending SIGHUP to a --config.file-less process failed ($flavor/$forge)"
+  # No synchronous signal from the process itself once SIGHUP is sent: give
+  # reloadOnce a moment to run, then poll like every other wait in this file.
+  sleep 1
+  kill -0 "$server_pid" 2>/dev/null \
+    || die "http-multi reload: process exited after SIGHUP with no --config.file; SIGHUP must be a no-op there, not fatal ($flavor/$forge)"
+  curl -fsS "http://127.0.0.1:$noconfig_port/metrics" -o "$reload_metrics" \
+    || die "http-multi reload: assertion 0 curl /metrics (post-SIGHUP) FAILED ($flavor/$forge)"
+  command grep -q '^demo_exporter_config_last_reload_successful 1$' "$reload_metrics" \
+    || die "http-multi reload: assertion 0 - SIGHUP with no --config.file moved the gauge away from 1; a --config.file-less exporter must never trip ConfigReloadFailed ($flavor/$forge)"
+  echo "confirmed: assertion 0 - SIGHUP with no --config.file is a no-op success, gauge stays at 1 ($flavor/$forge)"
+
+  kill "$server_pid" >/dev/null 2>&1 || true
+  wait "$server_pid" 2>/dev/null || true
+  rm -f "$noconfig_log"
+  trap - EXIT
+
   # Assertion 1: no --web.enable-lifecycle -> POST /-/reload is a plain 404,
   # the closed default (the same answer as any other unknown path, not a
   # 405 or a 401 from a route that exists but refuses).

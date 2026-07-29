@@ -76,6 +76,10 @@ type Reloader struct {
 // started with, kept so a later reload can tell whether the "flags:" section
 // moved. apply adopts a new configuration and must itself be split into a
 // phase that can fail and mutates nothing, and a phase that mutates and cannot.
+// apply must never call Reload itself, directly or through anything it calls:
+// reloadOnce already holds inline for the whole call, and inline is not
+// reentrant, so a reload triggering another reload from inside apply would
+// deadlock against itself.
 func New(log *logger.Logger, path string, boot *config.Config, apply func(*config.Config) error) *Reloader {
 	return &Reloader{
 		log:      log,
@@ -187,7 +191,19 @@ func (r *Reloader) reloadOnceLocked() error {
 // can fail and mutates nothing.
 func (r *Reloader) reloadOnce() error {
 	if r.path == "" {
-		return r.fail(fmt.Errorf("no configuration file to reload: this exporter was started without --config.file"))
+		// No --config.file is the documented allow-any starting posture on
+		// this target model (see docs/configuration.md), not a broken state:
+		// an exporter running that way has nothing on disk to re-read, so a
+		// SIGHUP or POST /-/reload arriving here is a NO-OP SUCCESS, not a
+		// failure. Calling fail() here would drive the successful gauge to
+		// 0 and, since nothing ever runs a second reload to clear it, pin
+		// ConfigReloadFailed on a perfectly healthy exporter forever. Both
+		// triggers get the same answer on purpose: an operator who sends an
+		// explicit POST for a build that was never given a file deserves
+		// "there was nothing to reload", not a 500 that reads as this
+		// package being broken.
+		r.log.Info("no configuration file to reload: this exporter was started without --config.file")
+		return nil
 	}
 
 	next, err := config.Load(r.path) // re-read, UnmarshalStrict, resolve relative paths
