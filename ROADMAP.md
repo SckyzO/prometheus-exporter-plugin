@@ -168,44 +168,75 @@ Configuration reload is the ecosystem's norm, not a nicety: both
 `blackbox_exporter` and `snmp_exporter` reload on `SIGHUP` and on
 `POST /-/reload`, apply the new configuration atomically, and keep the old
 one when the new one fails to parse (verified against their current
-documentation). An exporter driven by a configuration file that cannot
-reload is the exception. What v0.5 deferred as one item is really two, of
-very different difficulty, so they are listed separately: the first is
-largely a transcription of a known pattern, the second is a genuine
-concurrency design.
+documentation). Delivered here for `multi` and `multi-instance`, the two
+target models that read `--config.file` more than once in a process's
+life: `multi` resolves it per request, `multi-instance` through pollers
+that own their own lifecycle.
 
-The operational need behind both is credential rotation. Since v0.5 a single
-exporter can hold several credential sets, and rotating one currently costs a
-restart and therefore a gap in the series. Note that `--web.config.file`, the
-TLS the exporter *presents*, is already reloaded per connection by
-`exporter-toolkit`; the gap is only on the outbound side.
+The milestone's original justification named credential rotation as the
+gap: "since v0.5 a single exporter can hold several credential sets, and
+rotating one currently costs a restart." That turned out to be **false**
+for every secret held in a `_file` variant. `prometheus/common` already
+re-reads `password_file`, `bearer_token_file`,
+`authorization.credentials_file`, `ca_file`, `cert_file` and `key_file`
+from disk on every outbound request, with no reload involved, mirroring
+what `exporter-toolkit` already does for `--web.config.file` on the inbound
+side. What a reload actually buys is the SHAPE of the configuration: an
+instance or module added, removed, re-addressed, re-labelled, or
+re-pointed at another module, plus a secret written inline instead of
+through a `_file` variant.
 
-- **Reload for `single` and `multi`.** Both resolve their configuration per
-  request, which is exactly the shape `snmp_exporter` reloads: a
-  `sync.RWMutex` guarding the config, readers taking the read lock, the
-  reload swapping under the write lock, so in-flight scrapes finish against
-  the old configuration and the next one sees the new. Add `SIGHUP` and
-  `POST /-/reload` together, as both reference exporters do, and refuse to
-  apply a configuration that does not parse.
-- **Reload for `multi-instance`.** The hard half, and the reason v0.5
-  deferred the whole thing. Its background pollers own goroutines with a
-  lifecycle (`Start(ctx)`, `Done()`), so a reload has to start pollers for
-  added instances, stop and drain pollers for removed ones, and decide what
-  happens to a cached snapshot whose instance changed address or module,
-  all while `/metrics` keeps being served. This deserves its own design
-  document, not a paragraph in the one that covers the easy half.
-- **A project journal that survives a cleared context.** Today only step 0
-  hands anything durable to a later step: `/design-exporter` writes an
-  architecture brief that `/new-prometheus-exporter` reads. Everything after
-  that (which collectors are left to build, the cardinality budget, which
-  ones need the background variant, the credential convention chosen) lives
-  only in the conversation, so a compaction or a `/clear` between two
-  collectors loses decisions that are already recorded on disk two metres
-  away. Promote the brief into a journal every command reads on entry and
-  appends to on exit, making each step resumable from a cold start and
-  turning the file into the reference base for building a complete exporter.
-  It reshapes the contract of all four commands at once and deserves its own
-  design.
+- **Reload for `multi` and `multi-instance`.** `SIGHUP` (always active) and
+  `POST /-/reload` (behind `--web.enable-lifecycle`, default off, the same
+  conservative default `blackbox_exporter`/`snmp_exporter` use for a
+  mutating endpoint) both re-read `--config.file`. Prepare-then-commit:
+  everything that can fail, parsing, a changed `flags:` section, an
+  unresolved module, an unreadable secret, runs before anything is
+  mutated, so a bad file leaves the running configuration untouched and
+  drives `..._exporter_config_last_reload_successful` to `0`. Two edits
+  are refused outright rather than half-applied: a changed `flags:`
+  section (rendered into command-line arguments exactly once, at startup,
+  and impossible to re-apply without re-running that parse) and, on
+  `multi-instance` only, a reload that would change the SET of label KEYS
+  an instance carries (a Prometheus registry never releases a metric
+  family's label-name dimension once registered, so re-registering one
+  under a different key set panics; refused with a restart-required error
+  instead of risking it).
+- **A per-target concurrency ceiling**
+  (`--exporter.max-requests-per-target`, `multi-instance` and `single`,
+  opt-in, default unlimited): bounds how many requests this exporter has
+  in flight against one watched machine at a time, so a slow collector's
+  background poller cannot starve its siblings polling the same instance.
+  Not offered on `multi`: it has no background pollers, and `/probe`'s
+  `target=` is caller-controlled and unbounded, which rules out a
+  pre-populated index.
+- **One shared, swappable transport per watched machine**
+  (`multi-instance`) or per module (`multi`), replacing a transport built
+  fresh on every use. This is what makes both the reload and the ceiling
+  above possible without a connection-pool explosion.
+
+`single` is not part of this delivery: its file holds only a `flags:`
+section (unreloadable by construction, above) and an `http_client_config:`
+whose file-backed parts are already hot, per the corrected justification
+above. The documentation points a `single` build at `password_file` and
+its siblings instead of a reload.
+
+## v0.8
+
+- **A project journal that survives a cleared context.** Originally
+  scoped into v0.7 alongside configuration reload; unrelated to it, so it
+  moved out to its own design session rather than share this one. Today
+  only step 0 hands anything durable to a later step: `/design-exporter`
+  writes an architecture brief that `/new-prometheus-exporter` reads.
+  Everything after that (which collectors are left to build, the
+  cardinality budget, which ones need the background variant, the
+  credential convention chosen) lives only in the conversation, so a
+  compaction or a `/clear` between two collectors loses decisions that are
+  already recorded on disk two metres away. Promote the brief into a
+  journal every command reads on entry and appends to on exit, making each
+  step resumable from a cold start and turning the file into the reference
+  base for building a complete exporter. It reshapes the contract of all
+  four commands at once and deserves its own design.
 
 ## v1.0
 
