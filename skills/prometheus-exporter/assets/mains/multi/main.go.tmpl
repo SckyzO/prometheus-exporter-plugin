@@ -197,10 +197,9 @@ func main() {
 	// Not joined at shutdown, unlike mains/multi-instance/main.go.tmpl's own
 	// reloaderDone: nothing here reads shared state after main returns.
 	// current.modules/current.defaultClient are swapped with a plain
-	// assignment (an atomic store, not a multi-step mutation Wait could
-	// observe half-done) and closeIdle only releases connections, so a
-	// reload still inside apply when the process exits has nothing left
-	// running afterward to race.
+	// assignment and closeIdle only releases connections, so a reload still
+	// inside apply when the process exits has nothing left running
+	// afterward to race.
 	go reloader.Run(ctx)
 
 	// /metrics reports on the EXPORTER ITSELF (build info, Go runtime/process,
