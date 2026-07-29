@@ -265,6 +265,15 @@ func (r *Reloader) Handler() http.Handler {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
+		if r.path == "" {
+			// Same 200, same no-restart contract as a real reload (see
+			// reloadOnce's own comment on why this is a no-op SUCCESS, not a
+			// failure), but a distinct body: an operator who edited a file
+			// and forgot to pass --config.file must not read "reload
+			// succeeded" and believe their edit is live.
+			_, _ = w.Write([]byte("no configuration file to reload: this exporter was started without --config.file\n"))
+			return
+		}
 		_, _ = w.Write([]byte("reload succeeded\n"))
 	})
 }
