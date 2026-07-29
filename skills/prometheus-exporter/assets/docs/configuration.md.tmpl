@@ -194,13 +194,10 @@ the wait would have no deadline of its own to honor.
 A single-target build has no reload at all: its `--config.file`, if any,
 holds only a `flags:` section (applied once at startup, and a running
 process cannot adopt a new value for a flag) and an `http_client_config:`
-section whose file-backed secrets mostly self-refresh already:
-`prometheus/common` re-reads `password_file`/`bearer_token_file` from disk
-on every outbound request, and `cert_file`/`key_file` on every new TLS
-handshake, so there is nothing left for a reload to usefully apply there
-either. (`ca_file` is the one exception: it is read once when the transport
-is built, so rotating the CA itself still takes a restart on this model.)
-See `SECURITY.md` for the full reasoning.
+section whose file-backed secrets and TLS material (`password_file`,
+`bearer_token_file`, `ca_file`, `cert_file`, `key_file`) `prometheus/common`
+already re-reads from disk on every outbound request, so there is nothing
+left for a reload to apply. See `SECURITY.md` for the full reasoning.
 
 Multi-target and multi-instance builds both reload `--config.file` in
 place, two ways:
@@ -211,10 +208,12 @@ place, two ways:
   `false`), the same conservative-default posture as everywhere else in this
   scaffold: an unauthenticated exporter that also exposed an unauthenticated
   way to force a reload would be a real change to the default security
-  posture. With the flag unset, this route answers `404`, exactly as if it
-  were never registered. `GET /-/reload` (and any method other than `POST`)
-  answers `405 Method Not Allowed` with an `Allow: POST` header, whether or
-  not the flag is set.
+  posture. With the flag unset, this route answers `404` for every method,
+  exactly as if it were never registered: the flag is checked, and the
+  request refused, before it ever reaches the code that would distinguish
+  `POST` from anything else. With the flag set, `GET /-/reload` (and any
+  method other than `POST`) instead answers `405 Method Not Allowed` with
+  an `Allow: POST` header.
 
 **A reload either fully succeeds or changes nothing.** Everything that can
 fail (re-reading the file, parsing it, validating it, building any new
