@@ -219,9 +219,9 @@ just-scaffolded `<target-dir>/config.example.yml`'s `flags:` section to:
 
 Edit in place, don't just append. Check first whether a line naming
 `exporter.max-requests-per-target` (commented or not) already exists under
-`flags:` (it will once `config.example.yml.tmpl` itself ships one, a change
-tracked separately): if so, rewrite that line to the state above; if not,
-add one, alongside the other top-level flags. Either way the file must end
+`flags:` (it will: `config.example.yml.tmpl` ships one, commented out): if
+so, rewrite that line to the state above; if not, add one, alongside the
+other top-level flags. Either way the file must end
 up with exactly one `exporter.max-requests-per-target` line: `flags:` reads
 each key once, and duplicating it would violate the file's own header
 comment, which promises no setting is ever expressible in two places.
