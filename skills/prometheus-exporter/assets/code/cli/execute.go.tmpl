@@ -92,6 +92,21 @@ var Execute = func(ctx context.Context, name string, args ...string) (out []byte
 	// automatically charged against that same budget rather than added on top
 	// of it, the same ordering the http flavor's Fetch applies deliberately
 	// for its own Limiter (see that Client.Fetch's own comment).
+	//
+	// Enforced here, not just documented above: a collector added later by
+	// /add-collector that forgets its own context.WithTimeout and passes a
+	// bare context.Background() through would otherwise reach
+	// CommandLimiter.Acquire with no bound at all, once a ceiling is
+	// configured, and block forever. Checked only when CommandLimiter is
+	// actually attached: with no ceiling (every deployment before v0.7, and
+	// every deployment today that never sets --exporter.max-requests-per-target)
+	// Acquire's own nil fast path never blocks, so an undeadlined ctx costs
+	// nothing there and this check would only reject a caller for no reason.
+	if CommandLimiter != nil {
+		if _, ok := ctx.Deadline(); !ok {
+			return nil, fmt.Errorf("execute %s: ctx has no deadline while a concurrency ceiling is configured; apply the collector's own timeout via context.WithTimeout before calling Execute", name)
+		}
+	}
 	release, err := CommandLimiter.Acquire(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("wait for a run slot: %w", err)

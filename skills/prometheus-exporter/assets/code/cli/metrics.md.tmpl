@@ -55,6 +55,6 @@ collector. See [docs/configuration.md](configuration.md).
 | Metric | Type | Labels | Description |
 |---|---|---|---|
 | `@@NAMESPACE@@_exporter_command_duration_seconds` | Histogram | `outcome` | Duration in seconds of external commands issued by this exporter's collectors, by outcome (`success` or `error`). Defined in `internal/collector/execute.go`. |
-| `@@NAMESPACE@@_exporter_request_wait_seconds` | Histogram | - | Duration in seconds a command invocation waited for a concurrency slot, whether or not one was granted. Only nonzero once `--exporter.max-requests-per-target` is set. Defined in `internal/collector/limiter.go`. |
+| `@@NAMESPACE@@_exporter_request_wait_seconds` | Histogram | `outcome` | Duration in seconds a command invocation waited for a concurrency slot, by outcome (`success` if a slot was granted, `error` if the caller's own deadline expired first). Both series stay at a permanent zero once `--exporter.max-requests-per-target` is unset (the default). Defined in `internal/collector/limiter.go`. |
 | `@@NAMESPACE@@_exporter_collector_success` | Gauge | `collector` | Whether the last scrape of the collector succeeded (1=success, 0=failure). Defined in `internal/collector/status_tracker.go`. |
 | `@@NAMESPACE@@_exporter_collector_duration_seconds` | Gauge | `collector` | Duration of the last scrape for the collector, in seconds. Defined in `internal/collector/status_tracker.go`. |

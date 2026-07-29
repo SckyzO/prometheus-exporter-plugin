@@ -9,12 +9,15 @@ import (
 )
 
 // RequestWait records how long a request waited for a concurrency slot,
-// whether it was eventually granted one or gave up when ctx was done first
-// (see Acquire below: both paths observe). Unlabelled, like RequestDuration
-// next to it: the exporter's
-// own registry carries no per-instance label, and the per-collector freshness
-// gauge the background variant already emits is what identifies WHICH
-// collector is starving. This one answers whether anything is queueing at all.
+// labeled by outcome ("success" if a slot was granted, "error" if ctx was
+// done first, see Acquire below), the same "outcome" convention
+// RequestDuration next to it already uses, and the same values: Acquire's own
+// two returns are exactly success (nil error) and error (ctx.Err()), so this
+// label is not a second, independent vocabulary. No per-instance label: the
+// exporter's own registry carries none, and the per-collector freshness gauge
+// the background variant already emits is what identifies WHICH collector is
+// starving. This one answers whether anything is queueing at all, and
+// whether the queueing paid off.
 //
 // Registered alongside --exporter.max-requests-per-target, the flag that
 // turns a ceiling on: registry.frag registers it for single (the same way it
@@ -24,7 +27,11 @@ import (
 // RequestDuration one. It reaches every http-flavor target model's /metrics,
 // including multi, which never attaches a ceiling and so always reports zero
 // here: a permanent zero is the truthful reading of "no ceiling configured",
-// not a sign the metric is broken.
+// not a sign the metric is broken. init() below is what keeps that permanent
+// zero VISIBLE rather than the series going missing outright: a HistogramVec
+// with a label reports nothing at all for a label value that has never been
+// observed, unlike the plain, label-less Histogram this var used to be, which
+// always self-reported zero once registered, whether or not Observe ever ran.
 //
 // Observed whenever a ceiling is actually configured, even when a slot is
 // immediately free (the wait is then near zero). On the nil fast path (no
@@ -32,10 +39,23 @@ import (
 // histogram at all, matching the "costs one nil check and no allocation"
 // contract below: there is nothing to report when there is no ceiling to
 // wait on.
-var RequestWait = prometheus.NewHistogram(prometheus.HistogramOpts{
+var RequestWait = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 	Name: "@@NAMESPACE@@_exporter_request_wait_seconds",
-	Help: "Duration in seconds a request waited for a per-target concurrency slot, whether or not one was granted.",
-})
+	Help: "Duration in seconds a request waited for a per-target concurrency slot, by outcome.",
+}, []string{"outcome"})
+
+func init() {
+	// Touch both outcome values once, at package init, so RequestWait always
+	// exposes both series (each zero-valued until observed) instead of being
+	// entirely absent from /metrics whenever no ceiling is configured, which
+	// is every build's default and multi's permanent state (see the var's own
+	// doc comment above). A HistogramVec that has never seen WithLabelValues
+	// for a given label combination reports nothing at all for it; this is
+	// what restores the plain Histogram's old "always present, permanent
+	// zero" behaviour under the new label.
+	RequestWait.WithLabelValues("success")
+	RequestWait.WithLabelValues("error")
+}
 
 // Limiter bounds how many requests this exporter has in flight against one
 // target at a time. It exists because every collector under the multi-instance
@@ -78,11 +98,11 @@ func (l *Limiter) Acquire(ctx context.Context) (func(), error) {
 	start := time.Now()
 	select {
 	case l.slots <- struct{}{}:
-		RequestWait.Observe(time.Since(start).Seconds())
+		RequestWait.WithLabelValues("success").Observe(time.Since(start).Seconds())
 		var once sync.Once
 		return func() { once.Do(func() { <-l.slots }) }, nil
 	case <-ctx.Done():
-		RequestWait.Observe(time.Since(start).Seconds())
+		RequestWait.WithLabelValues("error").Observe(time.Since(start).Seconds())
 		return func() {}, ctx.Err()
 	}
 }
