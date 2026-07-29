@@ -79,3 +79,28 @@ multi-target exporter in the Prometheus ecosystem (Blackbox, SNMP) emits
 these two exact names, and every multi-target dashboard/alert in the wild
 queries them as-is. This scaffold matches that convention here instead of
 the `namespace_subsystem_name` rule the rest of this file's metrics follow.
+
+## Configuration reload metrics (multi-target builds only)
+
+Multi-target builds (scaffolded with `--target-model multi`) additionally
+expose two gauges, defined in `internal/reload/reload.go`, a sibling package
+to `internal/collector/`, which does not exist at all in a single-target
+build. They are listed here as prose rather than a `docs-check`-parsed table
+row on purpose: `make docs-check` (see this file's own header comment) only
+scans `internal/collector/*.go`, so it can never see `internal/reload`'s
+metrics either way; documenting them as a regular table row would make
+`docs-check` report them as a lie against a directory it was never told to
+look at, on every build, single and multi alike.
+
+- `@@NAMESPACE@@_exporter_config_last_reload_successful` (Gauge, no labels):
+  whether the last configuration reload attempt succeeded (`1`) or failed
+  (`0`). Set to `1` before the server starts serving, so the gauge is
+  meaningful from the very first scrape rather than absent until somebody
+  reloads.
+- `@@NAMESPACE@@_exporter_config_last_reload_success_timestamp_seconds`
+  (Gauge, no labels): Unix time of the last SUCCESSFUL configuration reload.
+
+Reload is triggered by `SIGHUP` (always on) or `POST /-/reload` (behind
+`--web.enable-lifecycle`); see [docs/configuration.md](configuration.md) and
+`SECURITY.md`, which also explains why a single-target build has no
+equivalent metric: it has no reload at all.

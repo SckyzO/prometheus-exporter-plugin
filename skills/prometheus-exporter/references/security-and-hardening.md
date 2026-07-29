@@ -66,7 +66,12 @@ never slipped into a patch release as an unannounced improvement.
 
 Concretely, in this scaffold: `/metrics` ships unauthenticated by default,
 and stays that way. TLS and Basic Auth are available (Rule 4, below) but
-never forced on. `SECURITY.md.tmpl` states the reasoning plainly: *"the
+never forced on. `POST /-/reload` (`multi` and `multi-instance` builds,
+`internal/reload`) follows the identical pattern: a mutating endpoint gated
+behind `--web.enable-lifecycle`, default `false`, so a build that never sets
+the flag gets no new mutating surface at all; `SIGHUP` needs no flag,
+because sending it already requires being on the machine. `SECURITY.md.tmpl`
+states the reasoning plainly: *"the
 exporter itself does not force a particular hardening posture by default:
 the right one depends on your network, and an unannounced change to a
 security-relevant default would be a breaking change."* The right posture

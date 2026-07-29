@@ -74,13 +74,36 @@ so treat that file as a secret.
 
 Credentials declared in `--config.file`, whether in the top-level
 `http_client_config:` or in a `modules:` entry, are read at startup. On a
-multi-target build (`--target-model multi`), SIGHUP (and `POST /-/reload`
-once `--web.enable-lifecycle` is set) re-reads them without restarting the
-process; on other target models, rotating a credential still means
-restarting the process. A module is selected per request (`?module=` on a
-multi-target build's `/probe`) or once at boot (an instance's `module:` key on a
-multi-instance build); either way it is never a metric label and never
-reaches any series this exporter exposes.
+multi-target build (`--target-model multi`) or a multi-instance build
+(`--target-model multi-instance`), SIGHUP (always) and `POST /-/reload`
+(once `--web.enable-lifecycle` is set) re-read them without restarting the
+process. A single-target build (`--target-model single`, the default) has no
+reload at all: its configuration file holds only a `flags:` section, applied
+once at startup and never revisited, and an `http_client_config:` section
+whose file-backed secrets mostly self-refresh already: `prometheus/common`
+re-reads `password_file`/`bearer_token_file` from disk on every outbound
+request, and `cert_file`/`key_file` on every new TLS handshake, so there is
+nothing left for a reload to usefully apply there either (`ca_file` is the
+one exception: it is read once when the transport is built, so rotating the
+CA itself still takes a restart on this model). Rotating a `password_file`
+or `bearer_token_file` on a single-target build therefore takes effect on
+its own, with no restart and no reload; rotating an inline value
+(`password`, `bearer_token`, `key`, none of which are recommended, see
+above) or the CA still means restarting the process. A module is
+selected per request (`?module=` on a multi-target build's `/probe`) or once
+at boot (an instance's `module:` key on a multi-instance build); either way
+it is never a metric label and never reaches any series this exporter
+exposes.
+
+`POST /-/reload` is a mutating endpoint. It is gated behind
+`--web.enable-lifecycle`, default `false`: the same conservative-default
+reasoning as everything else in this file, since shipping every generated
+exporter an unauthenticated way to force a configuration reload would be the
+one change here that degrades the default posture of an operator who
+configured nothing. SIGHUP needs no flag: sending it already requires being
+on the machine. See [docs/configuration.md](docs/configuration.md) for the
+full reload surface (what SIGHUP and `POST /-/reload` do, and what a refused
+reload leaves running).
 
 See [docs/configuration.md](docs/configuration.md) for the file's format and
 the precedence rules.

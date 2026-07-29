@@ -34,6 +34,9 @@ and exposes them at `/metrics` for scraping.
   [`config.example.yml`](config.example.yml) in this repository; the format is documented in
   [docs/configuration.md](docs/configuration.md).
 - Signal-aware shutdown: `SIGTERM`/`SIGINT` drain in-flight requests before exiting.
+- `--exporter.max-requests-per-target` optionally bounds outbound concurrency (single-target
+  and multi-instance builds; absent on multi-target). See
+  [docs/configuration.md](docs/configuration.md#bounding-outbound-concurrency).
 - Container-first tooling: a container engine (Docker or Podman) is the only development
   requirement; every quality gate also runs on the host Go toolchain via `NATIVE=1`.
 - Multi-arch, signed container images, each with a CycloneDX SBOM available via
@@ -109,6 +112,16 @@ Multi-target builds (`--target-model multi`, http flavor only) also expose:
 | Endpoint | Description |
 |---|---|
 | `/probe?target=<url>` | Probes one target on demand: a fresh registry and collector set scoped to `target`, plus `probe_success`/`probe_duration_seconds`, see [docs/configuration.md](docs/configuration.md) and [SECURITY.md](SECURITY.md) (SSRF posture) |
+
+Multi-target and multi-instance builds (`--target-model multi` or
+`multi-instance`) also expose:
+
+| Endpoint | Description |
+|---|---|
+| `POST /-/reload` | Reloads `--config.file` in place, no restart. Behind `--web.enable-lifecycle` (default off); `SIGHUP` always works and needs no flag. See [Configuration reload](docs/configuration.md#configuration-reload-multi-and-multi-instance-builds-only) |
+
+A single-target build (the default) has no `/-/reload`: see
+[docs/configuration.md](docs/configuration.md) for why.
 
 ```bash
 curl 'http://localhost:@@DEFAULT_PORT@@/probe?target=http://target-a:9100'

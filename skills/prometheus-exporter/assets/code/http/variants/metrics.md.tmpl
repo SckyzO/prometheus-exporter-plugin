@@ -71,3 +71,27 @@ per-instance, see `internal/instance/instance.go`'s `Handle`, but the
 histogram recording it is not), so neither carries `@@INSTANCE_LABEL@@`; the
 first is labeled only by `outcome`, the second carries no labels at all. See
 [docs/configuration.md](configuration.md).
+
+## Configuration reload metrics
+
+Two gauges, defined in `internal/reload/reload.go`, a sibling package to
+`internal/collector/`. Listed here as prose rather than a
+`docs-check`-parsed table row on purpose: `make docs-check` (see this file's
+own header comment) only scans `internal/collector/*.go`, so it can never
+see `internal/reload`'s metrics either way; documenting them as a regular
+table row would make `docs-check` report them as a lie against a directory
+it was never told to look at.
+
+- `@@NAMESPACE@@_exporter_config_last_reload_successful` (Gauge, no labels):
+  whether the last configuration reload attempt succeeded (`1`) or failed
+  (`0`). Set to `1` before the server starts serving, so the gauge is
+  meaningful from the very first scrape rather than absent until somebody
+  reloads.
+- `@@NAMESPACE@@_exporter_config_last_reload_success_timestamp_seconds`
+  (Gauge, no labels): Unix time of the last SUCCESSFUL configuration reload.
+
+This target model always wires reload: `SIGHUP` needs no flag, and
+`POST /-/reload` is available behind `--web.enable-lifecycle`. Neither gauge
+carries the `@@INSTANCE_LABEL@@` label: a reload is a property of the
+configuration file as a whole, not of any one watched instance. See
+[docs/configuration.md](configuration.md) and `SECURITY.md`.

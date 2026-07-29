@@ -86,6 +86,20 @@ scaffold ships assumes: `main.go`'s registry, flags, and `/metrics` endpoint
 all describe exactly one target. The rest of this skill's references
 describe this model unless a section says otherwise.
 
+**`single` has no configuration reload, unlike the other two models below.**
+Its `--config.file`, if used at all, holds only a `flags:` section (rendered
+into kingpin arguments once, before `main` parses them; a running process
+has no mechanism to re-parse a flag) and an `http_client_config:` section
+whose file-backed secrets mostly self-refresh already: `prometheus/common`
+re-reads `password_file`/`bearer_token_file` from disk on every outbound
+request, and `cert_file`/`key_file` on every new TLS handshake, with no help
+from this scaffold needed either way (`ca_file` is the one exception: it is
+read once when the transport is built, so rotating the CA itself still
+takes a restart here). There is nothing left for a reload mechanism to
+usefully apply on this model, so `/new-prometheus-exporter` does not ship
+`internal/reload/` here at all. Rotating an inline (non-`_file`) credential
+on a `single` build still means restarting the process too.
+
 ### `multi`
 
 The exporter itself queries *N* other instances over the network and is
@@ -143,6 +157,16 @@ and `probe_timeout_seconds`, are a deliberate, documented exception to this
 scaffold's usual `namespace_subsystem_name` metric-naming rule. See
 `prometheus-principles.md`'s naming-exception note.
 
+`multi` reloads `--config.file` in place: SIGHUP always works, and
+`POST /-/reload` is available behind `--web.enable-lifecycle` (default
+`false`, since an unauthenticated exporter that also exposed an
+unauthenticated way to force a reload would degrade the default posture of
+an operator who configured nothing). A reload rebuilds the `modules:` table
+and swaps it atomically; a failure (an unreadable CA on the third module,
+say) leaves the process serving exactly what it was serving before, never a
+half-applied mix of old and new. See the generated `docs/configuration.md`'s
+"Configuration reload" section for the operator-facing detail.
+
 ### `multi-instance`
 
 The exporter watches a fixed list of machines, declared under `instances:`
@@ -175,12 +199,35 @@ batch job whose state changes hourly, any inventory collected once a night.
 **Multi-instance is scaffolded, opt-in, via `--target-model multi-instance`
 (http flavor only, and `--config.file` is required at runtime, not merely
 optional).** `/new-prometheus-exporter --target-model multi-instance` ships
-`internal/instance/` instead of `internal/probe/`: an `instance.Factory` per
-collector, appended at the scaffold's own marker, that `main` calls once per
-configured instance at boot, producing one `instance.BackgroundCollector`
-per instance per collector. `/add-collector` understands this model too: it
-appends an `instance.Factory` at the multi-instance scaffold's own marker
-(see `project-scaffold.md`).
+`internal/instance/` instead of `internal/probe/`: an `instance.Registry`
+that both boot and every later reload drive through the same two calls.
+`Prepare(instances)` is the phase that can fail and mutates nothing: for
+each instance it needs, it calls every enabled collector's `Factory.New(h)`
+against that instance's own `Handle` (the shared transport and concurrency
+ceiling a reload can swap without stopping the instance's pollers), so a
+factory failure (a bad timeout, an unreadable CA) is caught before anything
+is touched. `Commit(ctx, plan)` is the phase that cannot fail: it `Start(ctx)`s
+each new `instance.BackgroundCollector`, and registers its `StatusTracker`
+under a labelled wrapper of the exporter's registry. Boot is `Prepare`
+against an empty live set followed by `Commit`, the exact same two calls a
+`SIGHUP` or `POST /-/reload` makes, which is why the reload path is
+exercised by every start, not only by an operator sending a signal.
+`/add-collector` understands this model too: it appends an `instance.Factory`
+at the multi-instance scaffold's own marker (see `project-scaffold.md`).
+
+Unlike `single`, `multi-instance` reloads `--config.file` in place, the same
+`SIGHUP`-always / `POST /-/reload`-behind-`--web.enable-lifecycle` mechanism
+as `multi`. What reloads with no restart: which instances exist, an
+instance's address, its credentials, and the *values* of its labels. What a
+reload cannot do, refused with a restart-required error rather than
+attempted: change the *set* of label keys an instance's series carry (adding,
+removing, or renaming an instance label across every instance in the file).
+A Prometheus registry never releases a metric family's label-name dimension
+once it has registered a series under it, even after every series of that
+family is later unregistered, so allowing that edit to reload would panic
+instead of applying. A label *value* change (the same key, a different
+value) is unaffected and reloads freely; only a key-set change needs a
+restart.
 
 Every collector on a multi-instance build **must** be the background
 variant (`/add-collector --variant background`; see

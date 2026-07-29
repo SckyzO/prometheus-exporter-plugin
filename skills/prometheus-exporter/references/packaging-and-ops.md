@@ -188,8 +188,24 @@ Group=@@EXPORTER_NAME@@
 ExecStart=/usr/local/bin/@@EXPORTER_NAME@@ --web.listen-address=":@@DEFAULT_PORT@@"
 Restart=on-failure
 RestartSec=5
+ExecReload=/bin/kill -HUP $MAINPID
 NoNewPrivileges=true
 ```
+
+`ExecReload` is what makes `systemctl reload @@EXPORTER_NAME@@` do anything
+at all: without it, `reload` fails outright with "Job type reload is not
+applicable". It ships unconditionally, in every target model, because what
+`SIGHUP` does is decided by the generated `cmd/@@EXPORTER_NAME@@/main.go`,
+not by the unit file. On a multi-target or multi-instance build,
+`internal/reload` catches `SIGHUP` and reloads `--config.file` in place: no
+restart, no dropped connection. On a single-target build, nothing in
+`main.go` installs a `SIGHUP` handler at all (`internal/reload` is not
+shipped there, see `exporter-architecture.md`'s three-model comparison), so
+the signal falls through to its OS default, which terminates the process;
+`Restart=on-failure` immediately above then brings it back up, a full
+restart standing in for a reload rather than an in-place one. Either way,
+`systemctl reload` ends up picking up an edited `--config.file` or changed
+flags; only the mechanism differs by target model.
 
 The unit's own comment is explicit that this user must be created *before*
 enabling the service (`useradd --system --no-create-home --shell
@@ -281,6 +297,9 @@ cache, and neither file needs to `COPY` the other's contents into an image.
       `NoNewPrivileges=true` is active unconditionally, and the stricter
       block below it is uncommented progressively, re-testing after each
       directive.
+- [ ] `ExecReload=/bin/kill -HUP $MAINPID` is present unconditionally;
+      whether `systemctl reload` triggers an in-place reload or a full
+      restart depends on the target model, not on this file.
 - [ ] `.dockerignore` excludes build artifacts, fixtures, docs, and packaging
       assets, never `go.mod`/`go.sum`/`cmd/`/`internal/`, which the
       multi-stage builds actually need in context.

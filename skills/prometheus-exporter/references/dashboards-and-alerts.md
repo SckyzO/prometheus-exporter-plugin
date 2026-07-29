@@ -50,9 +50,12 @@ operational tolerance, per the comments in `alerts.yml` and
 Built entirely from this exporter's own self-instrumentation
 (`@@NAMESPACE@@_exporter_collector_success`,
 `@@NAMESPACE@@_exporter_collector_duration_seconds`, both defined in
-`project-scaffold.md`'s `StatusTracker`) plus Prometheus's own `up`. Four
-rules, identical for every I/O flavor this plugin scaffolds because the
-self-instrumentation itself is identical:
+`project-scaffold.md`'s `StatusTracker`) plus Prometheus's own `up`. Five
+rules (six counting `ExporterCollectorDurationHigh` twice, once per
+severity), identical for every I/O flavor this plugin scaffolds because the
+self-instrumentation itself is identical, plus one reload-specific rule that
+ships unconditionally but only ever matches on a build that has a reload to
+report on:
 
 | Alert | Expression | `for:` | `severity` |
 |---|---|---|---|
@@ -61,6 +64,16 @@ self-instrumentation itself is identical:
 | `ExporterCollectorFailing` | `@@NAMESPACE@@_exporter_collector_success == 0` | 10m | warning |
 | `ExporterCollectorDurationHigh` | `..._duration_seconds > 5` | 10m | warning |
 | `ExporterCollectorDurationHigh` (second rule, same name) | `..._duration_seconds > 20` | 10m | critical |
+| `ConfigReloadFailed` | `@@NAMESPACE@@_exporter_config_last_reload_successful == 0` | 5m | warning |
+
+**`ConfigReloadFailed` is scaffolded into every build's `alerts.yml`, but
+only ever fires on `multi` or `multi-instance`.** The gauge it selects is
+defined in `internal/reload/reload.go`, absent entirely on a `single`-target
+build (see `exporter-architecture.md`'s three-model comparison for why that
+model has no reload mechanism at all); PromQL against an absent metric
+simply returns no series, so the rule is inert rather than broken there, the
+same "shipped once, safe everywhere, only meaningful where the metric
+exists" posture the health rules already have.
 
 Two design decisions worth understanding, not just copying:
 

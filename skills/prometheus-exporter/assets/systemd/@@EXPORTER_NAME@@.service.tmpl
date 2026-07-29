@@ -34,6 +34,19 @@ ExecStart=/usr/local/bin/@@EXPORTER_NAME@@ --web.listen-address=":@@DEFAULT_PORT
 Restart=on-failure
 RestartSec=5
 
+# `systemctl reload @@EXPORTER_NAME@@` sends SIGHUP. On a multi-target or
+# multi-instance build (--target-model multi / multi-instance), this exporter
+# handles SIGHUP itself: it re-reads --config.file in place and keeps serving,
+# no restart, no dropped connection (see docs/configuration.md's
+# "Configuration reload" section). On a single-target build (the default),
+# there is nothing installed to catch SIGHUP, so the signal falls through to
+# its OS default, which terminates the process; Restart=on-failure above then
+# brings it back up a moment later, a full restart rather than a graceful
+# reload. Either way `systemctl reload` picks up an edited --config.file or
+# changed flags; only the mechanism (in-place vs. restart) differs by target
+# model.
+ExecReload=/bin/kill -HUP $MAINPID
+
 # --- Hardening --------------------------------------------------------------
 # Safe unconditionally for this binary (it never needs to gain privileges via
 # a setuid/setgid/file-capability helper) - mirrors the
