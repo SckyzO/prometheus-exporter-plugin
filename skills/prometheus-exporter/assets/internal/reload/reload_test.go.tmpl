@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -29,6 +28,35 @@ func writeConfig(t *testing.T, dir, body string) string {
 		t.Fatalf("write config: %v", err)
 	}
 	return p
+}
+
+// startRun starts r.Run on its own goroutine and returns its ctx alongside a
+// stop function that cancels it and blocks until Run has actually returned.
+// Every test in this file that starts Run must stop it this way, never with
+// a bare `defer cancel()`: Run's own cleanup unconditionally calls
+// signal.Ignore(syscall.SIGHUP) on exit (see Run's own doc comment for why),
+// a process-wide side effect that undoes every OTHER goroutine's SIGHUP
+// registrations too, not only this Reloader's own. A `defer cancel()` with
+// no wait leaves that goroutine free to keep running, and to call Ignore,
+// at any point after its own test function has already returned; under
+// `go test -count=N` that landmine can fire while a LATER test (in
+// particular TestSIGHUPTriggersAReloadWithoutTerminatingTheProcess) is in
+// the middle of its own signal.Notify setup, wiping it out. Reproduced
+// empirically while hardening that test: TestReloadIsSerialized and
+// TestConcurrentReloadsMixBothPathsAndStaySerialized both start Run and
+// both run in the same file, so both needed this too, not just the one
+// test that sends real signals.
+func startRun(r *Reloader) (ctx context.Context, stop func()) {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r.Run(ctx)
+	}()
+	return ctx, func() {
+		cancel()
+		<-done
+	}
 }
 
 // TestReloadAppliesAValidFile is the happy path, and the one assertion that
@@ -203,9 +231,8 @@ func TestReloadIsSerialized(t *testing.T) {
 		return nil
 	})
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go r.Run(ctx)
+	_, stop := startRun(r)
+	defer stop()
 
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
@@ -229,14 +256,44 @@ func TestReloadIsSerialized(t *testing.T) {
 // <-hup" branch: that requires a real, kernel-delivered signal. Sends actual
 // SIGHUPs to this test process and waits for apply to observe one, then
 // confirms the Reloader's own context is still alive.
+//
+// Waits on a channel apply signals, not on a wall-clock poll of a counter:
+// an earlier version looped on atomic.LoadInt64 with a 1ms time.Sleep and a
+// 5s deadline, which flaked in CI on a loaded runner (goroutine scheduling
+// alone can eat well past 1ms under contention, and resending a real kill
+// syscall every 1ms adds to exactly the load it is losing to). The event
+// this test actually needs, "Run's hup case ran apply at least once", is
+// available for free through the apply callback every New() caller already
+// supplies; no change to reload.go itself, and no test-only export, was
+// needed to observe it.
+//
+// Also waits for Run's own goroutine to have fully RETURNED before this
+// test itself returns (see the <-done receive below), not just for ctx to
+// be cancelled: Run's cleanup ends with signal.Ignore(syscall.SIGHUP) (see
+// Run's own doc comment for why), which is process-wide and, per
+// signal.Ignore's own contract, undoes every OTHER signal.Notify
+// registration for that signal too, not only this Reloader's. Under
+// `go test -count=N`, this test's own guard/hup registrations from the
+// NEXT iteration would otherwise be able to start (and lose their
+// registration to) a STILL-RUNNING previous iteration's deferred Ignore,
+// a real cross-iteration flake reproduced empirically while hardening this
+// test (running -count=20 without this wait failed roughly 1 run in 12).
+// Waiting here keeps every iteration's signal-handler-table mutations fully
+// serialized against the next one's.
 func TestSIGHUPTriggersAReloadWithoutTerminatingTheProcess(t *testing.T) {
 	dir := t.TempDir()
 	p := writeConfig(t, dir, "modules:\n  prod: {}\n")
 	boot, _ := config.Load(p)
 
-	var applies int64
+	// Buffered so apply, running on Run's own goroutine, never blocks on
+	// this test's own bookkeeping: a slow or absent receiver here must
+	// never be able to stall the reload path itself.
+	applied := make(chan struct{}, 1)
 	r := New(logger.NewTextLogger("error"), p, boot, func(*config.Config) error {
-		atomic.AddInt64(&applies, 1)
+		select {
+		case applied <- struct{}{}:
+		default:
+		}
 		return nil
 	})
 
@@ -251,19 +308,45 @@ func TestSIGHUPTriggersAReloadWithoutTerminatingTheProcess(t *testing.T) {
 	signal.Notify(guard, syscall.SIGHUP)
 	defer signal.Stop(guard)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go r.Run(ctx)
+	// Declared AFTER signal.Stop(guard) above, so it runs BEFORE it (defers
+	// are LIFO): stop cancels and blocks until Run has actually returned,
+	// so its own signal.Ignore has already run by the time this defer
+	// completes. signal.Stop(guard) above then fires last, once Ignore is
+	// no longer a risk to race, rather than possibly running (and losing
+	// guard's own registration to Ignore) while Run's goroutine is still
+	// shutting down. See startRun's own doc comment for why every Run
+	// caller in this file, not just this test, needs this.
+	ctx, stop := startRun(r)
+	defer stop()
 
-	deadline := time.Now().Add(5 * time.Second)
-	for atomic.LoadInt64(&applies) == 0 {
-		if err := syscall.Kill(os.Getpid(), syscall.SIGHUP); err != nil {
-			t.Fatalf("send SIGHUP: %v", err)
+	// The first send can still race Run's own signal.Notify call (guard
+	// above only prevents that race from killing the process, it says
+	// nothing about whether hup itself was registered in time to receive
+	// THIS particular signal), so it may need resending. 25ms, not 1ms: a
+	// cadence that gives Run's goroutine room to actually get scheduled on
+	// a busy machine instead of competing with it for CPU. The 20s outer
+	// bound exists only to fail this one test instead of hanging the suite
+	// forever if Run's hup case never fires at all; the common case exits
+	// as soon as the event arrives; it does not wait out the bound.
+	if err := syscall.Kill(os.Getpid(), syscall.SIGHUP); err != nil {
+		t.Fatalf("send SIGHUP: %v", err)
+	}
+	resend := time.NewTicker(25 * time.Millisecond)
+	defer resend.Stop()
+	timeout := time.NewTimer(20 * time.Second)
+	defer timeout.Stop()
+wait:
+	for {
+		select {
+		case <-applied:
+			break wait
+		case <-resend.C:
+			if err := syscall.Kill(os.Getpid(), syscall.SIGHUP); err != nil {
+				t.Fatalf("send SIGHUP: %v", err)
+			}
+		case <-timeout.C:
+			t.Fatal("sent SIGHUP repeatedly for 20s and apply was never called; Run's hup case never fired")
 		}
-		if time.Now().After(deadline) {
-			t.Fatal("sent SIGHUP repeatedly for 5s and apply was never called; Run's hup case never fired")
-		}
-		time.Sleep(time.Millisecond)
 	}
 
 	if ctx.Err() != nil {
@@ -308,9 +391,8 @@ func TestConcurrentReloadsMixBothPathsAndStaySerialized(t *testing.T) {
 		return nil
 	})
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go r.Run(ctx)
+	_, stop := startRun(r)
+	defer stop()
 
 	// A raw send on the unexported requests channel, not a call to Reload():
 	// this line only returns once Run's "case reply := <-r.requests" has
