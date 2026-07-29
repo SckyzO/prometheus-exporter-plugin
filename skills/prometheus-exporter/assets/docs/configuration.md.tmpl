@@ -403,8 +403,7 @@ label: `@@INSTANCE_LABEL@@` by default, for example
 The two exceptions are `@@NAMESPACE@@_exporter_request_duration_seconds` and
 `@@NAMESPACE@@_exporter_request_wait_seconds`: both single, process-wide
 histograms shared across all instances, so neither carries
-`@@INSTANCE_LABEL@@`. The first is labeled only by `outcome`; the second
-carries no labels at all.
+`@@INSTANCE_LABEL@@`. Both are labeled only by `outcome`.
 Its name is fixed at scaffold time via `scaffold.sh --instance-label`, never
 a runtime flag. It is applied by the exporter itself, per instance, rather
 than by any collector's own descriptor, so `make docs-check` cannot see or

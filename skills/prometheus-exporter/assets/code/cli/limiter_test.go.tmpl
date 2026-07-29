@@ -163,8 +163,8 @@ func requestWaitSampleCount(t *testing.T, outcome string) uint64 {
 // discriminates between Acquire's two paths, not just that RequestWait gets
 // observed at all: a granted acquire must bump "success" and leave "error"
 // untouched, and a ctx-expired acquire must do the opposite. Guards against
-// the Help text being truthful ("whether or not one was granted") while the
-// series itself still conflated both outcomes into one bucket.
+// the Help text being truthful ("...by outcome.") while the series itself
+// still conflated both outcomes into one bucket.
 func TestAcquireLabelsRequestWaitByOutcome(t *testing.T) {
 	beforeSuccess := requestWaitSampleCount(t, "success")
 	beforeError := requestWaitSampleCount(t, "error")

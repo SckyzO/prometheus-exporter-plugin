@@ -65,6 +65,15 @@ var CommandLimiter *Limiter
 // caller controls cancellation, Execute just obeys it) and keeps this var
 // free of any mutable package state of its own.
 //
+// That responsibility is enforced, not just conventional, whenever a
+// concurrency ceiling is attached: with CommandLimiter non-nil, Execute
+// rejects a ctx that carries no deadline instead of handing it to
+// CommandLimiter.Acquire, which would otherwise block forever on a ctx that
+// can never expire. A caller that never sets
+// --exporter.max-requests-per-target (CommandLimiter stays nil, the
+// default) is unaffected either way. See the body below for the check
+// itself.
+//
 // Every call, success or failure, is timed and recorded on CommandDuration,
 // through a deferred, named-return observation, the same shape the http
 // flavor's Client.Fetch uses for RequestDuration. That symmetry matters here
