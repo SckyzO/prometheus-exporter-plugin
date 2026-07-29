@@ -320,6 +320,28 @@ if [ "$target_model" != multi ] && [ "$target_model" != multi-instance ]; then
   rm -rf "$dst/internal/reload"
 fi
 
+# The systemd unit's ExecReload is per-target-model surgery for the same
+# reason internal/reload/ itself is: a single-target build installs no SIGHUP
+# handler (the block above just removed the only package that would), so
+# leaving ExecReload active would let `systemctl reload` reach the process
+# and hit SIGHUP's OS default (terminate) instead of the harmless
+# "Job type reload is not applicable" refusal systemd gives when no
+# ExecReload= is set at all. Comment the line out rather than delete it, so
+# it stays discoverable (and correct) for anyone who copies this unit
+# elsewhere. multi and multi-instance keep it active: they installed
+# internal/reload above, which does handle SIGHUP.
+if [ "$target_model" = single ]; then
+  svc=""
+  for f in "$dst"/systemd/*.service.tmpl; do
+    [ -f "$f" ] || continue
+    [ -z "$svc" ] || die "expected exactly one systemd/*.service.tmpl, found more than one"
+    svc=$f
+  done
+  [ -n "$svc" ] || die "no systemd unit template found to disable ExecReload on for --target-model single"
+  sed -e 's/^ExecReload=/# ExecReload=/' "$svc" > "$svc.scaffoldtmp"
+  mv "$svc.scaffoldtmp" "$svc"
+fi
+
 # client_model is a direct dependency for a multi-target OR multi-instance
 # scaffold, never for single: internal/probe (multi only) and
 # internal/reload's own test file (multi AND multi-instance, see
