@@ -151,6 +151,18 @@ type Registry struct {
 	limit         int       // --exporter.max-requests-per-target
 
 	handles map[string]*Handle // live, by instance name
+
+	// labelKeys is the sorted set of extra instance label KEYS this registry
+	// has ever registered a series under, and labelKeysKnown reports whether
+	// that has happened at least once. Set by Commit, never by Prepare (which
+	// must mutate nothing), and STICKY: it survives every instance later being
+	// removed, because client_golang's own registry never forgets a metric
+	// family's label-name dimension once registered, even after every series
+	// of that family is unregistered (see Prepare's refuseLabelKeyChange for
+	// the exact mechanism this protects against). "Currently nothing is live"
+	// therefore does not mean "any key set is safe again".
+	labelKeys      []string
+	labelKeysKnown bool
 }
 
 // NewRegistry builds an empty registry. root is the exporter's own registry;
@@ -231,7 +243,15 @@ func (r *Registry) labelsFor(inst config.ResolvedInstance) prometheus.Labels {
 //
 // Instances are processed in the order the file declares them, so a file with
 // two broken instances always fails on the same one.
+//
+// Before any of that, refuseLabelKeyChange gates the whole reload: a changed
+// instance label KEY SET is refused outright, for every instance at once, not
+// classified per instance. See that method's own doc comment for why.
 func (r *Registry) Prepare(instances []config.ResolvedInstance) (*Plan, error) {
+	if err := r.refuseLabelKeyChange(instances); err != nil {
+		return nil, err
+	}
+
 	p := &Plan{}
 	seen := make(map[string]bool, len(instances))
 
@@ -305,6 +325,92 @@ func (r *Registry) Prepare(instances []config.ResolvedInstance) (*Plan, error) {
 	return p, nil
 }
 
+// refuseLabelKeyChange is the fix for a confirmed panic: client_golang's
+// Unregister deliberately leaves a metric family's label-NAME dimension
+// recorded once it has been registered, "as those must be consistent
+// throughout the lifetime of a program" (see
+// prometheus/registry.go's own comment on dimHashesByName). So once this
+// exporter has registered an instance's StatusTracker under a given set of
+// label KEYS, re-registering the same metric family under a DIFFERENT set of
+// label keys panics, even through Commit's careful unregister-then-register
+// sequence. A label VALUE change is unaffected: the key set is unchanged, so
+// the dimension is unchanged, and that case keeps reloading with no restart.
+//
+// Five ways the key set can move between two otherwise-valid files were
+// confirmed: adding a label, removing one, renaming a key across every
+// instance, replacing a labelled instance with an unlabelled one, and an
+// address-change rebuild landing on a new key set too. ResolveInstances
+// already guarantees every instance WITHIN one file declares the same key
+// set (see its own doc comment), so any single instance represents the whole
+// file; it has no way to see what was live under a PREVIOUS file, which is
+// what this check adds.
+//
+// The ruling is to refuse rather than redesign: a per-instance child
+// registry was considered and declined for this release. Refusing here, in
+// Prepare, is what keeps the promise that this phase is the one allowed to
+// fail and that a refusal mutates nothing: no handle is touched, no plan is
+// built, the caller keeps running exactly what it was running, and the
+// operator is told in plain language that this particular edit needs a
+// restart, not a signal.
+func (r *Registry) refuseLabelKeyChange(instances []config.ResolvedInstance) error {
+	if !r.labelKeysKnown || len(instances) == 0 {
+		return nil
+	}
+	newKeys := sortedExtraKeys(instances[0].Labels, "")
+	if reflect.DeepEqual(newKeys, r.labelKeys) {
+		return nil
+	}
+	added, removed := diffKeys(r.labelKeys, newKeys)
+	return fmt.Errorf(
+		"instance label keys changed from %v to %v (added: %v, removed: %v): this requires a restart of the process, not a reload; a Prometheus registry never releases a metric family's label-name dimension once registered, so re-registering it under a different set of label keys would panic",
+		r.labelKeys, newKeys, added, removed,
+	)
+}
+
+// sortedExtraKeys returns the sorted set of keys in labels, excluding
+// exclude. Shared by both sides of refuseLabelKeyChange's comparison:
+// instances[0].Labels (config.ResolvedInstance's extra labels only, so
+// exclude is "") and a live Handle's full labels (which also carries the
+// identifying label, so exclude is the instance label name).
+func sortedExtraKeys(labels map[string]string, exclude string) []string {
+	keys := make([]string, 0, len(labels))
+	for k := range labels {
+		if k == exclude {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// diffKeys reports which keys were added and removed going from live to new.
+// Both inputs are already sorted, so the outputs are too. Used only to build
+// a clear error message naming what moved; a renamed key surfaces as one
+// added key and one removed key, which is an accurate description of what a
+// Prometheus registry actually sees.
+func diffKeys(live, newKeys []string) (added, removed []string) {
+	liveSet := make(map[string]bool, len(live))
+	for _, k := range live {
+		liveSet[k] = true
+	}
+	newSet := make(map[string]bool, len(newKeys))
+	for _, k := range newKeys {
+		newSet[k] = true
+	}
+	for _, k := range newKeys {
+		if !liveSet[k] {
+			added = append(added, k)
+		}
+	}
+	for _, k := range live {
+		if !newSet[k] {
+			removed = append(removed, k)
+		}
+	}
+	return added, removed
+}
+
 // clientFor builds the shared *http.Client for one instance. A nil resolved
 // config means the default transport, exactly as it did before this package
 // owned the construction.
@@ -317,9 +423,21 @@ func clientFor(hcfg *promconfig.HTTPClientConfig) (*http.Client, error) {
 	return collector.NewHTTPClient(*hcfg, 0)
 }
 
-// Commit applies a prepared plan. It cannot fail: every construction that could
-// has already happened in Prepare, the names it registers were proved unique by
-// ResolveInstances, and starting a goroutine does not fail.
+// Commit applies a prepared plan. It cannot fail: every construction that
+// could has already happened in Prepare, the names it registers were proved
+// unique by ResolveInstances, Prepare has already refused any plan whose
+// instance label KEY SET differs from what is already live (see
+// refuseLabelKeyChange), and starting a goroutine does not fail.
+//
+// What reloads with no restart, as a direct result: an instance's address,
+// its credentials, which instances exist, and the VALUES of its labels. What
+// does not, and is refused earlier, in Prepare, rather than discovered here
+// as a panic: the SET of label KEYS an instance's series carry. A Prometheus
+// registry never forgets a metric family's label-name dimension once it has
+// registered a series under it, even after every series of that family is
+// unregistered, so MustRegister below can never hit that refusal: by the
+// time a Plan reaches Commit, every registration it will perform is already
+// known to keep every metric family's dimension exactly as it was.
 //
 // Order matters. Removals unregister FIRST, so a removed instance's series are
 // gone from the very next scrape rather than lingering for the length of a
@@ -331,7 +449,7 @@ func (r *Registry) Commit(ctx context.Context, p *Plan) {
 		delete(r.handles, h.Name)
 		h.cancel()
 		r.log.Info("Stopped watching instance", "instance", h.Name, "address", h.Address)
-		go h.drain(5 * time.Second)
+		go h.drain(5*time.Second, r.log)
 	}
 
 	for _, op := range p.relabel {
@@ -372,18 +490,31 @@ func (r *Registry) Commit(ctx context.Context, p *Plan) {
 		r.handles[op.handle.Name] = op.handle
 		r.log.Info("Watching instance", "instance", op.handle.Name, "address", op.handle.Address)
 	}
+
+	// Record the key set now live, for refuseLabelKeyChange's next comparison.
+	// Deliberately sticky: only written when there is a live handle to read it
+	// from, never cleared, so a reload that removes every instance leaves the
+	// last known key set in place rather than forgetting it. That mirrors the
+	// underlying registry, which does the same forever, not just until the
+	// last series of a family happens to be unregistered.
+	for _, h := range r.handles {
+		r.labelKeys = sortedExtraKeys(h.labels, r.instanceLabel)
+		r.labelKeysKnown = true
+		break
+	}
 }
 
 // drain waits for one removed instance's pollers to exit, under a bounded
 // budget, and warns if they do not. Called on its own goroutine so a reload
 // returns immediately: the instance is already unregistered, so a lingering
 // poller is unreferenced and harmless.
-func (h *Handle) drain(budget time.Duration) {
+func (h *Handle) drain(budget time.Duration, log *logger.Logger) {
 	deadline := time.After(budget)
 	for _, bg := range h.bgs {
 		select {
 		case <-bg.Done():
 		case <-deadline:
+			log.Warn("a removed instance's background collectors did not all stop within the drain budget", "instance", h.Name, "address", h.Address)
 			return
 		}
 	}

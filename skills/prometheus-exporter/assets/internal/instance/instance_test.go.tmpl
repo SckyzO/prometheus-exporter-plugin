@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -277,6 +278,20 @@ func TestReconcileSwapsTransportWhenOnlyCredentialsChanged(t *testing.T) {
 	if seriesFor(t, root, "lib1") == 0 {
 		t.Fatal("the instance's series disappeared during a credential rotation")
 	}
+
+	// The regression this whole test exists to pin: Commit must store the new
+	// clientConfig onto the Handle after swapping the transport, or this THIRD
+	// Prepare, reconciling the exact content it just swapped to, would compare
+	// against the STALE pre-swap config and produce another retransport, and
+	// then another on every future reload forever. A third Prepare with
+	// unchanged content must therefore see nothing left to do at all.
+	p, err := r.Prepare([]config.ResolvedInstance{inst("lib1", "https://a.example", nil, after)})
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if len(p.retransport) != 0 || len(p.add) != 0 || len(p.remove) != 0 || len(p.relabel) != 0 {
+		t.Fatalf("a third Prepare with unchanged content produced work: %+v; Commit must not have stored the post-swap clientConfig", p)
+	}
 }
 
 // TestReconcileDoesNotSwapWhenOnlyTheModuleNameChanged: credentials are
@@ -348,6 +363,83 @@ func TestReconcileReregistersWhenOnlyLabelsChanged(t *testing.T) {
 	}
 	if !sites["lyon"] {
 		t.Fatal("the new label value is not being served")
+	}
+}
+
+// TestPrepareRejectsALabelKeySetChange is the fix for a confirmed panic:
+// client_golang never releases a metric family's label-NAME dimension once
+// registered (see Registry.refuseLabelKeyChange's own doc comment), so
+// changing which label KEYS an instance's series carry, even through a
+// careful unregister-then-register sequence, would panic rather than merely
+// error. Prepare must refuse before Commit ever runs, mutate nothing, and
+// name the keys that moved.
+func TestPrepareRejectsALabelKeySetChange(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	root := prometheus.NewRegistry()
+	r, made := testRegistry(t, root)
+
+	applyOrFail(t, r, ctx, []config.ResolvedInstance{
+		inst("lib1", "https://a.example", map[string]string{"site": "paris"}, nil)})
+
+	_, err := r.Prepare([]config.ResolvedInstance{
+		inst("lib1", "https://a.example", map[string]string{"region": "eu"}, nil)})
+	if err == nil {
+		t.Fatal("Prepare accepted a reload that changed the instance label KEY SET")
+	}
+	if !strings.Contains(err.Error(), "site") || !strings.Contains(err.Error(), "region") {
+		t.Fatalf("error does not name the keys that moved (want both %q and %q): %v", "site", "region", err)
+	}
+
+	if len(*made) != 1 {
+		t.Fatalf("%d collectors were built; a refused Prepare must build none", len(*made))
+	}
+	found := false
+	mfs, gatherErr := root.Gather()
+	if gatherErr != nil {
+		t.Fatalf("gather: %v", gatherErr)
+	}
+	for _, mf := range mfs {
+		for _, m := range mf.GetMetric() {
+			for _, l := range m.GetLabel() {
+				if l.GetName() == "site" && l.GetValue() == "paris" {
+					found = true
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatal("a refused Prepare disturbed the instance that was already running; it must mutate nothing")
+	}
+}
+
+// TestPrepareAcceptsALabelValueChangeUnderTheSameKeySet pins the other half
+// of the fix directly on Prepare's own Plan, right next to the refusal
+// above, so the two cases cannot silently collapse into the same refusal: a
+// VALUE change under an UNCHANGED key set is not a dimension change at all
+// and must keep producing a plain relabel, with no restart required.
+// TestReconcileReregistersWhenOnlyLabelsChanged above already proves this
+// end to end (including that the poller is not restarted); this test adds
+// the narrower, adjacent assertion on Prepare itself.
+func TestPrepareAcceptsALabelValueChangeUnderTheSameKeySet(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	root := prometheus.NewRegistry()
+	r, _ := testRegistry(t, root)
+
+	applyOrFail(t, r, ctx, []config.ResolvedInstance{
+		inst("lib1", "https://a.example", map[string]string{"site": "paris"}, nil)})
+
+	p, err := r.Prepare([]config.ResolvedInstance{
+		inst("lib1", "https://a.example", map[string]string{"site": "lyon"}, nil)})
+	if err != nil {
+		t.Fatalf("Prepare refused a label VALUE change under an unchanged key set: %v", err)
+	}
+	if len(p.relabel) != 1 {
+		t.Fatalf("Plan.relabel has %d entries, want 1", len(p.relabel))
+	}
+	if len(p.add) != 0 || len(p.remove) != 0 || len(p.retransport) != 0 {
+		t.Fatalf("a value-only label change produced more than a relabel: %+v", p)
 	}
 }
 
@@ -447,5 +539,81 @@ func TestPrepareMutatesNothingOnFailure(t *testing.T) {
 	}
 	if seriesFor(t, root, "lib2") != 0 {
 		t.Fatal("a failed Prepare registered an instance; it must mutate nothing")
+	}
+}
+
+// timedBG closes its Done channel after a fixed duration measured from
+// Start, regardless of context cancellation, standing in for a poller whose
+// in-flight request finishes on its own schedule rather than one that is
+// cancelled. Used only by TestWaitSharesOneBudgetAcrossInstances: a
+// permanently-stuck collector (fakeBG, which exits only on ctx.Done) cannot
+// tell a shared budget apart from a per-collector one, because Wait returns
+// on the very FIRST timeout it hits either way, so a scenario of nothing but
+// stuck collectors costs roughly one budget under both the correct and the
+// broken implementation. What actually tells them apart is a collector that
+// EVENTUALLY succeeds, late: under a shared clock that lateness eats into
+// the SAME budget the next collector must also finish within; under a
+// clock re-armed per collector, each late-but-successful collector buys the
+// next one a full fresh budget it should never have had.
+type timedBG struct {
+	desc  *prometheus.Desc
+	done  chan struct{}
+	after time.Duration
+}
+
+func newTimedBG(name string, after time.Duration) *timedBG {
+	return &timedBG{desc: prometheus.NewDesc("demo_"+name, "fixture", nil, nil), done: make(chan struct{}), after: after}
+}
+
+func (f *timedBG) Describe(ch chan<- *prometheus.Desc) { ch <- f.desc }
+func (f *timedBG) Collect(ch chan<- prometheus.Metric) {
+	ch <- prometheus.MustNewConstMetric(f.desc, prometheus.GaugeValue, 1)
+}
+func (f *timedBG) Start(context.Context) { go func() { time.Sleep(f.after); close(f.done) }() }
+func (f *timedBG) Done() <-chan struct{} { return f.done }
+
+// TestWaitSharesOneBudgetAcrossInstances proves Wait's own shared-budget
+// claim, on one instance with two collectors so h.bgs (a slice, built in
+// factory-declaration order) is deterministic: a map, which is how Wait's
+// OUTER loop walks r.handles, would not be.
+//
+// The first collector succeeds late, close to the budget; the second never
+// exits at all. Under the shared clock (correct), the first collector's
+// lateness eats into the one deadline the second collector must also race
+// against, so the whole call still finishes in roughly one budget. Under a
+// clock re-armed per collector (the mutation this test exists to catch, see
+// timedBG's own doc comment for why "everything permanently stuck" cannot
+// tell the two apart), the second collector gets a full fresh budget on top
+// of however long the first one took, and the call runs measurably longer.
+func TestWaitSharesOneBudgetAcrossInstances(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	root := prometheus.NewRegistry()
+
+	const (
+		budget    = 200 * time.Millisecond
+		lateAfter = 160 * time.Millisecond // succeeds, but only just before the budget
+	)
+	enabled := true
+	factories := []Factory{
+		{Name: "late", Enabled: &enabled, New: func(h *Handle) (BackgroundCollector, error) { return newTimedBG("late", lateAfter), nil }},
+		{Name: "stuck", Enabled: &enabled, New: func(h *Handle) (BackgroundCollector, error) { return newFakeBG("stuck"), nil }},
+	}
+	r := NewRegistry(logger.NewTextLogger("error"), root, "target", factories, 0)
+	applyOrFail(t, r, ctx, []config.ResolvedInstance{inst("lib1", "https://a.example", nil, nil)})
+
+	start := time.Now()
+	r.Wait(budget)
+	elapsed := time.Since(start)
+
+	// Correct: ~1 budget (~200ms: the "late" collector's own 160ms is well
+	// inside the one shared deadline, which then fires for "stuck" at the
+	// 200ms mark regardless). Broken (budget re-armed per collector): ~360ms
+	// (160ms for "late" to succeed, THEN a full fresh 200ms budget for
+	// "stuck"). The threshold sits well between the two.
+	const threshold = 280 * time.Millisecond
+	if elapsed > threshold {
+		t.Fatalf("Wait took %v with a %v budget (one collector succeeding at %v, one never exiting); want at most ~%v (one shared budget), not ~%v (a fresh budget per collector, %v + %v)",
+			elapsed, budget, lateAfter, budget, lateAfter+budget, lateAfter, budget)
 	}
 }
