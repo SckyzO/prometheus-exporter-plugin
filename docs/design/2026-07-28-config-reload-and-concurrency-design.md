@@ -398,7 +398,8 @@ different cost:
 |---|---|---|
 | nothing | nothing | kept |
 | module or credentials, compared as the **resolved** `HTTPClientConfig`, not the module name | `h.tr.Set(new)`, then `CloseIdleConnections()` on the old | **kept** |
-| labels | unregister through a wrapper built with the **old** labels, re-register the same `tracker` with the new ones | **kept** |
+| label VALUES, under an unchanged key set | unregister through a wrapper built with the **old** labels, re-register the same `tracker` with the new ones | **kept** |
+| label KEYS | refused in `Prepare`, with a restart-required error naming the keys that moved | n/a |
 | address | treated as a removal plus an addition under the same name | dropped |
 | instance added or removed | build and `Start(instanceCtx)`, or `cancel()` and unregister | n/a |
 
@@ -414,6 +415,25 @@ matters for rotating a secret written inline.
 `Collect` time: the collector's cache holds metrics carrying bare `Desc`s and
 knows nothing about instance labels. Unregistering requires a wrapper built
 with the previous labels, which is why `Handle` remembers them.
+
+**Corrected during implementation: this holds for label VALUES only.**
+`client_golang`'s `Registry.Unregister` deliberately leaves `dimHashesByName`
+untouched, "as those must be consistent throughout the lifetime of a program"
+(`prometheus/registry.go:410-411`). A metric family name registered once with a
+given set of label NAMES therefore never releases that dimension, so
+re-registering it with a different key set panics. Adding a label, removing one,
+renaming a key, or replacing a labelled instance with an unlabelled one all hit
+this, and so does the address-change rebuild path when the key set moved too.
+
+A reload that changes the instance label KEY SET is therefore refused in
+`Prepare`, with an error naming the keys that moved and saying a restart is
+required. This is the same posture the `flags:` section already takes: some
+things do not reload, and saying so plainly beats crashing a running exporter.
+Changing a label's VALUE, the common case, still costs nothing but a
+re-registration. Giving each instance its own child registry, which would
+release the dimension and make every label change reloadable, was considered
+and deferred: it reshapes how `/metrics` is assembled and did not belong in
+this release.
 
 A single instance can hit both the label case and the module case in one
 reload. Order is labels first, then transport; neither blocks.
