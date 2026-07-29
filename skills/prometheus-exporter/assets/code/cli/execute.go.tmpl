@@ -64,8 +64,26 @@ var CommandLimiter *Limiter
 // package-level timeout variable internally, is more idiomatic Go (the
 // caller controls cancellation, Execute just obeys it) and keeps this var
 // free of any mutable package state of its own.
-var Execute = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+//
+// Every call, success or failure, is timed and recorded on CommandDuration,
+// through a deferred, named-return observation, the same shape the http
+// flavor's Client.Fetch uses for RequestDuration. That symmetry matters here
+// specifically: it is what makes an abandoned CommandLimiter wait visible on
+// this histogram too, not just a real command's outcome. An earlier version
+// observed with a plain inline call after cmd.CombinedOutput() returned,
+// which skipped the observation entirely whenever CommandLimiter.Acquire
+// failed and returned before CombinedOutput ever ran, making a starved
+// collector invisible on CommandDuration (though still visible via logging
+// and StatusTracker).
+var Execute = func(ctx context.Context, name string, args ...string) (out []byte, err error) {
 	start := time.Now()
+	defer func() {
+		outcome := "success"
+		if err != nil {
+			outcome = "error"
+		}
+		CommandDuration.WithLabelValues(outcome).Observe(time.Since(start).Seconds())
+	}()
 
 	// The per-command deadline is already live on ctx by the time Execute
 	// runs: every caller applies it before calling Execute (see, for example,
@@ -81,14 +99,7 @@ var Execute = func(ctx context.Context, name string, args ...string) ([]byte, er
 	defer release()
 
 	cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // G204: name is a fixed, developer-controlled command baked into each collector's own *Data method, never end-user input
-	out, err := cmd.CombinedOutput()
-
-	outcome := "success"
-	if err != nil {
-		outcome = "error"
-	}
-	CommandDuration.WithLabelValues(outcome).Observe(time.Since(start).Seconds())
-
+	out, err = cmd.CombinedOutput()
 	if err != nil {
 		// A canceled/expired ctx is almost always the real cause behind the
 		// generic process error CombinedOutput returns in that case (e.g.

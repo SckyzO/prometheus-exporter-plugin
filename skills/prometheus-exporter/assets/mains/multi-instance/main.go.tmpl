@@ -61,6 +61,22 @@ var (
 		"Expose POST /-/reload, which reloads --config.file. SIGHUP always works and needs no flag.",
 	).Default("false").Bool()
 
+	// maxRequestsPerTarget bounds how many requests this exporter has in flight
+	// against ONE target at a time. 0, the default, means unlimited, which is
+	// the same posture --probe.target-allowlist takes with its empty value:
+	// this is opt-in hardening, not a default that moves under an operator who
+	// configured nothing.
+	//
+	// A ceiling turns a slow collector into a source of starvation for its
+	// siblings, so it is a deliberate choice with a visible cost. The wait is
+	// charged against each collector's own timeout, and
+	// @@NAMESPACE@@_exporter_request_wait_seconds is what makes queueing
+	// visible rather than silent.
+	maxRequestsPerTarget = kingpin.Flag(
+		"exporter.max-requests-per-target",
+		"Maximum concurrent requests this exporter issues to one target. 0 (default) means unlimited.",
+	).Default("0").Int()
+
 	// configFile is REQUIRED for this target model: without it there are no
 	// instances to watch. Its value is read straight from os.Args below, before
 	// parsing, because it decides which arguments the parser is given.
@@ -167,9 +183,11 @@ func main() {
 	// the instance's own extra labels, applied by prometheus.WrapRegistererWith
 	// as ConstLabels inside Registry.Commit.
 	//
-	// 0: --exporter.max-requests-per-target's ceiling is wired by a later
-	// change; unlimited (Registry's own documented meaning for 0) until then.
-	registry := instance.NewRegistry(log, reg, instanceLabel, enabled, 0)
+	// *maxRequestsPerTarget: 0 by default, meaning unlimited (Registry's own
+	// documented meaning for 0). Each Handle Prepare builds gets its own
+	// Limiter from this same ceiling, so an instance added by a later reload
+	// is covered too, without anything having to be pre-populated.
+	registry := instance.NewRegistry(log, reg, instanceLabel, enabled, *maxRequestsPerTarget)
 	plan, err := registry.Prepare(instances)
 	if err != nil {
 		// A transport that cannot be built (unreadable CA or secret file) is a
@@ -210,6 +228,7 @@ func main() {
 	}()
 
 	reg.MustRegister(collector.RequestDuration)
+	reg.MustRegister(collector.RequestWait)
 	reg.MustRegister(reloader.Collectors()...)
 
 	log.Info("Starting multi-instance exporter server...", "namespace", namespace, "instances", len(instances))

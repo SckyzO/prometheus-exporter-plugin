@@ -14,13 +14,9 @@ import (
 // (the package-level Execute var), not one Client per target, so there is
 // nothing to label a wait by.
 //
-// Declared here, not yet exposed: nothing registers this histogram on any
-// registry yet. registry.frag registers CommandDuration this same way, but
-// has no equivalent line for this var, and this flavor has no other target
-// model to check for a competing registration path. It will not appear on
-// /metrics until whichever change wires the ceiling flag also registers it
-// alongside that flag. Until then this var exists so Acquire has something
-// to call and Limiter's own tests can exercise it directly.
+// Registered alongside --exporter.max-requests-per-target, the flag that
+// turns a ceiling on: registry.frag registers it the same way it registers
+// CommandDuration, so it reaches this flavor's only target model's /metrics.
 //
 // Observed whenever CommandLimiter is actually set to a real ceiling, even
 // when a slot is immediately free (the wait is then near zero). On the nil

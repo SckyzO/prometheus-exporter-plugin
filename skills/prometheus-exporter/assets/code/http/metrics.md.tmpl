@@ -53,6 +53,7 @@ Emitted regardless of which `--collector.*` flags are set: see
 | Metric | Type | Labels | Description |
 |---|---|---|---|
 | `@@NAMESPACE@@_exporter_request_duration_seconds` | Histogram | `outcome` | Duration in seconds of HTTP requests issued by this exporter's collectors, by outcome (`success` or `error`). Defined in `internal/collector/client.go`. |
+| `@@NAMESPACE@@_exporter_request_wait_seconds` | Histogram | - | Duration in seconds a request waited for a per-target concurrency slot before being issued. Only nonzero once `--exporter.max-requests-per-target` is set; a multi-target build never sets a ceiling, so this series is a permanent zero there. Defined in `internal/collector/limiter.go`. |
 | `@@NAMESPACE@@_exporter_collector_success` | Gauge | `collector` | Whether the last scrape of the collector succeeded (1=success, 0=failure). Defined in `internal/collector/status_tracker.go`. |
 | `@@NAMESPACE@@_exporter_collector_duration_seconds` | Gauge | `collector` | Duration of the last scrape for the collector, in seconds. Defined in `internal/collector/status_tracker.go`. |
 

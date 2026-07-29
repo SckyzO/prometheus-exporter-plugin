@@ -206,6 +206,16 @@ func main() {
 		)
 	}
 	reg.MustRegister(collector.RequestDuration)
+	// RequestWait is registered here for the same reason RequestDuration is: a
+	// process-wide self-instrumentation series, always present regardless of
+	// whether this target model happens to exercise the mechanism behind it.
+	// This target model never attaches a concurrency ceiling: /probe builds a
+	// Client per incoming request from a caller-controlled target, so a
+	// startup-only, finite-key-space limiter index (the kind single builds
+	// via LimiterSet) does not fit here. This series therefore reports a
+	// permanent zero wait on this target model; that is the truthful reading
+	// of "no ceiling configured", not a broken metric.
+	reg.MustRegister(collector.RequestWait)
 	reg.MustRegister(reloader.Collectors()...)
 
 	log.Info("Starting multi-target exporter server...", "namespace", namespace)

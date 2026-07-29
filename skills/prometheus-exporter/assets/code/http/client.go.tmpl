@@ -176,6 +176,13 @@ func NewClientOn(tr *Transport, target string, timeout time.Duration) *Client {
 // ceiling configured, combine with a configured ceiling to produce exactly
 // the unbounded wait this comment describes, and this method has no way to
 // catch that at the point it runs.
+//
+// That check now exists: see the single target model's
+// code/http/wiring/client_build.frag, spliced into main.go at
+// // @@CLIENT_BUILD@@, right before the exampleClient this method is called
+// on gets built. The multi-instance model needs no equivalent of its own:
+// instance.Handle.ClientFor above is that model's own flag-parse-time (well,
+// reload-prepare-time) check, and it runs before this method ever does.
 func (c *Client) WithLimiter(lim *Limiter) *Client {
 	c.limiter = lim
 	return c

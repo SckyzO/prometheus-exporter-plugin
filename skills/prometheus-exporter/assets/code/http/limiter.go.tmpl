@@ -14,16 +14,15 @@ import (
 // gauge the background variant already emits is what identifies WHICH
 // collector is starving. This one answers whether anything is queueing at all.
 //
-// Declared here, not yet exposed: nothing registers this histogram on any
-// registry in any target model yet. registry.frag registers RequestDuration
-// this same way for single, and mains/multi/main.go.tmpl and
+// Registered alongside --exporter.max-requests-per-target, the flag that
+// turns a ceiling on: registry.frag registers it for single (the same way it
+// registers RequestDuration), and mains/multi/main.go.tmpl and
 // mains/multi-instance/main.go.tmpl each hardcode their own
-// reg.MustRegister(collector.RequestDuration) call, but neither has an
-// equivalent line for this var. It will not appear on /metrics until
-// whichever change wires --exporter.max-requests-per-target also registers
-// it alongside that flag, so a ceiling and its own visibility land together.
-// Until then this var exists so Acquire has something to call and Limiter's
-// own tests can exercise it directly.
+// reg.MustRegister(collector.RequestWait) call beside their own
+// RequestDuration one. It reaches every http-flavor target model's /metrics,
+// including multi, which never attaches a ceiling and so always reports zero
+// here: a permanent zero is the truthful reading of "no ceiling configured",
+// not a sign the metric is broken.
 //
 // Observed whenever a ceiling is actually configured, even when a slot is
 // immediately free (the wait is then near zero). On the nil fast path (no
