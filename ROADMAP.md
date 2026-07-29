@@ -187,9 +187,10 @@ re-pointed at another module, plus a secret written inline instead of
 through a `_file` variant.
 
 - **Reload for `multi` and `multi-instance`.** `SIGHUP` (always active) and
-  `POST /-/reload` (behind `--web.enable-lifecycle`, default off, the same
-  conservative default `blackbox_exporter`/`snmp_exporter` use for a
-  mutating endpoint) both re-read `--config.file`. Prepare-then-commit:
+  `POST /-/reload` (behind `--web.enable-lifecycle`, default off, which is
+  Prometheus's own posture for a mutating endpoint and not
+  `blackbox_exporter`'s or `snmp_exporter`'s, both of which expose theirs
+  ungated) both re-read `--config.file`. Prepare-then-commit:
   everything that can fail, parsing, a changed `flags:` section, an
   unresolved module, an unreadable secret, runs before anything is
   mutated, so a bad file leaves the running configuration untouched and
@@ -237,6 +238,19 @@ its siblings instead of a reload.
   step resumable from a cold start and turning the file into the reference
   base for building a complete exporter. It reshapes the contract of all
   four commands at once and deserves its own design.
+- **A child registry per watched instance, so every label change becomes
+  reloadable.** v0.7 refuses a reload that changes the SET of label keys
+  an instance carries, because a Prometheus registry never releases a
+  metric family's label-name dimension once registered, so re-registering
+  under a different key set panics. Giving each instance its own
+  `prometheus.Registry`, aggregated for `/metrics` through
+  `prometheus.Gatherers`, releases the dimension when a child is dropped
+  and would turn that refusal back into a normal reload. Considered during
+  v0.7 and declined there: it reshapes how `/metrics` is assembled, which
+  did not belong in a release already eight tasks deep, and it needs
+  confirming that `Gatherers` tolerates differing label sets across
+  children for one metric name. Refusing was the honest interim answer,
+  not the intended end state.
 
 ## v1.0
 
