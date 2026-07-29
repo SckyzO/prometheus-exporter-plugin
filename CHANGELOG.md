@@ -5,6 +5,61 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Configuration reload for `multi` and `multi-instance`.** `SIGHUP`
+  (always active) and `POST /-/reload` (behind `--web.enable-lifecycle`,
+  default `false`, the same conservative default `blackbox_exporter` and
+  `snmp_exporter` use for a mutating endpoint) both re-read
+  `--config.file` and apply it atomically. Everything that can fail,
+  parsing, a changed `flags:` section, an unresolved module, an unreadable
+  secret, runs before anything is mutated: a failed reload leaves the
+  running configuration untouched, drives
+  `..._exporter_config_last_reload_successful` to `0`, and logs the
+  failure at error; a successful one sets that gauge back to `1` and
+  advances `..._exporter_config_last_reload_success_timestamp_seconds`.
+  Reload does not ship for `single`: its file holds only a `flags:`
+  section (unreloadable for the reason below) and an
+  `http_client_config:` whose file-backed secrets and TLS material
+  (`password_file`, `bearer_token_file`, `authorization.credentials_file`,
+  `ca_file`, `cert_file`, `key_file`) `prometheus/common` already re-reads
+  from disk on every outbound request with no reload involved; a
+  `single` build's documentation points at those `_file` variants instead.
+- **A changed `flags:` section refuses the whole reload.** `flags:` is
+  rendered into command-line arguments exactly once, at startup, so a
+  running process cannot adopt a new value for one. Rather than apply the
+  rest of a file and leave the process describing neither configuration,
+  a reload that finds this section changed refuses outright, naming every
+  changed key, and keeps running what it had.
+- **On `multi-instance`, a reload cannot change the SET of label KEYS an
+  instance carries.** A Prometheus registry never releases a metric
+  family's label-name dimension once registered, so re-registering one
+  under a different label key set (a label added, removed, or renamed
+  across every instance; a labelled instance replaced by an unlabelled
+  one) would panic. This is refused instead, with an error naming what
+  moved and asking for a restart. A label VALUE change is unaffected and
+  keeps reloading with no restart.
+- **A per-target concurrency ceiling**
+  (`--exporter.max-requests-per-target`, `multi-instance` and `single`,
+  opt-in, default `0` meaning unlimited): bounds how many requests this
+  exporter has in flight against one watched machine at a time, so a slow
+  collector's background poller cannot starve its siblings polling the
+  same instance. `..._exporter_request_wait_seconds` records how long a
+  request waited for a slot; it is always registered on every HTTP-flavor
+  target model and reports a permanent zero when no ceiling is
+  configured. Not offered on `multi`: it has no background pollers, and
+  `/probe`'s caller-controlled `target=` rules out a pre-populated
+  limiter index.
+
+### Changed
+
+- **One shared, swappable transport per watched machine**
+  (`multi-instance`) or per module (`multi`), replacing a transport built
+  fresh on every use. This is what makes both the reload and the
+  concurrency ceiling above possible without a connection-pool explosion.
+
 ## [0.6.0] - 2026-07-28
 
 ### Changed
