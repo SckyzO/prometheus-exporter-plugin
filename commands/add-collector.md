@@ -45,8 +45,10 @@ Three models now exist, and the two multi ones ship different seams:
 `multi` (`internal/probe/`) and `multi-instance` (`internal/instance/`) are
 not interchangeable. If detection printed `multi-instance`, skip the
 `multi`-only seam check immediately below (it is specific to
-`internal/probe`'s `NamedFactory`) and go straight to "Multi-instance
-wiring" near the end of this section.
+`internal/probe`'s `NamedFactory`) and jump to the multi-instance seam check
+further down, just above "Multi-instance wiring": that seam has its own
+shape history too and needs the same current-vs-outdated check before
+anything is appended.
 
 For a **multi** repository, check the seam's shape before touching anything:
 
@@ -114,6 +116,33 @@ variant.** Every collector there is a background poller by construction (a
 scrape serves N instances through one /metrics and must never block on a dead
 machine). A synchronous collector would reintroduce exactly that coupling. Say
 so and use the background variant.
+
+For a **multi-instance** repository, check the seam's shape before touching
+anything:
+
+```sh
+grep -q 'New *func(h ' internal/instance/instance.go && echo current || echo outdated
+```
+
+**If the shape is `outdated`**, this repository was scaffolded before the
+instance-`Handle` seam existed. Its `instance.Factory.New` takes an address
+and an HTTP client config pointer
+(`func(addr string, hcfg *promconfig.HTTPClientConfig) (BackgroundCollector, error)`),
+not a `*instance.Handle`, and each collector built its own transport instead
+of sharing one per machine. The factory block below would not compile there.
+
+**Stop and say so. Do not migrate it, and do not append anyway.** This
+plugin is pre-1.0 and ships no migration path on purpose: an in-place seam
+rewrite touches several files in a repository you do not own, and no gate in
+this plugin can test that it worked. Tell the user plainly that their
+exporter predates this seam, and that the supported route is to rescaffold
+with `/new-prometheus-exporter` and port their collector bodies across. A
+collector's five pieces and its test triad move over unchanged; it is only
+the wiring that differs, so this is a smaller and far more verifiable
+operation than an automated rewrite. Point them at `CHANGELOG.md` for what
+changed between their version and this one.
+
+**If the shape is `current`**, proceed.
 
 **Multi-instance wiring.** Read the collector's identity (step 2) and
 materialize the BACKGROUND collector file and its test (step 3-4, background
@@ -376,12 +405,19 @@ Reuse `statusTrackerSuccessMetric` (already in scope, package-wide) in your
 own `Test<Name>Collector_StatusTracker*` tests instead of redeclaring it.
 
 General rule if a future template edit adds more shared declarations: any
-top-level `func Test...`/`const .../var ...` in the test template whose name
-does **not** contain `Example`/`example` is testing shared per-flavor
+top-level declaration in the test template (`func Test...`, `const ...`,
+`var ...`, `type ...`, or a method on a shared helper type) whose name does
+**not** contain `Example`/`example` is testing shared per-flavor
 infrastructure, not the starter collector itself: never copy it into a
-second collector's test file. If one slips through anyway, `go build`/
-`make test` reports "redeclared in this block": that error always means
-exactly this, not a mystery to debug from scratch.
+second collector's test file. This includes a shared helper type together
+with its methods, not just `func Test...`/`const .../var ...`: for example
+`type refusingRoundTripper struct{}` and its `RoundTrip` method (http),
+which exist only to support `TestTransportSetIsVisibleToExistingClients`, a
+shared test the rule above already excludes. Copy a helper type only if
+every test that needs it is also being kept, never the type alone and never
+orphaned from the test that used it. If one slips through anyway, `go
+build`/`go vet`/`make test` reports "redeclared in this block": that error
+always means exactly this, not a mystery to debug from scratch.
 
 Keep, renamed: the parser test (`TestParse<Name>`, with its
 malformed/empty/edge-case sub-tests), `Test<Name>Collector_Collect`,
@@ -436,7 +472,29 @@ build the client inline, inside the `register(...)` closure, with
 `collector.NewClient(*<name>Target, *<name>Timeout)`. Never paste a block that
 reads `cfg` into a repository that does not declare one.
 
-**`has-config`**: follow the three-step http blocks below exactly as written.
+**`has-config`**: one more layer to check before following the three-step http
+blocks below, since `--exporter.max-requests-per-target` (the request
+concurrency ceiling) arrived after `--config.file` did, so a `has-config`
+repository can still predate it:
+
+```sh
+grep -q 'maxRequestsPerTarget' cmd/*/main.go && echo has-limiter || echo pre-limiter-layer
+```
+
+**`pre-limiter-layer`**: this repository was scaffolded before
+`--exporter.max-requests-per-target` existed, so neither `maxRequestsPerTarget`
+nor `collector.Limiters` exists anywhere in `cmd/*/main.go`. Paste the
+`// @@CLIENT_BUILD@@` block below verbatim EXCEPT its three ceiling-related
+pieces: the `if collector.Limiters == nil { ... }` construction, the
+boot-time `*maxRequestsPerTarget > 0 && ...` refusal, and the trailing
+`.WithLimiter(...)` line. What remains is exactly the
+`if cfg.HTTPClientConfig != nil { ... } else { ... }` shape. This collector
+simply has no ceiling, symmetric with every other collector already in that
+repository, not a regression: the whole repository predates this feature.
+Never paste a reference to `maxRequestsPerTarget` or `collector.Limiters` into
+a repository that declares neither.
+
+**`has-limiter`**: follow the three-step http blocks below exactly as written.
 
 **Synchronous variant (default): http**. After the last existing flag line
 under `// @@CLIENT_INIT@@`:
@@ -453,6 +511,38 @@ var <name>Client *collector.Client
 then, after the last existing block under `// @@CLIENT_BUILD@@`:
 
 ```go
+// One ceiling per distinct target address, so two collectors pointed at
+// the same machine share it and two pointed at different machines do not.
+// collector.Limiters (see limiter.go) is the single, shared LimiterSet
+// every collector's client_build wiring consults; THIS block only builds
+// it the first time it runs. That nil check is load-bearing, not
+// defensive-for-its-own-sake: this exact block is spliced once per
+// collector, by scaffold.sh for the first one and by /add-collector for
+// every one after, so with a second collector this block runs a second
+// time in the same main(). A plain `limiters := collector.NewLimiterSet(...)`
+// local declaration would either fail to compile the second time ("no
+// new variables on left side of :="), or, built as an unconditional
+// package-level assignment instead, would silently replace the first
+// collector's LimiterSet with an empty one, breaking the very sharing
+// guarantee this comment opens with for any two collectors that happen
+// to target the same address. Guarding on nil is what makes every
+// collector after the first reuse the SAME set instead.
+if collector.Limiters == nil {
+	collector.Limiters = collector.NewLimiterSet(*maxRequestsPerTarget)
+}
+
+// A limiter with no bound on its own wait is exactly the silent-queueing
+// failure mode a concurrency ceiling exists to prevent (see
+// Client.WithLimiter's own doc comment, which names this exact check as
+// the thing that must happen here, at flag-parse time). Reject at boot,
+// naming the collector, the same way instance.Handle.ClientFor already
+// refuses a non-positive NewClientOn timeout.
+if *maxRequestsPerTarget > 0 && *<name>Timeout <= 0 {
+	fmt.Fprintln(os.Stderr, fmt.Errorf("collector %q: a positive --collector.<name>.timeout is required when --exporter.max-requests-per-target is set, got %v (the limiter wait would otherwise be unbounded)", "<name>", *<name>Timeout))
+	stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+	os.Exit(1) //nolint:gocritic // stop() called explicitly above
+}
+
 if cfg.HTTPClientConfig != nil {
 	<name>Client, err = collector.NewClientWithConfig(*<name>Target, *<name>Timeout, *cfg.HTTPClientConfig)
 	if err != nil {
@@ -465,6 +555,8 @@ if cfg.HTTPClientConfig != nil {
 	// deployment already runs.
 	<name>Client = collector.NewClient(*<name>Target, *<name>Timeout)
 }
+// A nil limiter (the default ceiling of 0) leaves this a no-op.
+<name>Client = <name>Client.WithLimiter(collector.Limiters.For(*<name>Target))
 ```
 
 then after the last existing `register(...)` call under
@@ -510,6 +602,38 @@ then, after the last existing block under `// @@CLIENT_BUILD@@` (same shape as
 the synchronous variant above, this marker does not vary by variant):
 
 ```go
+// One ceiling per distinct target address, so two collectors pointed at
+// the same machine share it and two pointed at different machines do not.
+// collector.Limiters (see limiter.go) is the single, shared LimiterSet
+// every collector's client_build wiring consults; THIS block only builds
+// it the first time it runs. That nil check is load-bearing, not
+// defensive-for-its-own-sake: this exact block is spliced once per
+// collector, by scaffold.sh for the first one and by /add-collector for
+// every one after, so with a second collector this block runs a second
+// time in the same main(). A plain `limiters := collector.NewLimiterSet(...)`
+// local declaration would either fail to compile the second time ("no
+// new variables on left side of :="), or, built as an unconditional
+// package-level assignment instead, would silently replace the first
+// collector's LimiterSet with an empty one, breaking the very sharing
+// guarantee this comment opens with for any two collectors that happen
+// to target the same address. Guarding on nil is what makes every
+// collector after the first reuse the SAME set instead.
+if collector.Limiters == nil {
+	collector.Limiters = collector.NewLimiterSet(*maxRequestsPerTarget)
+}
+
+// A limiter with no bound on its own wait is exactly the silent-queueing
+// failure mode a concurrency ceiling exists to prevent (see
+// Client.WithLimiter's own doc comment, which names this exact check as
+// the thing that must happen here, at flag-parse time). Reject at boot,
+// naming the collector, the same way instance.Handle.ClientFor already
+// refuses a non-positive NewClientOn timeout.
+if *maxRequestsPerTarget > 0 && *<name>Timeout <= 0 {
+	fmt.Fprintln(os.Stderr, fmt.Errorf("collector %q: a positive --collector.<name>.timeout is required when --exporter.max-requests-per-target is set, got %v (the limiter wait would otherwise be unbounded)", "<name>", *<name>Timeout))
+	stop()     // release the signal handler explicitly before bypassing defer via os.Exit
+	os.Exit(1) //nolint:gocritic // stop() called explicitly above
+}
+
 if cfg.HTTPClientConfig != nil {
 	<name>Client, err = collector.NewClientWithConfig(*<name>Target, *<name>Timeout, *cfg.HTTPClientConfig)
 	if err != nil {
@@ -522,6 +646,8 @@ if cfg.HTTPClientConfig != nil {
 	// deployment already runs.
 	<name>Client = collector.NewClient(*<name>Target, *<name>Timeout)
 }
+// A nil limiter (the default ceiling of 0) leaves this a no-op.
+<name>Client = <name>Client.WithLimiter(collector.Limiters.For(*<name>Target))
 ```
 
 then after the last existing `register(...)` call under
