@@ -5,14 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.0] - 2026-07-29
 
 ### Added
 
 - **Configuration reload for `multi` and `multi-instance`.** `SIGHUP`
   (always active) and `POST /-/reload` (behind `--web.enable-lifecycle`,
-  default `false`, the same conservative default `blackbox_exporter` and
-  `snmp_exporter` use for a mutating endpoint) both re-read
+  default `false`, which is Prometheus's own posture for a mutating
+  endpoint rather than `blackbox_exporter`'s and `snmp_exporter`'s, both
+  of which expose theirs ungated) both re-read
   `--config.file` and apply it atomically. Everything that can fail,
   parsing, a changed `flags:` section, an unresolved module, an unreadable
   secret, runs before anything is mutated: a failed reload leaves the
