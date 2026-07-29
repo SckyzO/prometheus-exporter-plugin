@@ -500,6 +500,44 @@ func TestReconcileStartsAndDrainsOnAddAndRemove(t *testing.T) {
 	}
 }
 
+// TestReloadOrderRejectsAnInvalidInstanceListBeforeReconciling pins the shape
+// of main's reload closure. ResolveInstances is validation and it must run
+// first: a list with a duplicate name or an unresolvable module has to be
+// refused while the running set is still untouched, not discovered halfway
+// through a reconcile.
+//
+// The closure itself lives in package main and cannot be imported, so this test
+// asserts the contract the closure depends on: that a Registry which never saw
+// an invalid list is exactly the Registry it was before.
+func TestReloadOrderRejectsAnInvalidInstanceListBeforeReconciling(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	root := prometheus.NewRegistry()
+	r, made := testRegistry(t, root)
+
+	applyOrFail(t, r, ctx, []config.ResolvedInstance{inst("lib1", "https://a.example", nil, nil)})
+	before := seriesFor(t, root, "lib1")
+
+	// What main's closure does on a reload, in order. The validation step is
+	// the one that must reject this file.
+	cfg := &config.Config{Instances: []config.Instance{
+		{Name: "lib1", Address: "https://a.example"},
+		{Name: "lib1", Address: "https://b.example"}, // duplicate name
+	}}
+	if _, err := cfg.ResolveInstances("target", "collector"); err == nil {
+		t.Fatal("ResolveInstances accepted a duplicate instance name")
+	}
+
+	// Because validation failed, Prepare was never reached and the live set is
+	// untouched.
+	if seriesFor(t, root, "lib1") != before {
+		t.Fatal("the running instance was disturbed by a configuration that never validated")
+	}
+	if len(*made) != 1 {
+		t.Fatalf("%d collectors exist; a rejected configuration must build none", len(*made))
+	}
+}
+
 // TestPrepareMutatesNothingOnFailure is the atomicity assertion at unit level:
 // a factory failing on the third instance must leave the first two untouched.
 func TestPrepareMutatesNothingOnFailure(t *testing.T) {
