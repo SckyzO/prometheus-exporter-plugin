@@ -395,7 +395,14 @@ func TestNewClientOnAppliesItsOwnTimeout(t *testing.T) {
 // TestNewClientKeepsItsPrivateTimeout pins the non-regression contract: the
 // constructor every shipped collector test and every pre-v0.7 scaffold calls
 // still enforces its deadline through http.Client.Timeout, not through a
-// context, so its connection behaviour is untouched.
+// context, so its connection behaviour is untouched. That contract has two
+// halves, both asserted here: c.timeout staying 0 alone would still pass if
+// two NewClient calls quietly ended up sharing one *http.Client (a Client
+// with a shared transport, indistinguishable from NewClientOn's, not what
+// "private" means here or what every pre-v0.7 scaffold's connection pooling
+// assumed). The second half, mirroring TestNewClientForSharesOneTransport's
+// own a.tr.Get() != b.tr.Get() below but asserting the opposite (unshared,
+// not shared), is what actually pins "private".
 func TestNewClientKeepsItsPrivateTimeout(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(200 * time.Millisecond)
@@ -408,6 +415,11 @@ func TestNewClientKeepsItsPrivateTimeout(t *testing.T) {
 	}
 	if _, err := c.Fetch(context.Background(), "/"); err == nil {
 		t.Fatal("NewClient's 20ms timeout did not fire")
+	}
+
+	other := NewClient(srv.URL, 20*time.Millisecond)
+	if c.tr.Get() == other.tr.Get() {
+		t.Fatal("two NewClient calls share one *http.Client; each call must build its own private transport, or one collector's Timeout silently governs another's requests too")
 	}
 }
 

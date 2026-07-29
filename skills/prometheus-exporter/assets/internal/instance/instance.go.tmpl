@@ -521,13 +521,30 @@ func (h *Handle) drain(budget time.Duration, log *logger.Logger) {
 }
 
 // Wait blocks until every live instance's pollers have exited, under ONE shared
-// budget rather than one per collector: with N instances by M collectors, a
-// per-collector wait would worst-case at N*M*budget. Called by main at
+// budget rather than one per instance or one per collector: with N instances by
+// M collectors, a per-collector (or per-instance) wait would worst-case at
+// N*M*budget (or N*budget). deadline is created exactly once, before either
+// loop below, and reused by every select in both of them, which is what makes
+// that budget shared rather than reset partway through. Called by main at
 // shutdown, after the HTTP server has stopped.
+//
+// Iterates r.handles in sorted-by-name order rather than raw map order. Wait's
+// own correctness never depended on visitation order (draining one instance
+// before another is not itself observable), but a stable order is what lets
+// TestWaitSharesOneBudgetAcrossInstances pin the outer loop deterministically,
+// by instance name, instead of at the mercy of Go's randomized map iteration,
+// which would make a real regression here (the deadline re-armed per instance)
+// pass or fail depending on which instance the runtime happened to visit
+// first.
 func (r *Registry) Wait(budget time.Duration) {
 	deadline := time.After(budget)
-	for _, h := range r.handles {
-		for _, bg := range h.bgs {
+	names := make([]string, 0, len(r.handles))
+	for name := range r.handles {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		for _, bg := range r.handles[name].bgs {
 			select {
 			case <-bg.Done():
 			case <-deadline:

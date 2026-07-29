@@ -2,6 +2,7 @@ package reload
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -138,6 +139,44 @@ func TestReloadRefusesAChangedFlagsSection(t *testing.T) {
 	}
 	if calls != 0 {
 		t.Fatalf("apply ran %d times despite the refusal", calls)
+	}
+}
+
+// TestReloadFailsClosedWhenApplyErrors pins the one fail-closed branch none of
+// the tests above reach: every prior failure test (unparseable file, changed
+// flags: section) is refused BEFORE apply ever runs. This is the only test
+// that lets apply itself be the thing that fails, which is what the package
+// doc's "Fail closed" bullet actually promises for a caller's own refusal
+// (a bad CA, a validation error inside apply), not just this package's own
+// prepare-phase checks.
+func TestReloadFailsClosedWhenApplyErrors(t *testing.T) {
+	dir := t.TempDir()
+	p := writeConfig(t, dir, "modules:\n  prod: {}\n")
+	boot, _ := config.Load(p)
+
+	calls := 0
+	applyErr := errors.New("apply refused the new configuration")
+	r := New(logger.NewTextLogger("error"), p, boot, func(*config.Config) error {
+		calls++
+		return applyErr
+	})
+
+	writeConfig(t, dir, "modules:\n  prod: {}\n  staging: {}\n")
+	err := r.Reload()
+	if err == nil {
+		t.Fatal("reload succeeded despite apply returning an error")
+	}
+	if !errors.Is(err, applyErr) {
+		t.Fatalf("reload's error does not wrap apply's own error: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("apply ran %d times, want exactly 1", calls)
+	}
+	if v := testGaugeValue(t, r.successful); v != 0 {
+		t.Fatalf("config_last_reload_successful is %v after apply failed, want 0", v)
+	}
+	if v := testGaugeValue(t, r.successTime); v != 0 {
+		t.Fatalf("config_last_reload_success_timestamp_seconds is %v after apply failed, want 0 (never advanced)", v)
 	}
 }
 
