@@ -111,6 +111,29 @@ Whatever the ladder grounded, and whatever gaps it left, run
    signalled it. A "yes" is recorded here, under this same decision, and
    becomes the signal for `/add-collector --variant background <name>` once
    scaffolding begins.
+
+   Once the collector list is settled, and only if the target model is
+   `multi-instance`, or `single` with at least one collector marked
+   background above, ask one more follow-up. Like the credential-convention
+   follow-up under decision 2, it decides a `config.example.yml` setting,
+   not any code:
+
+   > Does this target tolerate several requests at once? Some devices and
+   > appliances serialize internally, or degrade sharply, and this exporter
+   > can hold at most N requests open against one machine at a time. Leave
+   > it unlimited unless you know otherwise; a ceiling makes a slow
+   > collector delay its siblings, which the freshness gauge and
+   > `<namespace>_exporter_request_wait_seconds` will show.
+
+   Never ask this for `multi`: it has no background pollers and no ceiling
+   flag at all. Where it does apply, the ceiling is scoped differently by
+   model: on `multi-instance` it bounds each watched *instance*
+   independently, so two `instances:` entries that happen to share one
+   physical address are still bounded on their own, not jointly; on
+   `single` it bounds each collector's own `--collector.<name>.target`
+   *address*, so two collectors pointed at the same address do share one
+   ceiling. Record the answer under `## Architecture decisions` in the
+   brief, as `Concurrency ceiling: unlimited` or `Concurrency ceiling: <N>`.
 5. **Cardinality budget** per collector: labels, worst-case series count,
    any reduction flag.
 6. **Business-alert candidates** per collector, one line each.
