@@ -128,21 +128,25 @@ existing `factories = append(...)` block, never replacing the marker):
 	factories = append(factories, instance.Factory{
 		Name:    "<name>",
 		Enabled: <name>Enabled,
-		New: func(addr string, hcfg *promconfig.HTTPClientConfig) (instance.BackgroundCollector, error) {
-			var client *collector.Client
-			if hcfg != nil {
-				var err error
-				client, err = collector.NewClientWithConfig(addr, *<name>Timeout, *hcfg)
-				if err != nil {
-					return nil, err
-				}
-			} else {
-				client = collector.NewClient(addr, *<name>Timeout)
+		New: func(h *instance.Handle) (instance.BackgroundCollector, error) {
+			c, err := h.ClientFor(*<name>Timeout)
+			if err != nil {
+				return nil, err
 			}
-			return collector.New<Name>Collector(log, client, *<name>Interval), nil
+			return collector.New<Name>Collector(log, c, *<name>Interval), nil
 		},
 	})
 ```
+
+`New` takes the instance's `*instance.Handle`, not an address and a client
+config: the Handle owns the transport every collector of that machine shares,
+built once per machine so a reload can swap it underneath them without
+restarting any poller. `h.ClientFor(*<name>Timeout)` binds this collector's
+own per-request timeout to that shared transport and returns an error if the
+timeout is non-positive (the shared transport carries no deadline of its
+own, so a collector reaching it without one would hang its poller forever);
+that error must propagate out of `New`, exactly as shown, never be
+swallowed.
 
 There is no `@@CLIENT_INIT@@`/`@@CLIENT_BUILD@@`/`@@COLLECTOR_REGISTRY@@` in a
 multi-instance main (it carries only `@@INSTANCE_FACTORIES@@`), and no
