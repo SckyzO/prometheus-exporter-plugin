@@ -126,14 +126,27 @@ Whatever the ladder grounded, and whatever gaps it left, run
    > `<namespace>_exporter_request_wait_seconds` will show.
 
    Never ask this for `multi`: it has no background pollers and no ceiling
-   flag at all. Where it does apply, the ceiling is scoped differently by
-   model: on `multi-instance` it bounds each watched *instance*
-   independently, so two `instances:` entries that happen to share one
-   physical address are still bounded on their own, not jointly; on
-   `single` it bounds each collector's own `--collector.<name>.target`
-   *address*, so two collectors pointed at the same address do share one
-   ceiling. Record the answer under `## Architecture decisions` in the
-   brief, as `Concurrency ceiling: unlimited` or `Concurrency ceiling: <N>`.
+   flag at all. Where it does apply, what "at most N requests open against
+   one machine at a time" actually bounds depends on both the model and the
+   I/O flavor, not just the model, so state the real scope rather than let
+   the user assume the same shape everywhere:
+
+   - `multi-instance` bounds each watched *instance* independently: two
+     `instances:` entries that happen to share one physical address are
+     still bounded on their own, not jointly.
+   - `single` with the `http` flavor bounds each collector's own
+     `--collector.<name>.target` *address*: two collectors pointed at the
+     same address share one ceiling; collectors on different addresses do
+     not.
+   - `single` with the `cli` flavor has no per-target client and no
+     per-address index to key by, only one shared command-execution
+     boundary every collector calls through. The ceiling there is
+     exporter-wide: it caps total concurrent command invocations across
+     every collector combined, regardless of which machine each one
+     targets.
+
+   Record the answer under `## Architecture decisions` in the brief, as
+   `Concurrency ceiling: unlimited` or `Concurrency ceiling: <N>`.
 5. **Cardinality budget** per collector: labels, worst-case series count,
    any reduction flag.
 6. **Business-alert candidates** per collector, one line each.

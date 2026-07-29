@@ -208,16 +208,23 @@ working around the failure.
 If the brief consumed in step 0 carries a `Concurrency ceiling:` line under
 `## Architecture decisions` (only present when `/design-exporter` asked its
 follow-up: target model `multi-instance`, or `single` with at least one
-background collector), edit the just-scaffolded
-`<target-dir>/config.example.yml`:
+background collector), set `exporter.max-requests-per-target` in the
+just-scaffolded `<target-dir>/config.example.yml`'s `flags:` section to:
 
-- **`Concurrency ceiling: unlimited`**: add a commented-out
-  `# exporter.max-requests-per-target: 4` line under `flags:`, alongside the
-  other top-level flags, so the option is documented and easy to find later
-  without changing the shipped unlimited default.
-- **`Concurrency ceiling: <N>`**: add an active
-  `exporter.max-requests-per-target: <N>` line under `flags:` instead, using
-  the number the user gave.
+- **`Concurrency ceiling: unlimited`**: commented out, e.g.
+  `# exporter.max-requests-per-target: 4`, documenting the option without
+  changing the shipped unlimited default.
+- **`Concurrency ceiling: <N>`**: active, `exporter.max-requests-per-target:
+  <N>`, using the number the user gave.
+
+Edit in place, don't just append. Check first whether a line naming
+`exporter.max-requests-per-target` (commented or not) already exists under
+`flags:` (it will once `config.example.yml.tmpl` itself ships one, a change
+tracked separately): if so, rewrite that line to the state above; if not,
+add one, alongside the other top-level flags. Either way the file must end
+up with exactly one `exporter.max-requests-per-target` line: `flags:` reads
+each key once, and duplicating it would violate the file's own header
+comment, which promises no setting is ever expressible in two places.
 
 No brief, or a brief with no `Concurrency ceiling:` line: leave
 `config.example.yml` exactly as scaffold.sh produced it; there is nothing to
