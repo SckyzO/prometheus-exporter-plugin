@@ -9,10 +9,11 @@ import (
 )
 
 // RequestWait records how long a command invocation waited for a
-// concurrency slot before it ran. Unlabelled, matching CommandDuration next
-// to it in execute.go: this flavor has one shared command-execution boundary
-// (the package-level Execute var), not one Client per target, so there is
-// nothing to label a wait by.
+// concurrency slot, whether it was eventually granted one or gave up when
+// ctx was done first (see Acquire below: both paths observe). Unlabelled,
+// matching CommandDuration next to it in execute.go: this flavor has one
+// shared command-execution boundary (the package-level Execute var), not
+// one Client per target, so there is nothing to label a wait by.
 //
 // Registered alongside --exporter.max-requests-per-target, the flag that
 // turns a ceiling on: registry.frag registers it the same way it registers
@@ -26,7 +27,7 @@ import (
 // ceiling to wait on.
 var RequestWait = prometheus.NewHistogram(prometheus.HistogramOpts{
 	Name: "@@NAMESPACE@@_exporter_request_wait_seconds",
-	Help: "Duration in seconds a command invocation waited for a concurrency slot before it ran.",
+	Help: "Duration in seconds a command invocation waited for a concurrency slot, whether or not one was granted.",
 })
 
 // Limiter bounds how many invocations of the target command this exporter
