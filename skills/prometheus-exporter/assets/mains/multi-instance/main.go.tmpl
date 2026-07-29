@@ -48,13 +48,14 @@ var (
 		"Exclude Go runtime and process metrics from the /metrics endpoint.",
 	).Default("false").Bool()
 
-	// enableLifecycle exposes POST /-/reload. Default false, the same posture
-	// as the multi-target model: a scaffolded multi-instance exporter is
-	// unauthenticated by default, so shipping every generated exporter an
-	// unauthenticated MUTATING endpoint would be the one change here that
-	// degrades the default posture of an operator who configured nothing.
-	// --web.config.file covers the route once it is set, but it is not set by
-	// default. SIGHUP is always on: it already requires being on the machine.
+	// enableLifecycle exposes POST /-/reload. Default false, which is
+	// Prometheus's own posture for a mutating endpoint: a scaffolded
+	// multi-instance exporter is unauthenticated by default, so shipping every
+	// generated exporter an unauthenticated MUTATING endpoint would be the one
+	// change here that degrades the default posture of an operator who
+	// configured nothing. --web.config.file covers the route once it is set,
+	// but it is not set by default. SIGHUP is always on: it already requires
+	// being on the machine.
 	enableLifecycle = kingpin.Flag(
 		"web.enable-lifecycle",
 		"Expose POST /-/reload, which reloads --config.file. SIGHUP always works and needs no flag.",
@@ -196,7 +197,17 @@ func main() {
 		registry.Commit(ctx, plan)
 		return nil
 	})
-	go reloader.Run(ctx)
+	// reloaderDone closes only once Run has returned, which is only after any
+	// reload it is CURRENTLY running has finished. Run's own goroutine is what
+	// calls registry.Commit above, mutating registry's live handles map;
+	// registry.Wait below reads that same map by ranging it, so main must join
+	// this channel first, or a SIGHUP/POST /-/reload racing shutdown could
+	// still be inside Commit while Wait is already iterating.
+	reloaderDone := make(chan struct{})
+	go func() {
+		defer close(reloaderDone)
+		reloader.Run(ctx)
+	}()
 
 	reg.MustRegister(collector.RequestDuration)
 	reg.MustRegister(reloader.Collectors()...)
@@ -236,7 +247,19 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second, // Mitigate Slowloris attacks (G112).
 	}
 
+	// shutdownDone closes only once server.Shutdown has fully drained every
+	// in-flight request. That matters beyond the HTTP response itself:
+	// web.ListenAndServe below returns as soon as Shutdown closes the
+	// listener, well before Shutdown finishes waiting on active handlers, so
+	// without joining this channel too, a POST /-/reload handler still
+	// running past that point could take reload.Reloader.Reload's inline
+	// fallback (taken whenever Run is not there to receive the request,
+	// which is guaranteed once Run has already returned) and call
+	// registry.Commit directly on the handler's own goroutine, racing
+	// registry.Wait below exactly like reloaderDone's own case.
+	shutdownDone := make(chan struct{})
 	go func() {
+		defer close(shutdownDone)
 		<-ctx.Done()
 		log.Info("Shutdown signal received, draining in-flight requests...")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -253,6 +276,14 @@ func main() {
 	}
 
 	log.Info("Server stopped")
+
+	// Both goroutines above must be joined before registry.Wait touches the
+	// live handles map: shutdownDone proves no HTTP handler is still inside
+	// Reload's inline fallback, and reloaderDone proves Run's own goroutine
+	// is not still inside Commit. Order between the two does not matter, only
+	// that both finish before Wait starts.
+	<-shutdownDone
+	<-reloaderDone
 
 	// ONE shared 5s budget for ALL background collectors, not 5s each: with N
 	// instances x M collectors, a per-collector wait would worst-case at

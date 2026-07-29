@@ -107,6 +107,18 @@ func (r *Reloader) Collectors() []prometheus.Collector {
 // SIGHUP gets its OWN signal.Notify channel and never touches the
 // signal.NotifyContext main.go uses for SIGTERM and SIGINT: routing it there
 // would cancel the process context and turn a reload into a shutdown.
+//
+// Run returning is not the same moment as the process actually exiting: main
+// still drains in-flight HTTP requests and background collectors for up to
+// several more seconds afterward. A SIGHUP landing in that window must be a
+// silent no-op, not fatal, which is why cleanup below ends with
+// signal.Ignore rather than signal.Stop: Stop only detaches this package's
+// own channel and leaves SIGHUP's default disposition in charge again, which
+// on most platforms terminates the process outright, aborting that drain
+// (confirmed: exit code 129, mid-shutdown). Ignore instead leaves SIGHUP
+// permanently discarded from here on, which is exactly the right end state
+// for a signal whose only purpose was reloading a configuration that no
+// longer has a consumer.
 func (r *Reloader) Run(ctx context.Context) {
 	// Mark the process as "configuration currently good" before serving, so
 	// the gauge is meaningful from the first scrape rather than absent until
@@ -115,7 +127,7 @@ func (r *Reloader) Run(ctx context.Context) {
 
 	hup := make(chan os.Signal, 1)
 	signal.Notify(hup, syscall.SIGHUP)
-	defer signal.Stop(hup)
+	defer signal.Ignore(syscall.SIGHUP)
 
 	for {
 		select {
