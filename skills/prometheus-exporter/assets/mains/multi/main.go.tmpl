@@ -112,8 +112,11 @@ func main() {
 	// The configuration file is resolved by rendering its "flags:" section
 	// back into arguments and letting kingpin parse them once, ahead of the
 	// real command line so the command line wins. See internal/config for why
-	// values are not written into flags after parsing.
-	cfg, err := config.Load(config.ExtractFlagValue(os.Args[1:], "config.file"))
+	// values are not written into flags after parsing. Read once into a local:
+	// os.Args[1:] does not change between here and the reloader below, so a
+	// second call would only recompute the same value.
+	configPath := config.ExtractFlagValue(os.Args[1:], "config.file")
+	cfg, err := config.Load(configPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
@@ -175,7 +178,7 @@ func main() {
 		defaultClient *http.Client
 	}{modules, defaultClient}
 
-	reloader := reload.New(log, config.ExtractFlagValue(os.Args[1:], "config.file"), cfg,
+	reloader := reload.New(log, configPath, cfg,
 		func(next *config.Config) error {
 			newModules, newDefault, err := buildModules(next, factories, *probeTimeout)
 			if err != nil {
@@ -191,6 +194,13 @@ func main() {
 			warnIfProbeUnrestricted(log, *probeTargetAllowlist, next)
 			return nil
 		})
+	// Not joined at shutdown, unlike mains/multi-instance/main.go.tmpl's own
+	// reloaderDone: nothing here reads shared state after main returns.
+	// current.modules/current.defaultClient are swapped with a plain
+	// assignment (an atomic store, not a multi-step mutation Wait could
+	// observe half-done) and closeIdle only releases connections, so a
+	// reload still inside apply when the process exits has nothing left
+	// running afterward to race.
 	go reloader.Run(ctx)
 
 	// /metrics reports on the EXPORTER ITSELF (build info, Go runtime/process,
@@ -233,6 +243,12 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+	// Built once, outside the handler below: Handler() only wraps r in a
+	// closure and allocates nothing expensive itself, but building it fresh
+	// on every request would still be pointless per-request allocation for a
+	// value that never changes for the life of the process.
+	reloadHandler := reloader.Handler()
+
 	// Registered unconditionally, ahead of the "/" handler above, but the flag
 	// check inside is what makes an exporter that did not opt in answer 404
 	// on this path: http.ServeMux treats "/" as a catch-all for any path with
@@ -243,7 +259,7 @@ func main() {
 			http.NotFound(w, r)
 			return
 		}
-		reloader.Handler().ServeHTTP(w, r)
+		reloadHandler.ServeHTTP(w, r)
 	})
 	if !*enableLifecycle {
 		log.Info("POST /-/reload is disabled; SIGHUP still reloads the configuration",

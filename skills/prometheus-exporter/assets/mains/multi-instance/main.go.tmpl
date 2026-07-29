@@ -262,6 +262,12 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+	// Built once, outside the handler below: Handler() only wraps r in a
+	// closure and allocates nothing expensive itself, but building it fresh
+	// on every request would still be pointless per-request allocation for a
+	// value that never changes for the life of the process.
+	reloadHandler := reloader.Handler()
+
 	// Registered unconditionally, ahead of the "/" handler above, but the flag
 	// check inside is what makes an exporter that did not opt in answer 404
 	// on this path: http.ServeMux treats "/" as a catch-all for any path with
@@ -272,7 +278,7 @@ func main() {
 			http.NotFound(w, r)
 			return
 		}
-		reloader.Handler().ServeHTTP(w, r)
+		reloadHandler.ServeHTTP(w, r)
 	})
 	if !*enableLifecycle {
 		log.Info("POST /-/reload is disabled; SIGHUP still reloads the configuration",
