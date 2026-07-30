@@ -18,14 +18,16 @@ Candidate target from the command argument: $ARGUMENTS, a name (e.g.
 `demo_exporter`), or a short description of what it monitors if no name is
 picked yet. If empty, ask.
 
-## 1. Read the two references this phase runs on
+## 1. Read the three references this phase runs on
 
-Read both fully before asking the user anything:
+Read all three fully before asking the user anything:
 
 - `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/references/discovery-inputs.md`:
   the discovery ladder and the per-source extraction method for each rung.
 - `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/references/exporter-architecture.md`:
   the six architecture decisions this phase must produce.
+- `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/references/project-journal.md`:
+  the journal's format and the protocol every command follows.
 
 ## 2. Walk the discovery ladder, top-down
 
@@ -58,6 +60,19 @@ the lower adds detail the higher left silent, never replaced by it:
 5. **Dialogue** (rung 5): if nothing above grounded the design, fall back
    to the question flow in `exporter-architecture.md`. Always available,
    so the walk always has somewhere to land.
+
+Rungs 1 and 2 already ask for a path or a URL. **Record it.** Whatever the
+user names, and whatever the live probe was pointed at, goes into the brief's
+`## Provenance` section as a `Source material:` line, so a later session does
+not have to ask again or re-solicit a running machine.
+
+Say this to the user plainly, once, at the top of the walk:
+
+> Put whatever you already have wherever suits you, and tell me where: an
+> OpenAPI or gRPC specification, exported documentation pages, and any output
+> you have captured from the target by hand. I will record the paths. If you
+> have none, that is fine: nothing here is blocking, and the plugin will
+> produce what it needs as we go.
 
 Record, for the brief's `## Provenance` section: which rung(s) actually
 grounded the design, including whether the live-target probe (rung 4) was run
@@ -149,6 +164,25 @@ Whatever the ladder grounded, and whatever gaps it left, run
    `Concurrency ceiling: unlimited` or `Concurrency ceiling: <N>`.
 5. **Cardinality budget** per collector: labels, worst-case series count,
    any reduction flag.
+5b. **Naming conventions**, asked once and binding on every collector. Two
+    parts, both recorded under `## Architecture decisions`:
+
+    - **Metric name shape**: confirm
+      `<namespace>_<subsystem>_<name>_<unit>` or the variant this exporter
+      will actually use, following `prometheus-principles.md`.
+    - **Shared label vocabulary**: the label names that will recur across
+      collectors. Ask for the exact spelling of each, and write it down.
+
+    This is the cheapest decision to make now and the most expensive to
+    discover late. If the first collector emits `pool` and the seventh emits
+    `pool_name`, no dashboard can join them, and nothing on disk states which
+    one is the rule: existing names can be observed, a convention cannot be
+    derived. Record as:
+
+    ```
+    - Metric name shape: <namespace>_<subsystem>_<name>_<unit>
+    - Shared label vocabulary: pool, node, tenant
+    ```
 6. **Business-alert candidates** per collector, one line each.
 
 Where discovery already answered part of this with a high- or
@@ -163,8 +197,8 @@ Write to `./exporter-design-brief.md` in the current working directory, or
 to the path the user names instead. If a file already exists at that path,
 confirm with the user before overwriting it.
 
-Use the exact section shape `discovery-inputs.md` defines, verbatim
-headers, in this order:
+Use the exact section shape `project-journal.md` defines, verbatim headers,
+in this order:
 
 ```markdown
 # Exporter design brief: <target>
@@ -172,26 +206,63 @@ headers, in this order:
 ## Provenance
 ## Architecture decisions
 ## Scaffold inputs
+## Collectors
+## Cardinality budget
+## Dashboards
+## Session log
 ## Open questions / assumptions
 ```
 
+Write all eight headers now, including the ones this phase has nothing to put
+under yet. `project-journal.md` counts a missing header as a corrupt file and
+an empty section as a healthy one, so a section with no content yet carries a
+placeholder line rather than being left out.
+
 - `## Provenance`: which rung(s) grounded the design, which were skipped
   and why, and an overall Confidence of high, medium, or low.
-- `## Architecture decisions`: the six decisions from step 3, in brief
-  form.
+- `## Architecture decisions`: the decisions from step 3 that do not get a
+  section of their own, in brief form: the data source, the target model
+  and its credential convention, the I/O flavor, the concurrency ceiling,
+  the naming conventions from 5b, and the business-alert candidates from 6.
 - `## Scaffold inputs`: `EXPORTER_NAME`, `NAMESPACE`, `DATA_SOURCE`,
   `DATA_SOURCE_PATH`, and `DEFAULT_PORT` only. Leave `MODULE_PATH`,
   `OWNER`, and `LICENSE` out deliberately: those are the scaffolder's own
   identity questions, not the target's, and `/new-prometheus-exporter`
   always asks for them itself whether or not a brief is present.
+- `## Collectors`: the ordered list from decision 4, as an unticked checklist,
+  one line each, carrying the sync/background variant decided there and the
+  endpoint or command it will read. This is the list `/add-collector` walks,
+  one entry per session.
+- `## Cardinality budget`: decision 5, per collector, as an **intention**
+  (labels, worst-case series, any planned reduction flag). `/add-collector`
+  will later append what was actually observed next to it.
+- `## Dashboards`: left with a single line, `- (none yet)`.
+  `/generate-dashboard` owns it.
+- `## Session log`: opened with this phase's own entry, one line, dated.
 - `## Open questions / assumptions`: anything discovery could not
   resolve, flagged here for the user instead of silently assumed.
+
+`## Provenance` gains its `Source material:` line from step 2. Write the file,
+then never rewrite `## Provenance` again: it is the ladder's audit trail, and
+rewriting it erases why the design is trusted at the confidence it claims.
 
 Show the user the path of the file just written.
 
 ## 5. Hand off to scaffolding
 
-This command's job ends with the brief. It does not scaffold anything.
-Tell the user to review the brief just written, then run
-`/new-prometheus-exporter <name>` in the same directory to scaffold the
-repository from it.
+This command's job ends with the brief. It does not scaffold anything. End
+with the resumption block `project-journal.md` defines, filled from what was
+just written:
+
+```
+Design brief written to ./exporter-design-brief.md.
+Journal: 0 of <N> collectors built. First planned: `<name>` (<variant>).
+
+Review the brief, then it is safe to /clear: everything above is in the file.
+Then run:
+
+    /new-prometheus-exporter <name>
+```
+
+Never invoke that command yourself. Print it, and say it is to be run in this
+same directory, where `/new-prometheus-exporter` looks for the brief.
