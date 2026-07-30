@@ -34,16 +34,26 @@ if find "$work/out" -name '*.tmpl' | grep -q .; then fail ".tmpl suffix not stri
 
 # Selector-derived substitutions: --target-model and --flavor are exposed as
 # @@TARGET_MODEL@@/@@FLAVOR@@ so a template can state what this repo is,
-# mirroring how --instance-label already exposes @@INSTANCE_LABEL@@.
-printf 'model=@@TARGET_MODEL@@ flavor=@@FLAVOR@@\n' > "$here/fixtures/mini-template/selectors.txt.tmpl"
+# mirroring how --instance-label already exposes @@INSTANCE_LABEL@@. Built
+# from a scratch copy of the fixture under $work, never by writing into the
+# tracked test/fixtures/mini-template/ tree directly: that tree is also
+# consumed as --src by scaffold_edge_test.sh and scaffold_multitarget_test.sh,
+# and under set -eu a non-zero scaffold.sh exit would skip a same-level
+# cleanup step placed after the call, leaving a stray @@VAR@@-bearing file
+# behind to silently change what those sibling suites scaffold on their next
+# run. Mirrors the scratch-src precedent in scaffold_edge_test.sh (e.g. its
+# "pocroot" tree built fresh under $work rather than mutating the shared
+# fixture); the trap above already removes $work unconditionally on both
+# success and failure, so nothing needs an explicit rm -f here at all.
+cp -R "$here/fixtures/mini-template" "$work/selsrc"
+printf 'model=@@TARGET_MODEL@@ flavor=@@FLAVOR@@\n' > "$work/selsrc/selectors.txt.tmpl"
 sh "$root/skills/prometheus-exporter/assets/scaffold.sh" \
-  --src "$here/fixtures/mini-template" \
+  --src "$work/selsrc" \
   --dst "$work/sel" \
   --flavor http --forge none --target-model multi-instance \
   --var EXPORTER_NAME=redis_exporter \
   --var NAMESPACE=redis \
   --var OWNER=acme
-rm -f "$here/fixtures/mini-template/selectors.txt.tmpl"
 grep -q '^model=multi-instance flavor=http$' "$work/sel/selectors.txt" \
   || fail "@@TARGET_MODEL@@/@@FLAVOR@@ not substituted: $(cat "$work/sel/selectors.txt")"
 echo "PASS"
