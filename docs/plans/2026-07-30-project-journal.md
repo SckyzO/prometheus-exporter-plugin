@@ -1313,7 +1313,7 @@ Replace **everything between the two markers** with one line per
 `## Self-instrumentation`, in the order they appear:
 
 ```
-- [`<name>`](docs/metrics.md#<name>collector)
+- [`<name>`](docs/metrics.md#<slug of the header>)
 ```
 
 Keep the second comment line: it is what tells the next reader the block is
@@ -1321,8 +1321,25 @@ not theirs to edit. Regenerate in full; never append. The block is a
 projection of a file `make docs-check` already locks, which is what stops it
 drifting and lets it repair itself if someone edits it by hand.
 
-The anchor is the GitHub-flavored slug of the header: lowercase, spaces and
-punctuation dropped. `## PoolsCollector` becomes `#poolscollector`.
+**Both halves of that line have a trap, and neither is visible in the
+bundled fixture, whose collector is the single word `example`.**
+
+The **anchor** is the GitHub slug of the header, not of `<name>`. GitHub
+lowercases, drops punctuation and turns spaces into hyphens, but it
+**preserves underscores**. So a naive `#<name>collector` produces
+`#job_queuecollector` for `job_queue`, while the real header
+`## JobQueueCollector` slugs to `#jobqueuecollector`. Dead link. Slug the
+header, never the name: `## PoolsCollector` becomes `#poolscollector`, and
+`## JobQueueCollector` becomes `#jobqueuecollector`.
+
+The **link text** `<name>` must come from the **registered collector name**
+in `cmd/*/main.go` (`register("<name>"` on `single`, `Name: "<name>"` on
+either multi model), never by inverting the header's PascalCase, which
+cannot tell `job_queue` from `jobqueue`. Since the block is regenerated in
+full on every run, inverting would silently rewrite a correct `job_queue`
+into `jobqueue` on the next collector. The `Defined in` line is not a
+source either: the bundled collector's section names
+`internal/collector/collector.go`, not `example.go`.
 
 **If either marker is missing**, skip this silently and change nothing. A
 repository scaffolded before the markers existed, or an owner who removed
