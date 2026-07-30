@@ -500,9 +500,15 @@ Expected: the `samples/ survives a clone` line prints and the run continues.
 
 This is the step that makes it a test rather than decoration.
 
+Step 4's edit is **not committed yet**, so `git checkout` would destroy it.
+Work from a backup copy instead:
+
 ```sh
-# RED 1: remove the negation, so the README is ignored too.
-sed -i 's|^!/samples/README.md$|# !/samples/README.md|' skills/prometheus-exporter/assets/.gitignore.tmpl
+gi=skills/prometheus-exporter/assets/.gitignore.tmpl
+cp "$gi" "$gi.bak"
+
+# RED 1: comment out the negation, so the README is ignored too.
+sed -i 's|^!/samples/README.md$|# !/samples/README.md|' "$gi"
 sh test/golden-smoke.sh --flavor http --forge none
 ```
 
@@ -510,21 +516,22 @@ Expected: fails with `samples/README.md is gitignored; samples/ would not
 survive a clone`.
 
 ```sh
-git checkout skills/prometheus-exporter/assets/.gitignore.tmpl
-# RED 2: remove the ignore rule, so dropped captures would be committed.
-sed -i 's|^/samples/\*$|# /samples/*|' skills/prometheus-exporter/assets/.gitignore.tmpl
+cp "$gi.bak" "$gi"
+# RED 2: comment out the ignore rule, so dropped captures would be committed.
+sed -i 's|^/samples/\*$|# /samples/*|' "$gi"
 sh test/golden-smoke.sh --flavor http --forge none
 ```
 
 Expected: fails with `a file dropped in samples/ is NOT gitignored`.
 
 ```sh
-git checkout skills/prometheus-exporter/assets/.gitignore.tmpl
+cp "$gi.bak" "$gi"
+rm -f "$gi.bak"
+sh test/golden-smoke.sh --flavor http --forge none
 ```
 
-Re-apply Step 4's edit before continuing (the `git checkout` above reverted
-it). Confirm with `sh test/golden-smoke.sh --flavor http --forge none` going green
-again.
+Expected: green again. Confirm `$gi` still contains both rules before moving
+on, and that no `.bak` file is left behind for Step 8's `git add`.
 
 - [ ] **Step 7: run the full matrix and the source gate**
 
@@ -799,9 +806,15 @@ Expected: the marker assertion line prints and the run continues.
 
 - [ ] **Step 5: prove the assertion can fail**
 
+Step 3's edit is **not committed yet**, so `git checkout` would destroy it.
+Work from a backup copy instead:
+
 ```sh
+rm=skills/prometheus-exporter/assets/README.md.tmpl
+cp "$rm" "$rm.bak"
+
 # RED: remove the END marker.
-sed -i '/^<!-- END GENERATED COLLECTORS -->$/d' skills/prometheus-exporter/assets/README.md.tmpl
+sed -i '/^<!-- END GENERATED COLLECTORS -->$/d' "$rm"
 sh test/golden-smoke.sh --flavor cli --forge none
 ```
 
@@ -809,11 +822,13 @@ Expected: fails with `expected exactly 1 END GENERATED COLLECTORS marker in
 README.md, found 0`.
 
 ```sh
-git checkout skills/prometheus-exporter/assets/README.md.tmpl
+cp "$rm.bak" "$rm"
+rm -f "$rm.bak"
+sh test/golden-smoke.sh --flavor cli --forge none
 ```
 
-Re-apply Step 3's edit, then confirm green again with
-`sh test/golden-smoke.sh --flavor cli --forge none`.
+Expected: green again, with both markers back in place and no `.bak` file
+left behind for Step 7's `git add`.
 
 - [ ] **Step 6: run the full matrix**
 
