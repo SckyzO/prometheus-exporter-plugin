@@ -1519,7 +1519,7 @@ rules if it is present but corrupt.
 End with the resumption block `project-journal.md` defines:
 
 ```
-Dashboards written to <paths>. promtool and the backbone validation are green.
+Dashboards written to <paths>. jq empty and the panel-expr anti-lie scan are green.
 Journal: <N> of <M> collectors built.
 
 Safe to /clear now: everything above is in docs/exporter-journal.md.
