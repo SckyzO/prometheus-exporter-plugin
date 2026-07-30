@@ -252,6 +252,29 @@ its siblings instead of a reload.
   children for one metric name. Refusing was the honest interim answer,
   not the intended end state.
 
+## v0.9
+
+- **A Prometheus alerting command, the counterpart to
+  `/generate-dashboard`.** `/add-collector` already proposes one business
+  alert per collector, at the moment it has the most context: it has just
+  written the metric and knows whether it has a natural "too high" or "too
+  low" direction. Three things it cannot do by construction, because it
+  only ever looks at one collector: propose **cross-collector** alerts (the
+  exporter answers but every collector is failing; a business SLO spanning
+  three resources); review the **coherence** of the whole set, since
+  fifteen collectors added across fifteen sessions produce fifteen
+  independently chosen thresholds, divergent `for:` durations, an
+  inconsistent severity ladder, and rules still referencing metrics that no
+  longer exist (the alerting equivalent of `docs-check`, which does not
+  exist); and feed `monitoring/prometheus/rules.yml`, which every scaffold
+  ships and **nothing ever writes to**. That last one is the sharpest: a
+  scaffolding plugin is only as trustworthy as the fraction of its
+  templates that are actually exercised. Deliberately scheduled after the
+  project journal, not before: like `/generate-dashboard` reading
+  `docs/metrics.md`, this command should read the journal's
+  `Business-alert candidates` and `Cardinality budget` sections instead of
+  asking cold.
+
 ## v1.0
 
 - Marketplace polish.
