@@ -529,6 +529,23 @@ grep -q "^| Target model | \`$target_model\` |$" "$claude_md" \
 grep -q "^| I/O flavor | \`$flavor\` |$" "$claude_md" \
   || die "CLAUDE.md does not state I/O flavor '$flavor' ($flavor/$forge): $(grep -n 'I/O flavor' "$claude_md" 2>/dev/null || echo '<no I/O flavor row>')"
 
+# The README carries a generated collector list between two markers.
+# /add-collector regenerates everything between them from docs/metrics.md.
+# Assert the markers exist exactly once each, in the right order, and that
+# the block is not empty on a fresh scaffold.
+echo "== README carries the generated-collectors markers, paired and ordered ($flavor/$forge) =="
+readme="$work/README.md"
+[ -f "$readme" ] || die "README.md missing after scaffold ($flavor/$forge)"
+n_begin=$(grep -c '^<!-- BEGIN GENERATED COLLECTORS -->$' "$readme" || true)
+n_end=$(grep -c '^<!-- END GENERATED COLLECTORS -->$' "$readme" || true)
+[ "$n_begin" = 1 ] || die "expected exactly 1 BEGIN GENERATED COLLECTORS marker in README.md, found $n_begin ($flavor/$forge)"
+[ "$n_end" = 1 ] || die "expected exactly 1 END GENERATED COLLECTORS marker in README.md, found $n_end ($flavor/$forge)"
+l_begin=$(grep -n '^<!-- BEGIN GENERATED COLLECTORS -->$' "$readme" | cut -d: -f1)
+l_end=$(grep -n '^<!-- END GENERATED COLLECTORS -->$' "$readme" | cut -d: -f1)
+[ "$l_begin" -lt "$l_end" ] || die "README.md collector markers out of order (BEGIN line $l_begin, END line $l_end) ($flavor/$forge)"
+grep -q '^- \[`example`\](docs/metrics.md#examplecollector)$' "$readme" \
+  || die "README.md generated block does not list the bundled example collector ($flavor/$forge)"
+
 # .github/workflows/dev-release.yml only exists for --forge github (asserted
 # above); when present, its push trigger must include `main` so a freshly
 # scaffolded repo using the modern default branch name still gets a dev
