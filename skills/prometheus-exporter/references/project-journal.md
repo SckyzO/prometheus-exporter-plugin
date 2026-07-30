@@ -69,11 +69,15 @@ only a brief.
 ```
 
 The step-0 name stays `./exporter-design-brief.md`, in the working directory,
-so a brief written before the journal existed is still found and consumed. The
-move to `docs/exporter-journal.md`, and the retitling to
-`# Exporter journal: <name>`, happen **after** scaffolding, so `scaffold.sh`'s
-refusal of a non-empty `--dst` is untouched: it still scaffolds into an empty
-destination and the journal arrives afterward.
+so a brief written before the journal existed is still found and consumed. Its
+title line at that stage is `# Exporter design brief: <target>`, and that is
+the string the move looks for: the file to be relocated is the one whose first
+line matches it. The move to `docs/exporter-journal.md`, and the retitling from
+`# Exporter design brief: <target>` to `# Exporter journal: <name>`, happen
+**after** scaffolding, so `scaffold.sh`'s refusal of a non-empty `--dst` is
+untouched: it still scaffolds into an empty destination and the journal arrives
+afterward. Only the title line changes; the eight section headers under it are
+already the journal's own, and are carried across unedited.
 
 The journal is **committed**. Two reasons, one of them decisive:
 
@@ -161,6 +165,22 @@ is also what makes the corruption test of `## Degradation` checkable.
 | `## Session log` | `/design-exporter` | all four | append-only |
 | `## Open questions / assumptions` | `/design-exporter` | all four | mutable |
 
+**"Created by" means first *content*, not first header.** Whichever command
+creates the file writes all eight headers at once, in the order `## Format`
+gives, and every section a command has nothing to put in yet gets a placeholder
+line rather than being left out: `- (none yet)` under `## Dashboards` on a
+journal born at design time, and the same for any other section still empty.
+Only `## Dashboards` is routinely in that state on the main path, since
+`/generate-dashboard` runs late or not at all, but the rule is the same for all
+eight and does not depend on which one happens to be empty.
+
+This is not a formatting preference. An empty section and a missing header are
+two different states, and only one of them is a defect: `## Degradation`
+declares a file corrupt when a header is *absent*, so a command that omitted
+`## Dashboards` until the first dashboard existed would make every healthy
+journal fail that test and offer to rebuild itself on the happy path. Emitting
+the header with a placeholder keeps the corruption test meaning what it says.
+
 A command writes only the sections it owns, and leaves the rest byte-identical.
 `## Provenance` is never rewritten by anything: it is the discovery ladder's
 own audit trail (`discovery-inputs.md`), and rewriting it would erase why the
@@ -217,6 +237,12 @@ command carries on.
 **Corrupt** has a checkable definition, not a judgement call: the file exists
 but has no `# Exporter journal:` title line, or is missing at least one of the
 required `##` headers listed under `## Format`.
+
+The test is on the header, never on what sits under it. An empty section, or
+one holding only a placeholder line, is a normal journal: sections are created
+all eight at a time and filled later (`## Section ownership`). A journal whose
+`## Dashboards` reads `- (none yet)` is healthy, and a command that treats it
+as corrupt is raising a false alarm on the main path.
 
 - **Absent.** The command does exactly what it did before this file existed,
   all the way through. At the end it offers to build the journal: derivable
