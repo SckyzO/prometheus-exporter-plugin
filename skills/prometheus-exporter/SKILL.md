@@ -8,7 +8,7 @@ this plugin: an opinionated, end-to-end path from an architecture decision
 to a releasable, documented, monitored repository. It is a router: the
 reasoning behind each step lives in the reference files under
 `references/`; open the one a step points to before acting on it, rather
-than trying to hold all eleven in context at once.
+than trying to hold all twelve in context at once.
 
 **Scope**: Go exporters only. The I/O flavor is `http` (default) or `cli`:
 the only two this plugin ships, ever; database targets are out of scope
@@ -183,13 +183,14 @@ time, not just once at project start.
 
 ## Reference index
 
-All eleven reference files live under `references/`, alongside the
+All twelve reference files live under `references/`, alongside the
 templates they document:
 
 | Reference | Covers |
 |---|---|
 | `exporter-architecture.md` | Step 0: source order, the three target models (single/multi/multi-instance), collector decomposition, cardinality budget |
-| `discovery-inputs.md` | Step 0: discovery input taxonomy, preference order, the degradation ladder, the architecture-brief format |
+| `discovery-inputs.md` | Step 0: discovery input taxonomy, preference order, the degradation ladder, per-source extraction |
+| `project-journal.md` | Every step: the journal that survives a cleared context, its format and lifecycle, section ownership, reconciliation against disk, the resumption block |
 | `prometheus-principles.md` | Step 1: naming, types, labels, OpenMetrics, self-instrumentation |
 | `collector-pattern.md` | Step 3: the mockable I/O boundary, the five-piece collector shape, the test triad |
 | `project-scaffold.md` | Step 2: repository layout, registry wiring, flags, endpoints, signal-aware shutdown |
