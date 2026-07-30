@@ -300,19 +300,30 @@ own validation.
 Append to `test/scaffold_test.sh`, immediately before the final
 `echo "PASS"`:
 
+Build the one-off fixture **under `$work`**, never in `test/fixtures/`. That
+tree is version-controlled and is also the `--src` of
+`scaffold_edge_test.sh` and `scaffold_multitarget_test.sh`; under `set -eu`,
+a failing scaffold aborts the script before any inline `rm -f` runs, leaving
+a sentinel-bearing file behind that would silently change what the sibling
+suites scaffold. `$work` is already cleaned unconditionally by the
+`trap 'rm -rf "$work"' EXIT` at the top of the file, and
+`scaffold_edge_test.sh:42-46` is the precedent for this shape.
+
 ```sh
 # Selector-derived substitutions: --target-model and --flavor are exposed as
 # @@TARGET_MODEL@@/@@FLAVOR@@ so a template can state what this repo is,
 # mirroring how --instance-label already exposes @@INSTANCE_LABEL@@.
-printf 'model=@@TARGET_MODEL@@ flavor=@@FLAVOR@@\n' > "$here/fixtures/mini-template/selectors.txt.tmpl"
+# The fixture is built under $work, never in the tracked fixtures/ tree: the
+# trap above cleans it on every exit path, including a failing scaffold.
+cp -R "$here/fixtures/mini-template" "$work/selsrc"
+printf 'model=@@TARGET_MODEL@@ flavor=@@FLAVOR@@\n' > "$work/selsrc/selectors.txt.tmpl"
 sh "$root/skills/prometheus-exporter/assets/scaffold.sh" \
-  --src "$here/fixtures/mini-template" \
+  --src "$work/selsrc" \
   --dst "$work/sel" \
   --flavor http --forge none --target-model multi-instance \
   --var EXPORTER_NAME=redis_exporter \
   --var NAMESPACE=redis \
   --var OWNER=acme
-rm -f "$here/fixtures/mini-template/selectors.txt.tmpl"
 grep -q '^model=multi-instance flavor=http$' "$work/sel/selectors.txt" \
   || fail "@@TARGET_MODEL@@/@@FLAVOR@@ not substituted: $(cat "$work/sel/selectors.txt")"
 ```
