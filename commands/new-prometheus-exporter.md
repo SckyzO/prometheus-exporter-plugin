@@ -27,6 +27,12 @@ in the current directory (the file `/design-exporter` produces).
 - **If no brief is found:** proceed with the existing interactive
   confirmation below, unchanged.
 
+Either way, read
+`${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/references/project-journal.md`
+before step 3c: a brief found here becomes this repository's journal, and that
+reference owns the move. Keep the path the brief was read from, step 3c needs
+it; with no brief, step 3c builds a journal from scratch instead.
+
 Do not scaffold a repository whose shape hasn't actually been decided. Before
 collecting a single variable, confirm the architecture-design phase is done.
 If you have not already, read
@@ -234,6 +240,97 @@ exist on a multi-target binary in the first place, since a probed target
 arrives per request rather than accumulating a persistent per-target
 limiter.
 
+## 3c. Turn the brief into this repository's journal
+
+The scaffold has just run, so `<target-dir>` holds the generated tree, but
+`git init` has not happened yet: that is step 4. Everything written here
+therefore lands in the initial commit, which is exactly what the journal
+needs. An untracked journal is destroyed by a routine `git clean -xdf`, and a
+journal that vanishes silently is worse than no journal, because by then it is
+trusted.
+
+Do these four things, in order, and report each one.
+
+**1. Offer to bring the source material in.** If the brief's `## Provenance`
+carries a `Source material:` line naming local paths, show them and ask
+whether to copy them into `<target-dir>/samples/`. That directory already
+exists, with its own `README.md` explaining what belongs there: do not create
+it, and do not touch the README. Copy, never move: the user's originals stay
+exactly where they are, and nothing the user owns is deleted or relocated by
+this command. A URL is recorded, not fetched. The scaffolded `.gitignore`
+already excludes everything under `samples/` except that README, so material
+copied in now stays out of step 4's commit, which is deliberate: it is not
+anonymized and may not be this repository's to redistribute. If there is no
+such line, say so and move on: `samples/` keeps only its README, and
+`/add-collector` will fall back to its own fixture generation.
+
+**2. Move the brief.** This is the one file that moves rather than being
+copied, because it is the plugin's own artifact rather than the user's, and
+`project-journal.md`'s `## Lifecycle` gives it two names for one thing.
+Using `git mv` is wrong here (the brief was never in this repository).
+Identify it by its first line, `# Exporter design brief: <target>`: that is
+the string the move keys on. Copy it to
+`<target-dir>/docs/exporter-journal.md`, confirm the copy
+exists, and only then remove the original. Retitle the first line from
+`# Exporter design brief: <target>` to `# Exporter journal: <name>`, `<name>`
+being `EXPORTER_NAME`. Only that line changes; the eight section headers below
+it are already the journal's own and are carried across unedited.
+
+**3. Freeze `## Scaffold inputs`.** Append the selectors actually passed to
+`scaffold.sh`, which the brief never contained because they are the
+scaffolder's own choices:
+
+```
+- Selectors actually passed: --flavor <f>, --target-model <m>, --forge <g>[, --instance-label <l>]
+```
+
+Do not rewrite the five values already there. If any of them differ from what
+was actually used (the user changed the port, say), correct the line **and**
+record the change in `## Session log`, so the difference is visible rather
+than silently overwritten.
+
+**4. Append to `## Session log`.** One dated line naming the scaffold and its
+selectors. Append only; never edit or remove an entry already there.
+
+**If there was no brief**, build the journal from scratch at
+`<target-dir>/docs/exporter-journal.md` instead, with the same title line and
+the same eight headers, verbatim, in this order:
+
+```markdown
+# Exporter journal: <name>
+
+## Provenance
+## Architecture decisions
+## Scaffold inputs
+## Collectors
+## Cardinality budget
+## Dashboards
+## Session log
+## Open questions / assumptions
+```
+
+Write all eight, including the ones there is nothing to put under yet: a
+missing header is what makes a journal corrupt, an empty section does not, so
+a section with no content yet carries a placeholder line (`- (none yet)`)
+rather than being left out. Fill them from what steps 0 to 2 just confirmed
+interactively:
+
+- `## Provenance`: `Grounded by: interactive confirmation only`,
+  `Confidence: low`, and `Source material: none offered` unless the user named
+  paths anyway, in which case record them and offer the copy above.
+- `## Architecture decisions`: the data source, I/O flavor, target model, and
+  any credential convention, concurrency ceiling or naming convention the user
+  stated while confirming step 0.
+- `## Scaffold inputs`: the five values passed as `--var`, plus the
+  `Selectors actually passed:` line from point 3.
+- `## Collectors`: whatever collectors the user named at step 0, one per line,
+  every box unticked.
+- `## Cardinality budget`, `## Dashboards`, `## Open questions / assumptions`:
+  opened with a placeholder line each.
+- `## Session log`: this scaffold's own dated entry.
+
+No path through this command ends without a journal.
+
 ## 4. Initialize git and make the first commit
 
 ```sh
@@ -300,3 +397,28 @@ If the architecture brief recorded a concurrency ceiling
 step 3b above already applied it to `config.example.yml`; point the user
 there, and at `<namespace>_exporter_request_wait_seconds` in
 `docs/metrics.md`, to see it in effect once the exporter is running.
+
+## 7. Hand off to the first collector
+
+End with the resumption block `project-journal.md` defines, filled from the
+journal step 3c wrote, and only once step 5's gate has actually been shown
+green: "safe to /clear" is a claim about state on disk, so it is honest only
+after that state has been verified.
+
+```
+Scaffolded <name> at <target-dir>. make build and make check are green.
+Journal: 0 of <N> collectors built. Next planned: `<name>` (<variant>).
+
+Safe to /clear now: everything above is in docs/exporter-journal.md.
+Then run:
+
+    /add-collector <first planned collector>
+```
+
+Print it. Never invoke the command: `/add-collector` carries
+`disable-model-invocation: true`, so only the user can run it, which is why
+the block is copy-pasteable text rather than an action. The argument is read
+from the journal, the first unticked entry under `## Collectors`, with its
+variant, not templated. If the journal lists no planned collector, suggest
+`/add-collector <name>` with a name the user must choose, and say plainly that
+this one is a placeholder rather than something read from the journal.
