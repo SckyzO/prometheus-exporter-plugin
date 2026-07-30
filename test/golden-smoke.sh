@@ -500,6 +500,23 @@ case "$grep_rc" in
   *) die "master-branch scan of $release_doc failed (grep exit $grep_rc): $hits" ;;
 esac
 
+# samples/ holds raw target output and the target's own API documentation.
+# It must survive a clone (so its README is tracked) while its contents never
+# reach git (they are not anonymized and may carry hostnames, tenants,
+# credentials, or third-party documentation). Both halves are asserted:
+# a directory that is fully ignored would not exist after a clone, and a
+# directory that is fully tracked would leak.
+echo "== samples/ survives a clone, its contents do not ($flavor/$forge) =="
+[ -d "$work/samples" ] || die "samples/ missing after scaffold ($flavor/$forge)"
+[ -f "$work/samples/README.md" ] || die "samples/README.md missing after scaffold ($flavor/$forge)"
+if git -C "$work" check-ignore -q samples/README.md; then
+  die "samples/README.md is gitignored; samples/ would not survive a clone ($flavor/$forge)"
+fi
+printf '{"gate": 1}\n' > "$work/samples/_gate-probe.json"
+git -C "$work" check-ignore -q samples/_gate-probe.json \
+  || die "a file dropped in samples/ is NOT gitignored ($flavor/$forge)"
+rm -f "$work/samples/_gate-probe.json"
+
 # .github/workflows/dev-release.yml only exists for --forge github (asserted
 # above); when present, its push trigger must include `main` so a freshly
 # scaffolded repo using the modern default branch name still gets a dev
