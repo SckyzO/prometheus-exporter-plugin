@@ -249,7 +249,7 @@ needs. An untracked journal is destroyed by a routine `git clean -xdf`, and a
 journal that vanishes silently is worse than no journal, because by then it is
 trusted.
 
-Do these four things, in order, and report each one.
+Do these five things, in order, and report each one.
 
 **1. Offer to bring the source material in.** If the brief's `## Provenance`
 carries a `Source material:` line naming local paths, show them and ask
@@ -264,19 +264,35 @@ anonymized and may not be this repository's to redistribute. If there is no
 such line, say so and move on: `samples/` keeps only its README, and
 `/add-collector` will fall back to its own fixture generation.
 
-**2. Move the brief.** This is the one file that moves rather than being
-copied, because it is the plugin's own artifact rather than the user's, and
-`project-journal.md`'s `## Lifecycle` gives it two names for one thing.
+**2. Move the brief.** `project-journal.md`'s `## Lifecycle` gives this file
+two names for one thing, so a brief sitting at the default path is relocated
+rather than duplicated: there it is the plugin's own artifact, not the user's.
 Using `git mv` is wrong here (the brief was never in this repository).
 Identify it by its first line, `# Exporter design brief: <target>`: that is
 the string the move keys on. Copy it to
-`<target-dir>/docs/exporter-journal.md`, confirm the copy
-exists, and only then remove the original. Retitle the first line from
-`# Exporter design brief: <target>` to `# Exporter journal: <name>`, `<name>`
-being `EXPORTER_NAME`. Only that line changes; the eight section headers below
-it are already the journal's own and are carried across unedited.
+`<target-dir>/docs/exporter-journal.md` and confirm the copy exists. Remove
+the original **only** when it is `./exporter-design-brief.md` in the working
+directory, the one path `## Lifecycle` contemplates. If step 0 read the brief
+from a path the user named instead, copy from it, leave it exactly where it
+is, and say so: that file is the user's, and this command removes nothing the
+user owns. Either way the content now lives in the committed journal. Retitle
+the copy's first line from `# Exporter design brief: <target>` to
+`# Exporter journal: <name>`, `<name>` being `EXPORTER_NAME`. Only that line
+changes; the eight section headers below it are already the journal's own and
+are carried across unedited.
 
-**3. Freeze `## Scaffold inputs`.** Append the selectors actually passed to
+**3. Complete `## Architecture decisions`.** Step 0 hands the user the final
+call on every line in that section, and step 1 re-confirms the I/O flavor. If
+any line was overruled while confirming, correct it here **and** record the
+change in `## Session log`, for the same reason as point 4 below. Nothing
+repairs this later: `## Reconciliation` recovers the I/O flavor, the target
+model and the namespace from the generated tree, but the credential
+convention, the concurrency ceiling, the metric-name shape and the shared
+label vocabulary are exactly the half no file on disk can state. A wrong value
+there is wrong for the life of the repository, and it is trusted, which is
+what makes a journal asserting a false state worse than no journal at all.
+
+**4. Freeze `## Scaffold inputs`.** Append the selectors actually passed to
 `scaffold.sh`, which the brief never contained because they are the
 scaffolder's own choices:
 
@@ -289,8 +305,9 @@ was actually used (the user changed the port, say), correct the line **and**
 record the change in `## Session log`, so the difference is visible rather
 than silently overwritten.
 
-**4. Append to `## Session log`.** One dated line naming the scaffold and its
-selectors. Append only; never edit or remove an entry already there.
+**5. Append to `## Session log`.** One dated line naming the scaffold and its
+selectors, plus the corrections from points 3 and 4 if there were any. Append
+only; never edit or remove an entry already there.
 
 **If there was no brief**, build the journal from scratch at
 `<target-dir>/docs/exporter-journal.md` instead, with the same title line and
@@ -322,7 +339,7 @@ interactively:
   any credential convention, concurrency ceiling or naming convention the user
   stated while confirming step 0.
 - `## Scaffold inputs`: the five values passed as `--var`, plus the
-  `Selectors actually passed:` line from point 3.
+  `Selectors actually passed:` line from point 4.
 - `## Collectors`: whatever collectors the user named at step 0, one per line,
   every box unticked.
 - `## Cardinality budget`, `## Dashboards`, `## Open questions / assumptions`:
