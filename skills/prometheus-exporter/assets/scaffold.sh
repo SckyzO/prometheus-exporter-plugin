@@ -50,7 +50,10 @@
 #     that is the ONLY forge-conditional directory: everything else under
 #     assets/ (including .goreleaser*.yaml) already sits at its final,
 #     always-shipped repo-relative path and is untouched by --forge.
-#   - Substitutes every @@KEY@@ (content and path components) for each --var.
+#   - Substitutes every @@KEY@@ (content and path components) for each --var,
+#     plus @@TARGET_MODEL@@, @@FLAVOR@@, and @@INSTANCE_LABEL@@, each derived
+#     from its own selector (--target-model, --flavor, --instance-label
+#     respectively) rather than from a --var.
 #   - Strips the .tmpl suffix from file names.
 #   - Selects mains/<target-model>/main.go.tmpl as the one cmd/<name>/main.go,
 #     then removes the whole mains/ staging tree; drops internal/probe/ unless
@@ -204,6 +207,7 @@ case "$target_model" in
   single|multi|multi-instance) ;;
   *) die "invalid --target-model '$target_model'; must be single, multi, or multi-instance" ;;
 esac
+printf 's/@@TARGET_MODEL@@/%s/g\n' "$(sed_escape_repl "$target_model")" >> "$sedscript"
 if { [ "$target_model" = multi ] || [ "$target_model" = multi-instance ]; } && [ "$flavor" != http ]; then
   die "--target-model $target_model requires --flavor http (no cli multi-target)"
 fi
@@ -229,6 +233,7 @@ printf 's/@@INSTANCE_LABEL@@/%s/g\n' "$(sed_escape_repl "$instance_label")" >> "
 case "$flavor" in
   ''|.|*/*|*..*) die "invalid --flavor: must be a single path component" ;;
 esac
+printf 's/@@FLAVOR@@/%s/g\n' "$(sed_escape_repl "$flavor")" >> "$sedscript"
 
 if [ -d "$src/code" ] && [ ! -d "$src/code/$flavor" ]; then
   avail=""

@@ -31,4 +31,19 @@ grep -q 'namespace = "redis"' "$work/out/cmd/redis_exporter/main.go" || fail "@@
 if grep -rn '@@[A-Z_]*@@' "$work/out"; then fail "residual @@VAR@@ left"; fi
 # .tmpl suffix stripped
 if find "$work/out" -name '*.tmpl' | grep -q .; then fail ".tmpl suffix not stripped"; fi
+
+# Selector-derived substitutions: --target-model and --flavor are exposed as
+# @@TARGET_MODEL@@/@@FLAVOR@@ so a template can state what this repo is,
+# mirroring how --instance-label already exposes @@INSTANCE_LABEL@@.
+printf 'model=@@TARGET_MODEL@@ flavor=@@FLAVOR@@\n' > "$here/fixtures/mini-template/selectors.txt.tmpl"
+sh "$root/skills/prometheus-exporter/assets/scaffold.sh" \
+  --src "$here/fixtures/mini-template" \
+  --dst "$work/sel" \
+  --flavor http --forge none --target-model multi-instance \
+  --var EXPORTER_NAME=redis_exporter \
+  --var NAMESPACE=redis \
+  --var OWNER=acme
+rm -f "$here/fixtures/mini-template/selectors.txt.tmpl"
+grep -q '^model=multi-instance flavor=http$' "$work/sel/selectors.txt" \
+  || fail "@@TARGET_MODEL@@/@@FLAVOR@@ not substituted: $(cat "$work/sel/selectors.txt")"
 echo "PASS"
