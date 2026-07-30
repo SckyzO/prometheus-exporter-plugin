@@ -1553,6 +1553,54 @@ back from the emitted JSON, which shows what was built and never why."
 - Consumes: everything Tasks 1 to 9 shipped.
 - Produces: nothing.
 
+- [ ] **Step 0: close the two carve-outs the command tasks opened in the reference**
+
+Tasks 6 and 7 each found the same gap from a different side, in
+`skills/prometheus-exporter/references/project-journal.md`'s
+`### Read on entry, write on exit`. One amendment closes both.
+
+The section says journal writes happen only after the gate, "never before".
+Two of the four commands cannot honour that literally:
+
+- `/design-exporter` **runs no gate at all**. Its resumption block would have
+  to name a gate that does not exist.
+- `/new-prometheus-exporter` **creates** the repository, so it has no journal
+  to read on entry, and step 4 is its only commit. Writing after the gate
+  would leave the journal untracked, which `## Lifecycle` itself calls the
+  decisive failure: `git clean -xdf` destroys untracked files.
+
+Add, after the "On exit" bullet:
+
+> The two creating commands are exceptions, each on a different half.
+> `/design-exporter` runs no gate, so its resumption block simply omits the
+> gate clause. `/new-prometheus-exporter` has no journal to read on entry,
+> and its only commit is the initial one, so it writes the journal after the
+> scaffold and **before** that commit, leaving the file tracked rather than
+> destroyed by the first `git clean -xdf`. Only its resumption block waits
+> for the gate. Nothing either command writes before its commit records a
+> gate outcome, so the rule's reason still holds where the rule's letter
+> cannot.
+
+- [ ] **Step 0b: sweep the deferred minors the earlier tasks parked**
+
+Read the ledger at
+`.superpowers/sdd/2026-07-30-project-journal/progress.md` and fix the
+`minor (deferred)` entries that are one-line edits, at minimum:
+
+- `commands/design-exporter.md`: add `prometheus-principles.md` to step 1's
+  read list (it is cited at decision 5b but absent from an otherwise
+  exhaustive list), move step 2's blockquote above the numbered rungs (it
+  says "at the top of the walk" but sits after them), change
+  `First planned:` to the reference's frozen `Next planned:`, and name the
+  path in the resumption block instead of "the file".
+- `commands/new-prometheus-exporter.md`: reword the bullet pointing at "each
+  further collector from the step 0 list", which is exactly what a `/clear`
+  destroys, to point at the journal's `## Collectors` instead.
+- `ROADMAP.md:153`: "eleven reference documents" is now twelve.
+
+Leave the parked entries alone: they carry rulings and belong to the final
+review.
+
 - [ ] **Step 1: mark the roadmap item delivered**
 
 In `ROADMAP.md`'s `## v0.8` section, move the project-journal bullet into the
