@@ -517,6 +517,18 @@ git -C "$work" check-ignore -q samples/_gate-probe.json \
   || die "a file dropped in samples/ is NOT gitignored ($flavor/$forge)"
 rm -f "$work/samples/_gate-probe.json"
 
+# CLAUDE.md states this repository's invariants. The generic no-residual-
+# sentinel scan would catch an entirely unsubstituted @@TARGET_MODEL@@, but
+# not a template that hardcodes "single" in every cell, which is the failure
+# this assertion exists for.
+echo "== CLAUDE.md states this cell's real target model and flavor ($flavor/$forge) =="
+claude_md="$work/CLAUDE.md"
+[ -f "$claude_md" ] || die "CLAUDE.md missing after scaffold ($flavor/$forge)"
+grep -q "^| Target model | \`$target_model\` |$" "$claude_md" \
+  || die "CLAUDE.md does not state target model '$target_model' ($flavor/$forge): $(grep -n 'Target model' "$claude_md" 2>/dev/null || echo '<no Target model row>')"
+grep -q "^| I/O flavor | \`$flavor\` |$" "$claude_md" \
+  || die "CLAUDE.md does not state I/O flavor '$flavor' ($flavor/$forge): $(grep -n 'I/O flavor' "$claude_md" 2>/dev/null || echo '<no I/O flavor row>')"
+
 # .github/workflows/dev-release.yml only exists for --forge github (asserted
 # above); when present, its push trigger must include `main` so a freshly
 # scaffolded repo using the modern default branch name still gets a dev
