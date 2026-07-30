@@ -494,11 +494,13 @@ from that instead of inventing one:
    covers several resources; the fixture covers one.
 3. **Anonymize** it per
    `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/references/collector-pattern.md`'s
-   Fixtures rules, which own the substitutions: real hostnames become
-   `host1`/`example.internal`, usernames become `user1`/`alice`/`bob`,
+   Fixtures rules, which own the substitutions: real hostnames and endpoints
+   become `host1`/`example.internal`, usernames become `user1`/`alice`/`bob`,
    account or tenant names become `team_a`/`org_b`, and anything else
    identifying gets a placeholder that preserves shape (field count, rough
-   magnitude) without preserving content.
+   magnitude) without preserving content. Never commit a fixture copy-pasted
+   straight from a production system, which is exactly what a `samples/` file
+   is.
 4. **State what you anonymized**, field by field, in your reply. The user is
    the only one who can tell you that something you left alone was actually
    sensitive.
@@ -851,6 +853,16 @@ they appear:
 - [`<name>`](docs/metrics.md#<anchor>)
 ```
 
+`<name>` is the **registered collector name**, read from `cmd/*/main.go`:
+`register("<name>"` on the single target model, `Name: "<name>"` on either
+multi model, the same two greps step 2's idempotent refusal already uses.
+Never recover it by inverting the header's PascalCase, which cannot tell
+`job_queue` from `jobqueue`: because this block is regenerated in full on
+every run, a guess silently rewrites a correct line the next time a collector
+is added. `docs/metrics.md`'s own `Defined in` line is not a source either;
+the bundled first collector's section names `internal/collector/collector.go`,
+not its collector name.
+
 Only headers ending in `Collector` are collectors. `## Self-instrumentation`,
 and the multi-target and configuration-reload sections that may sit below it,
 are not, and never appear in this list.
@@ -949,8 +961,13 @@ Never before: a journal that records a collector the build rejects is exactly
 the lie this file exists to prevent.
 
 If `docs/exporter-journal.md` is absent, offer to create it now, per
-`project-journal.md`'s degradation rules, then continue. If it is corrupt, ask
-before writing anything.
+`project-journal.md`'s degradation rules, writing all eight headers from its
+`## Format` with a placeholder line under every section this step cannot fill
+yet (its `## Section ownership` rule), then continue. A file holding only the
+three sections below would be missing headers, which is exactly what
+`## Degradation` calls corrupt, so the next command would open with a
+rebuild-or-leave prompt on a perfectly healthy repository. If the journal is
+already corrupt, ask before writing anything.
 
 Three edits:
 
@@ -974,6 +991,11 @@ Three edits:
    Count from the fixture: one series per fixed-shape metric, plus one per
    label combination the variable-label metrics actually emit. That is the
    same count step 4's `GatherAndCount` assertion already uses.
+
+   If no planned line exists for this collector (the unplanned case item 1
+   admits), write `worst case unplanned` in place of the figure. Never
+   back-fill it from the observation: that would manufacture an intention
+   nobody had, and the gap this line exists to show would read as zero.
 
 3. **Append one `## Session log` line**, dated, naming the collector, its
    variant, and where the fixture came from.
@@ -1004,8 +1026,8 @@ Then run:
 When no unticked collector remains, suggest `/generate-dashboard` instead.
 Print the block; never invoke the command.
 
-With no journal at all (absent, and step 8b's offer declined) there is no list
-to read from. Drop the `Journal:` line rather than inventing counts, suggest
+With no usable journal (absent and step 8b's offer declined, or corrupt and
+left untouched at its prompt) there is no list to read from. Drop the `Journal:` line rather than inventing counts, suggest
 `/add-collector <name>` with a name the user must choose, and say plainly that
 this one is a placeholder rather than something read from the journal. The
 rest of the block still holds: the gate is green and the work is on disk.
