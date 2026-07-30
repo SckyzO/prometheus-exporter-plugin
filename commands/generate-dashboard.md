@@ -48,10 +48,14 @@ A scaffolded repo has no `@@VAR@@` sentinels left. Read real values:
 
 `docs/metrics.md` is not just the list of metric names: it is the substrate
 that drives the whole dialogue below. For each metric read its name, `Type`
-(Gauge/Counter/Histogram/Summary), and labels. If a brief
-(`./exporter-design-brief.md`) is present, read it too: its audience,
-business-alert candidates, and cardinality-budget sections seed steps 2/5/6
-below instead of asking cold.
+(Gauge/Counter/Histogram/Summary), and labels.
+
+If `docs/exporter-journal.md` is present, read it too, following
+`${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/references/project-journal.md`:
+its audience, business-alert candidates and cardinality-budget sections seed
+steps 2, 5 and 6 below instead of asking cold. Reconcile it against
+`docs/metrics.md` first, as that reference describes: the documented metrics
+win over anything the journal claims about which collectors exist.
 
 If the doc contains **no** business metric (only self-instrumentation), stop:
 tell the user to add collectors and document them with `make docs-check`
@@ -210,6 +214,35 @@ Confirm every name printed is documented in `docs/metrics.md` (a Histogram
 dashboard analogue of `make docs-check`'s PromQL bar, and exactly the property
 the golden test asserts on this same backbone.
 
+## 6b. Record the design in the journal
+
+Only once step 6's checks have printed green. Never before: an entry written
+ahead of its gate records an outcome that has not happened yet.
+
+If `docs/exporter-journal.md` is present, replace its `## Dashboards` section
+with one line per dashboard produced:
+
+```
+- <audience>, <RED | USE> because <reason>, <decomposition>, files: <paths>
+```
+
+The header itself is already in the file, carrying a placeholder line until
+this step first fills it (`project-journal.md`'s `## Section ownership`):
+replace what sits under the header, never write the header, and never read
+that placeholder as an absent section.
+
+Everything on that line is chosen in the dialogue above and **cannot be read
+back from the JSON**: the emitted panels show what was built, never why RED
+was chosen over USE, nor why the set was split into an overview plus
+drill-downs rather than one dashboard. A second session that extends or
+regenerates a dashboard reads this and stays consistent with the first.
+
+Append one dated `## Session log` line naming the dashboards written.
+
+If the journal is absent, say so in one line and skip this: the dashboards
+themselves are already on disk. Follow `project-journal.md`'s degradation
+rules if it is present but corrupt.
+
 ## 7. What's next
 
 - Import each dashboard in Grafana (UI "Import → Upload JSON file", the HTTP
@@ -218,3 +251,25 @@ the golden test asserts on this same backbone.
   and asks before overwriting a generated file (step 4).
 - Commit with `feat(monitoring): add generated business dashboard(s)` (see
   `CONTRIBUTING.md`'s commit-message convention).
+
+End with the resumption block `project-journal.md` defines, and only once
+step 6's checks have been shown green:
+
+```
+Dashboards written to <paths>. jq empty and step 6's anti-lie expr scan are green.
+Journal: <N> of <M> collectors built. Next planned: `<next>` (<variant>).
+
+Safe to /clear now: everything above is in docs/exporter-journal.md.
+Then run:
+
+    /add-collector <next>
+```
+
+When no unticked collector remains, drop the `Next planned:` clause and the
+`Then run:` lines with it: this command is the end of the lifecycle, and
+there is no next one to name. Print the block; never invoke the command.
+
+With no usable journal (absent, or corrupt and left untouched at its prompt)
+there is no list to read from. Drop the `Journal:` line rather than inventing
+counts. The rest of the block still holds: the checks are green and the
+dashboards are on disk.
