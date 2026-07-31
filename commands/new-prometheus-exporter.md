@@ -278,9 +278,14 @@ exactly where it is, and say so: that file is the user's, and this command
 removes nothing the user owns. Either way the content now lives in the
 committed journal. Retitle the copy's first line from
 `# Exporter design brief: <target>` to `# Exporter journal: <name>`,
-`<name>` being `EXPORTER_NAME`. Only that line changes; the eight section
-headers below it are already the journal's own and are carried across
-unedited.
+`<name>` being `EXPORTER_NAME`. A brief carrying the eight section headers
+needs nothing else: only that line changes. A brief written by an earlier
+release carries fewer, so add each missing header with a placeholder line, in
+`## Format` order, and lift a `Collectors (ordered):` or cardinality-budget
+bullet out of `## Architecture decisions` into the section that owns it now.
+Report both, because copying such a brief across unedited would commit a file
+`## Degradation` calls corrupt, and would leave the planned collectors
+somewhere `/add-collector` never looks.
 
 **3. Complete `## Architecture decisions`.** Step 0 hands the user the final
 call on every line in that section, and step 1 re-confirms the I/O flavor. If
@@ -346,6 +351,20 @@ interactively:
 - `## Cardinality budget`, `## Dashboards`, `## Open questions / assumptions`:
   opened with a placeholder line each.
 - `## Session log`: this scaffold's own dated entry.
+
+**Either way**, brief or no brief, `## Collectors` also gets a ticked box for
+the collector the scaffold itself just built, with the variant it was actually
+wired with:
+
+```
+- [x] `example`  <variant>  built <date>
+```
+
+`docs/metrics.md` documents it as `## ExampleCollector` from the initial commit
+on, so `project-journal.md`'s `## Reconciliation` would add exactly this box on
+the next command's entry anyway. Writing it now keeps the journal true from the
+first commit, instead of opening the next session with a correction on a
+repository where nothing is wrong.
 
 No path through this command ends without a journal.
 
@@ -427,7 +446,7 @@ after that state has been verified.
 
 ```
 Scaffolded <name> at <target-dir>. make build and make check are green.
-Journal: 0 of <N> collectors built. Next planned: `<name>` (<variant>).
+Journal: 1 of <N> collectors built. Next planned: `<name>` (<variant>).
 
 Safe to /clear now: everything above is in docs/exporter-journal.md.
 Then run:
@@ -439,6 +458,9 @@ Print it. Never invoke the command: `/add-collector` carries
 `disable-model-invocation: true`, so only the user can run it, which is why
 the block is copy-pasteable text rather than an action. The argument is read
 from the journal, the first unticked entry under `## Collectors`, with its
-variant, not templated. If the journal lists no planned collector, suggest
+variant, not templated. Both counts are read from that same section rather
+than assumed: on a fresh scaffold the built one is the `example` collector
+step 3c ticked, and `<N>` is the planned list plus it. If the journal lists no
+planned collector, suggest
 `/add-collector <name>` with a name the user must choose, and say plainly that
 this one is a placeholder rather than something read from the journal.

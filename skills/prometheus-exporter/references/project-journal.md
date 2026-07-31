@@ -76,8 +76,13 @@ line matches it. The move to `docs/exporter-journal.md`, and the retitling from
 `# Exporter design brief: <target>` to `# Exporter journal: <name>`, happen
 **after** scaffolding, so `scaffold.sh`'s refusal of a non-empty `--dst` is
 untouched: it still scaffolds into an empty destination and the journal arrives
-afterward. Only the title line changes; the eight section headers under it are
-already the journal's own, and are carried across unedited.
+afterward. Where the brief already carries the eight section headers, only the
+title line changes. A brief written before those headers were the brief's own
+carries fewer, so the move also adds each missing header with a placeholder
+line, in `## Format` order, and lifts a planned-collector or cardinality-budget
+bullet out of `## Architecture decisions` into the section that owns it now:
+carried across unedited, such a brief lands as a file this reference's
+`## Degradation` calls corrupt.
 
 The journal is **committed**. Two reasons, one of them decisive:
 
@@ -190,6 +195,17 @@ record of how the repository was produced, not a live setting to edit.
 `## Session log` is only ever appended to; an entry is never edited or removed,
 for the same reason.
 
+> Reconciliation is the one exception, and it applies to every command.
+> `## Reconciliation`'s corrections copy a fact disk has already proved, so
+> they are not authorship and two commands cannot disagree about them: the
+> value comes from the tree, not from the command's judgement. A command that
+> finds a stale line therefore corrects it wherever it sits, including the
+> namespace under the otherwise-frozen `## Scaffold inputs`, marks it
+> `(reconciled <date>)`, logs it and reports it. Ownership settles who *fills*
+> a section; it never licenses leaving a line disk has falsified. That binds
+> `/generate-dashboard` like the rest, and most of all: it runs last, so a
+> correction it declines to write is one nothing later repairs.
+
 ### Read on entry, write on exit
 
 The protocol is the same in all four commands, and the timing is not
@@ -229,6 +245,16 @@ On entry, every command reconciles:
 | Target model | `internal/instance/` vs `internal/probe/` vs neither | corrected, reported |
 | Namespace | `const namespace = "..."` in `cmd/*/main.go` | corrected, reported |
 | Collectors built | `## <Name>Collector` headers in `docs/metrics.md` | box ticked or unticked, marked `(reconciled <date>)`, reported |
+| A collector with no box at all | a `## <Name>Collector` header no `## Collectors` line names | a box is added, ticked, marked `(reconciled <date>)`, reported |
+
+That last row is the day-one state of every project, not an exotic one. Every
+scaffold ships one collector already built and already documented, which no
+design brief ever planned, so no journal is born carrying a box for it. It is
+also why `## Collectors` is a section the create-offer below **fills from
+disk** rather than placeholders: the `## <Name>Collector` headers state exactly
+which collectors exist, so a repository predating this file recovers all of
+them as ticked boxes, where a placeholder line would strand them (nothing
+reconciles a box that was never written).
 
 **No correction is silent.** Each one is stated in the command's output to the
 user and leaves a `## Session log` line. A journal that asserts a false state is

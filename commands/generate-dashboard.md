@@ -56,9 +56,13 @@ the audiences already recorded under `## Dashboards`, the business-alert
 candidates under `## Architecture decisions`, and `## Cardinality budget`
 seed steps 2, 5 and 6 below instead of asking cold. Reconcile it against
 `docs/metrics.md` first, as that reference describes: the documented metrics
-win over anything the journal claims about which collectors exist. Report
-every correction to the user, but do not write it back: `## Collectors` is
-`/add-collector`'s to complete, not this command's.
+win over anything the journal claims about which collectors exist. Write each
+correction back, marked `(reconciled <date>)`, with one `## Session log` line,
+and report it to the user: `## Section ownership` carves reconciliation out of
+writing only what you own, precisely because this command runs last and a
+correction it declines to write is one nothing later repairs. Filling
+`## Collectors` with entries nobody planned yet stays `/add-collector`'s job;
+bringing an existing box in line with `docs/metrics.md` is not that.
 
 If `docs/metrics.md` contains **no** business metric (only
 self-instrumentation), stop: tell the user to add collectors and document
