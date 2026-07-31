@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.8.0] - 2026-07-31
 
 ### Added
 
@@ -75,6 +75,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reference, which owns the format, the section-ownership table, the
   reconciliation rules, and the resumption block all four commands now
   share.
+- **`/design-exporter` and `/new-prometheus-exporter` no longer rank a
+  database as a data source.** Both gave the preference order as
+  `REST/API > gRPC > database > CLI`, placing it above the CLI last resort,
+  while the ROADMAP's non-goals, `exporter-architecture.md` and `SKILL.md`
+  all call a database-only target an explicit non-goal rather than a
+  deferred feature. Step 0 is where the source is chosen, so the ranking
+  invited a design this plugin then refuses to scaffold, with the refusal
+  landing after the architecture work instead of before it. Both now state
+  the non-goal at the point of choice and redirect to `postgres_exporter` /
+  `mysqld_exporter` for the engine, or the config-driven `sql_exporter` for
+  arbitrary SQL-to-metrics.
+
+### Fixed
+
+- **The generated `SECURITY.md` and `docs/configuration.md` named five of
+  the nine file-backed secrets `prometheus/common` re-reads on every
+  outbound request.** Missing were `username_file`, `credentials_file`,
+  `client_secret_file` and `client_certificate_key_file`; the last two are
+  OAuth2, where `toSecret` yields a `FileSecret`, `FileSecret.Immutable`
+  reports false, and `oauth2RoundTripper.RoundTrip` re-fetches on every
+  request exactly like the rest. This mattered because the `single` target
+  model ships no reload *on the strength of those lists*: an operator
+  reading a short one could conclude a credential needed a restart when it
+  did not. Each site now states the rule once, "every `_file` variant the
+  section accepts", before enumerating.
 
 ### Notes
 
