@@ -50,6 +50,19 @@ ruling.
   dérive une fois de plus, la forme pointeur gagne. Non touchée non plus, la
   condition reste armée.
 
+### Ouvert par le lot lui-même
+
+- **Le `grep -A 2` du filtre côté registre a son pire cas sur la frontière que
+  la règle d'ordre crée.** `@@COLLECTOR_REGISTRY@@` place l'auto-instrumentation
+  en dernier dans le scaffold, et l'étape 5 appende **après le dernier
+  `register(`** : la dernière ligne d'auto-instrumentation est donc toujours
+  immédiatement suivie du premier collecteur ajouté, et une fenêtre de deux
+  lignes lue comme « contient un constructeur » la classerait à tort. Ce n'est
+  pas un défaut aujourd'hui, parce que le décideur en prose (« sur une ligne,
+  retourne une variable déjà construite ») rattrape le cas et prime. Mais la
+  seule instruction mécanique donnée échoue exactement là où l'ordre garanti
+  la met. Une clause de délimitation sur une passe ultérieure.
+
 ## Fermé par `chore/v08-deferred-minors` (2026-07-31)
 
 - **`ROADMAP.md:153`**, l'énoncé au présent du jalon v0.6 : reformulé au passé
