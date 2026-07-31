@@ -205,6 +205,16 @@ negotiable:
   print the resumption block (`## The resumption block`). A journal entry
   written before the gate records an outcome that has not happened yet.
 
+> The two creating commands are exceptions, each on a different half.
+> `/design-exporter` runs no gate, so its resumption block simply omits the
+> gate clause. `/new-prometheus-exporter` has no journal to read on entry,
+> and its only commit is the initial one, so it writes the journal after the
+> scaffold and **before** that commit, leaving the file tracked rather than
+> destroyed by the first `git clean -xdf`. Only its resumption block waits
+> for the gate. Nothing either command writes before its commit records a
+> gate outcome, so the rule's reason still holds where the rule's letter
+> cannot.
+
 ## Reconciliation
 
 Authority is shared but never overlapping. **The disk decides everything it can
