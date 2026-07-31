@@ -81,11 +81,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **What this release proves, and what it does not.** The scaffold-side
   artifacts (`samples/`, the generated `CLAUDE.md`, the `README.md` marker
   block, the two new substitutions) are covered by the six-cell golden
-  matrix, which scaffolds and builds each one. The journal protocol itself,
-  reading on entry, reconciling against the repository, and degrading when
-  the file is absent or unreadable, is command prose: no test in this
-  repository can exercise it, and none is claimed to. It was verified by
-  review against the reference that defines it.
+  matrix, which scaffolds and builds each one; what it asserts about the
+  `README.md` block is that the markers are present, paired, non-empty and
+  under `## Metrics`, never the `/add-collector` regeneration that later
+  rewrites what sits between them. Everything the commands themselves do is
+  prose, not code: the journal protocol (reading on entry, reconciling
+  against the repository, degrading when the file is absent or unreadable),
+  deriving a fixture from `samples/`, and regenerating that collector block
+  from `docs/metrics.md`. No test in this repository can exercise any of it,
+  and none is claimed to. All of it was verified by review against the
+  reference that defines it.
 
 ## [0.7.0] - 2026-07-29
 

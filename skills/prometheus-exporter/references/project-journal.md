@@ -273,8 +273,10 @@ nothing.
 
 ## The resumption block
 
-Every command ends, **after its verification gate is green and never before**,
-with a literal, copy-pasteable block:
+Every command ends, **after its verification gate is green and never before**
+where it has one (`### Read on entry, write on exit` carves out
+`/design-exporter`, the one command that runs no gate), with a literal,
+copy-pasteable block:
 
 ```
 <what this command just did>. <its gate> is green.
@@ -293,9 +295,13 @@ Three things make it work:
   `/new-prometheus-exporter <name>`; `/new-prometheus-exporter` suggests the
   first planned collector; `/add-collector` suggests the next one, and
   `/generate-dashboard` once the list is empty.
-- **The gate is named, and it has already run.** "Safe to `/clear`" is a claim
-  about state on disk, so it is only honest once the state on disk has been
-  verified and written.
+- **The gate is named, and it has already run**, wherever there is one to
+  name. "Safe to `/clear`" is a claim about state on disk, so it is only
+  honest once the state on disk has been verified and written. That binds
+  `/new-prometheus-exporter`, `/add-collector` and `/generate-dashboard`
+  without exception. `/design-exporter` omits the clause rather than
+  inventing a gate to name, for the reason `### Read on entry, write on exit`
+  gives.
 - **Nothing is invoked.** All four commands carry
   `disable-model-invocation: true`: the model cannot trigger them, only the
   user can type them. The block is a suggestion printed as text, which is why
