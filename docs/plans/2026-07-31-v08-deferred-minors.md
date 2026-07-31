@@ -12,9 +12,11 @@ concret, l'étiquette « Move the brief. », le grep `Name: *`, la ligne de 123
 caractères, la clause ambiguë sur `samples/`, `SKILL.md:96`/`:152`, le crédit
 d'anonymisation, les « sections » de `/generate-dashboard`).
 
-La branche `chore/v08-deferred-minors` (2026-07-31) en a fermé six de plus,
-listés en bas. Ce qui reste ouvert tient en trois lignes : une qui a déjà son
-propre prompt, deux parkées avec ruling.
+La branche `chore/v08-deferred-minors` (2026-07-31) en a fermé huit de plus,
+listés en bas, regroupés en sept entrées (la dernière porte les deux écarts
+lettre/esprit, fermés du même côté et du même commit). Ce qui reste ouvert
+tient en trois lignes : une qui a déjà son propre prompt, deux parkées avec
+ruling.
 
 ## Reste ouvert
 
@@ -51,8 +53,13 @@ propre prompt, deux parkées avec ruling.
 ## Fermé par `chore/v08-deferred-minors` (2026-07-31)
 
 - **`ROADMAP.md:153`**, l'énoncé au présent du jalon v0.6 : reformulé au passé
-  (« delivered », dette « paid here »), sur la forme des autres items clos de
-  la liste, sans recompter les références. `f17b427`.
+  (« delivered »), sur la forme des autres items clos de la liste, sans
+  recompter les douze références d'aujourd'hui. `f17b427`, complété par
+  `d52765d` : la première rédaction disait « none of the eleven », ce que la
+  phrase suivante contredisait déjà avant ce lot (v0.5 en avait ajouté deux
+  au passage). `git grep -l multi-instance` par tag donne 2/11 à `v0.5.0`,
+  6/11 à `v0.6.0`, 8/11 à `v0.7.0` : neuf manquaient, et la dette a été payée
+  sur v0.6 **et** v0.7, pas sur v0.6 seule.
 - **`SKILL.md`, ligne d'index de `project-journal.md`** : « Every step: »
   devient « Steps 0, 2, 3, 5: », les quatre étapes dont les commandes touchent
   réellement le journal. La colonne garde sa forme sans revendiquer les étapes
@@ -71,11 +78,24 @@ propre prompt, deux parkées avec ruling.
   et sans excludes global hostile ; la même cellule, non durcie et sous un
   excludes global qui filtre `*.json`, passait de bout en bout (`PASS`).
   `b1d0d6d`.
-- **L'appariement du bloc README de `/add-collector`** : l'invariant positionnel
-  est désormais écrit (la *k*-ième en-tête `## <Name>Collector` répond à la
-  *k*-ième chaîne de registre), avec sa raison d'être (les deux listes ne sont
-  jamais insérées au milieu) et le seul cas qui le casse (longueurs
-  différentes : on s'arrête, on ne réapparie pas). `d325e8f`.
+- **L'appariement du bloc README de `/add-collector`** : écrit en `d325e8f`,
+  **faux à la première rédaction**, corrigé en `a35f0df`. La version livrée
+  filtre les **deux** côtés avant d'apparier. Côté en-têtes, la règle
+  existante (seuls les `## <Name>Collector` comptent). Côté registre, une
+  règle symétrique qui manquait : sur le modèle `single`, l'auto-instrumentation
+  est enregistrée par le même `register(...)`, donc la liste brute rendait deux
+  noms de trop sur *tout* dépôt (`http_client_requests` /
+  `http_client_request_wait` en http, `command_exec` / `command_exec_wait` en
+  cli), ce qui déclenchait en permanence la clause « longueurs différentes » et
+  aurait désactivé la régénération du bloc à chaque exécution. Le filtre porte
+  sur la **forme de la closure** (un collecteur se construit par
+  `collector.New<Name>Collector(...)` ; l'auto-instrumentation renvoie une
+  variable de paquet déjà construite), jamais sur une liste de noms qui
+  dériverait des fragments de wiring. S'ajoute une vérification par paire
+  (en-tête minusculisé sans `Collector` == nom sans underscores), parce que
+  l'invariant est tenu par la commande, pas garanti par les formats : les
+  répertoires de travail du golden le montrent, ils appairent `example` avec
+  `tape`. `a35f0df`.
 - **Les deux écarts lettre/esprit du référentiel**, tous deux résolus côté
   `project-journal.md`, pas côté commandes : la réconciliation devient une
   dérogation de *timing* (elle recopie un état que le disque prouve, donc elle
@@ -85,8 +105,10 @@ propre prompt, deux parkées avec ruling.
   `23066ec`.
 
 Gates de ce lot : `zero-source-grep`, `claude plugin validate`, les trois
-suites `scaffold*_test.sh`, `golden-smoke --all` (six cellules) et le grep
-tirets longs sur `skills/` + `commands/`.
+suites `scaffold*_test.sh`, `golden-smoke --all` (six cellules, toutes vertes)
+et le grep tirets longs sur `skills/` + `commands/`. Le tour de correction
+(`a35f0df`, `d52765d`) ne touche ni `assets/` ni `test/`, donc la matrice ne
+peut rien en observer et n'a pas été rejouée ; les autres gates l'ont été.
 
 ## Ce qu'aucun test ne couvre
 
