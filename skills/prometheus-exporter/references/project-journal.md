@@ -223,13 +223,30 @@ negotiable:
 
 > The two creating commands are exceptions, each on a different half.
 > `/design-exporter` runs no gate, so its resumption block simply omits the
-> gate clause. `/new-prometheus-exporter` has no journal to read on entry,
+> gate clause; the same block also names `./exporter-design-brief.md` where
+> every other command names `docs/exporter-journal.md`, and asks for the brief
+> to be reviewed before clearing rather than calling the clear safe outright.
+> Both deviations follow from `## Lifecycle`: at that point no journal exists
+> under either name, and nothing has verified the file the user is about to
+> clear their context on except their own reading of it.
+> `/new-prometheus-exporter` has no journal to read on entry,
 > and its only commit is the initial one, so it writes the journal after the
 > scaffold and **before** that commit, leaving the file tracked rather than
 > destroyed by the first `git clean -xdf`. Only its resumption block waits
 > for the gate. Nothing either command writes before its commit records a
 > gate outcome, so the rule's reason still holds where the rule's letter
 > cannot.
+
+> Reconciliation is a further exception, on the timing rather than on the
+> authorship (`## Section ownership` carves out the authorship half). A
+> correction copies a state the disk has already proved, so it records no
+> outcome that has not happened yet, which is the entire reason "never before"
+> exists. Corrections are therefore written where they are found, on entry,
+> together with the `## Session log` line naming them: `/add-collector` writes
+> at its first step and `/generate-dashboard` at its own, both long before
+> their gates run. What still waits for the gate is everything a command
+> *authors*: the sections it owns, its own outcome line, and the resumption
+> block.
 
 ## Reconciliation
 
@@ -331,8 +348,8 @@ Three things make it work:
   honest once the state on disk has been verified and written. That binds
   `/new-prometheus-exporter`, `/add-collector` and `/generate-dashboard`
   without exception. `/design-exporter` omits the clause rather than
-  inventing a gate to name, for the reason `### Read on entry, write on exit`
-  gives.
+  inventing a gate to name, and points at the brief rather than at the
+  journal, for the reasons `### Read on entry, write on exit` gives.
 - **Nothing is invoked.** All four commands carry
   `disable-model-invocation: true`: the model cannot trigger them, only the
   user can type them. The block is a suggestion printed as text, which is why
