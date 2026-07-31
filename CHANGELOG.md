@@ -6,6 +6,53 @@ The format is based on [Keep a
 Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-08-01
+
+### Fixed
+
+- **Every command in this plugin's documentation was named without its
+  plugin namespace.** Claude Code invokes a plugin's slash commands as
+  `/prometheus-exporter:add-collector`, never `/add-collector`; the bare
+  form does not resolve, and there is no fallback to it. All 243 mentions
+  across the references, the commands, the skill, the agent, the README,
+  `docs/`, the scaffold templates and this file carried the bare form.
+
+  The reach is what made this worse than a typo. Twenty-one mentions sat in
+  documentation a reader copies from. Fifty more sat in `CHANGELOG.md`,
+  `ROADMAP.md`, `TODO.md` and `SECURITY.md`. A hundred and forty-two sat in
+  taught content, which a model reads and then relays to the user in its own
+  prose, so the plugin was teaching an instruction that fails. The last
+  twenty-seven ship inside every generated exporter, telling a third party's
+  contributors to run something that does not exist for them either.
+
+  No gate could have caught it: `claude plugin validate` checks the
+  manifest, not invocations quoted in prose, and the golden matrix tests the
+  scaffold, not what the documentation claims.
+
+- **Two claims about the project journal in the 0.8.0 entry above.** "All
+  four commands read it on entry" is false for two of them:
+  `/prometheus-exporter:new-prometheus-exporter` has no journal to read on
+  entry, and `/prometheus-exporter:design-exporter` runs before any
+  repository exists. "Eight frozen section headers with one owner each"
+  holds for the section-ownership table's *Created by* column only; two
+  sections are completed by all four commands and one by none. Both errors
+  were found by fact-checking the README against the code, corrected there,
+  and left standing in the file the README had been written from.
+
+### Changed
+
+- **The taught-source leak gate checks a denylist rather than one word**,
+  and no longer excludes `docs/` wholesale, now that `docs/` holds
+  user-facing documentation as well as design history. Public exporter names
+  are explicitly barred from that denylist: they are cited on purpose as
+  ecosystem precedent, and denylisting one would fail the build on a correct
+  citation.
+- **`README.md` is a front page again**, down from 339 lines to 94, with the
+  reference material moved to `docs/`. `docs/install.md` documents something
+  no version of the README did: how to get back off a version pin, which
+  otherwise leaves `/plugin` reporting a long-superseded release as the
+  latest available.
+
 ## [0.8.0] - 2026-07-31
 
 ### Added
