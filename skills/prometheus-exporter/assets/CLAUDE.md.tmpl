@@ -47,10 +47,9 @@ Data", and `samples/README.md`.
 make check
 ```
 
-Runs vet, lint, test, vulnerability scanning, workflow linting, dead-code
-detection and `docs-check`. A container engine is the only requirement; pass
-`NATIVE=1` to run against a host Go toolchain instead. Do not declare work
-finished on a subset of it.
+This is the one command that decides whether a change is finished: do not
+declare work done on a subset of it. `CONTRIBUTING.md` lists what it runs,
+what it requires, and how to run it against a host Go toolchain instead.
 
 ## Resuming after a cleared context
 

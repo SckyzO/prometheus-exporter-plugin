@@ -197,8 +197,8 @@ templates they document:
 | Reference | Covers |
 |---|---|
 | `exporter-architecture.md` | Step 0: source order, the three target models (single/multi/multi-instance), collector decomposition, cardinality budget |
-| `discovery-inputs.md` | Step 0: discovery input taxonomy, preference order, the degradation ladder, per-source extraction |
-| `project-journal.md` | Every step: the journal that survives a cleared context, its format and lifecycle, section ownership, reconciliation against disk, the resumption block |
+| `discovery-inputs.md` | Step 0: discovery input taxonomy, preference order, the degradation ladder, per-source extraction, the brief's `## Provenance` and `## Open questions / assumptions` |
+| `project-journal.md` | Steps 0, 2, 3, 5: the journal that survives a cleared context, its format and lifecycle, section ownership, reconciliation against disk, the resumption block |
 | `prometheus-principles.md` | Step 1: naming, types, labels, OpenMetrics, self-instrumentation |
 | `collector-pattern.md` | Step 3: the mockable I/O boundary, the five-piece collector shape, the test triad |
 | `project-scaffold.md` | Step 2: repository layout, registry wiring, flags, endpoints, signal-aware shutdown |

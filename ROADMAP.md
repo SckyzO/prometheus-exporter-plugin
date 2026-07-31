@@ -149,12 +149,13 @@ it points to.
   an obligation; the harness that would make them testable (a fixture
   repository per historical seam shape, run through the migration and then
   through `make build`) is the prerequisite for reintroducing them.
-- **Teach `multi-instance` in the references.** The target model shipped in
-  v0.5 but appears in none of the eleven reference documents and not in
-  `SKILL.md`'s step 0 walkthrough, so a session that learns from
-  `references/` alone still believes there are two target models. v0.5's
-  per-module credentials work added it in two places as a side effect; the
-  rest is an unpaid documentation debt from the model's own drop.
+- **Teach `multi-instance` in the references, delivered.** The target model
+  shipped in v0.5 but was missing from nine of the eleven reference documents
+  that existed then, and from `SKILL.md`'s step 0 walkthrough, so a session
+  that learned from `references/` alone still believed there were two target
+  models. v0.5's per-module credentials work had added it to the other two as
+  a side effect; the rest was an unpaid documentation debt from the model's
+  own drop, paid off across v0.6 and v0.7.
 - Budget the combinatorial cost in the design rather than discovering it in
   flight. Three target models against two flavors and two collector variants
   multiply both `scaffold.sh` and the `golden-smoke` matrix, now six

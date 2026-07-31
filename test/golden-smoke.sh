@@ -506,14 +506,20 @@ esac
 # credentials, or third-party documentation). Both halves are asserted:
 # a directory that is fully ignored would not exist after a clone, and a
 # directory that is fully tracked would leak.
+#
+# Both halves run with core.excludesFile pinned to /dev/null, so only the
+# scaffolded .gitignore is in force. A runner whose global excludes file
+# happens to match *.json would otherwise pass the "dropped file is ignored"
+# half for the wrong reason, and go on passing it with the rule under test
+# deleted from .gitignore.tmpl, which is how this was confirmed.
 echo "== samples/ survives a clone, its contents do not ($flavor/$forge) =="
 [ -d "$work/samples" ] || die "samples/ missing after scaffold ($flavor/$forge)"
 [ -f "$work/samples/README.md" ] || die "samples/README.md missing after scaffold ($flavor/$forge)"
-if git -C "$work" check-ignore -q samples/README.md; then
+if git -c core.excludesFile=/dev/null -C "$work" check-ignore -q samples/README.md; then
   die "samples/README.md is gitignored; samples/ would not survive a clone ($flavor/$forge)"
 fi
 printf '{"gate": 1}\n' > "$work/samples/_gate-probe.json"
-git -C "$work" check-ignore -q samples/_gate-probe.json \
+git -c core.excludesFile=/dev/null -C "$work" check-ignore -q samples/_gate-probe.json \
   || die "a file dropped in samples/ is NOT gitignored ($flavor/$forge)"
 rm -f "$work/samples/_gate-probe.json"
 
