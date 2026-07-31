@@ -155,6 +155,21 @@ jobs:
       - name: live-probe redaction backbone unit test (no Go, no network)
         run: sh test/probe-target-backbone.sh
 
+  # Counterpart to probe-backbone-test above. golden-smoke exercises the
+  # dashboard BACKBONE (skills/.../scripts/generate-dashboard.sh) against a
+  # freshly scaffolded repo, but nothing invoked this suite, which is the
+  # backbone's own unit tests: the parser, the namespace reader, uid
+  # stability, slug-collision refusals and the zero-metric exit 3. A test
+  # that never runs is not coverage. Needs jq, preinstalled on ubuntu-latest.
+  dashboard-backbone-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: dashboard backbone unit tests (no Go, no network)
+        run: sh test/generate-dashboard-backbone.sh
+
   golden-smoke:
     needs: scaffold-unit-tests
     runs-on: ubuntu-latest

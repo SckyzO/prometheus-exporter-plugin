@@ -88,8 +88,13 @@ Whatever the ladder grounded, and whatever gaps it left, run
 `exporter-architecture.md`'s question flow to fill those gaps and confirm
 (explicitly, with the user, never assumed on their behalf) all six:
 
-1. **Data source**, in preference order: REST/API > gRPC > database > CLI
-   (CLI is the last resort: justify it if chosen).
+1. **Data source**, in preference order: REST/API > gRPC > CLI (CLI is the
+   last resort: justify it if chosen). A database is not a rung on this
+   ladder: a target reachable only through its own database is out of scope
+   for this plugin, a deliberate non-goal rather than a deferred feature.
+   Say so and point at `postgres_exporter` / `mysqld_exporter` for the
+   engine itself, or the config-driven `sql_exporter` for arbitrary
+   SQL-to-metrics, instead of designing a scaffold that will be refused.
 2. **Single-target vs. multi-target vs. multi-instance**: state which of the
    three the real shape is. `single` reports on one fixed target. `multi` lets
    Prometheus pick the target per scrape (`?target=`, the Blackbox pattern).

@@ -41,8 +41,11 @@ for the full method, then confirm the following with the user (don't guess
 on their behalf):
 
 - **Data source and I/O flavor.** Preference order is REST/gRPC-style API >
-  database > CLI (last resort: justify it if chosen, e.g. no API exists).
-  This maps directly to `--flavor http` (the default) or `--flavor cli`.
+  CLI (last resort: justify it if chosen, e.g. no API exists). This maps
+  directly to `--flavor http` (the default) or `--flavor cli`. A target
+  reachable only through its own database is out of scope, a deliberate
+  non-goal: refuse rather than scaffold, and point at `postgres_exporter` /
+  `mysqld_exporter` or the config-driven `sql_exporter` instead.
 - **Single-target vs. multi-target vs. multi-instance.** Maps to
   `--target-model single` (default), `--target-model multi` (one target per
   request via `?target=`), or `--target-model multi-instance` (a fixed list of
