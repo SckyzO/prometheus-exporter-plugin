@@ -77,12 +77,14 @@ this plugin's patterns were derived from. Before every commit, run
 `test/zero-source-grep.sh` (the canonical, runnable implementation of
 this gate) and confirm it passes; this is a hard gate.
 
-The scan excludes `docs/` (the design and planning history of how the
-plugin came to be, never loaded by the plugin at runtime), `.git/` and
-`.superpowers/` (version control and scratch state, not shipped
-artifacts), and `test/` (the harness legitimately contains the detector
-word as its own search pattern, which is why it excludes itself from the
-walk). This repository's own root `.github/` is excluded for the same
+The scan excludes `docs/design/` and `docs/plans/` (the design and planning
+history of how the plugin came to be, never loaded by the plugin at
+runtime), `.git/` and `.superpowers/` (version control and scratch state,
+not shipped artifacts), and `test/` (the harness legitimately contains the
+detector word as its own search pattern, which is why it excludes itself
+from the walk). The rest of `docs/` **is** scanned: it holds the
+user-facing documentation the README links to, which ships as surely as
+anything under `skills/`. This repository's own root `.github/` is excluded for the same
 reason: its CI workflow calls the harness and would otherwise have to
 spell out, in its own YAML, the exact word the harness is checking for.
 That exemption does **not** extend to the taught templates shipped under

@@ -29,9 +29,17 @@ die() {
 
 # SLURM-GREP: this plugin's taught knowledge stands on prometheus.io/Go
 # authority, never on naming the reference project it was derived from —
-# see CLAUDE.md's Zero-source-mention rule. docs/, .git/, .superpowers/, and
-# test/ are excluded from the walk itself (established Task 7 exclude-dir
-# list, unchanged here).
+# see CLAUDE.md's Zero-source-mention rule. .git/, .superpowers/ and test/
+# are excluded from the walk itself.
+#
+# docs/ is NOT excluded wholesale any more. It used to be, back when it held
+# nothing but design and planning history. Now that docs/ also hosts
+# user-facing documentation the README links to, a blanket exclude-dir would
+# blind this gate to shipped prose, which is exactly what it exists to guard.
+# Only docs/design/ and docs/plans/ are exempt, and for the same reason as
+# before: they are the maintainer's own working history, never loaded by the
+# plugin. They are filtered AFTER the scan rather than by --exclude-dir, for
+# the basename reason spelled out below.
 #
 # .github/ is NOT added to that --exclude-dir list, deliberately: GNU
 # grep's --exclude-dir matches by BASENAME ONLY, not by path — proved
@@ -46,19 +54,31 @@ die() {
 # "./" grep emits when searching from ".", so it cannot also match the
 # nested, taught .github/ under skills/ (which always shows as
 # "./skills/...", never "./.github/...").
-echo "== SLURM-GREP (source-project name absent outside docs/test/root-.github) =="
+echo "== SLURM-GREP (source-project name absent outside design/plans, test, root-.github) =="
 rc=0
-hits=$(command grep -rin slurm . --exclude-dir=docs --exclude-dir=.git --exclude-dir=.superpowers --exclude-dir=test 2>&1) || rc=$?
+hits=$(command grep -rin slurm . --exclude-dir=.git --exclude-dir=.superpowers --exclude-dir=test 2>&1) || rc=$?
 case "$rc" in
   1) echo "SLURM-GREP: clean" ;;
   0)
-    filtered=$(printf '%s\n' "$hits" | grep -v '^\./\.github/') || true
+    # .claude/settings.local.json is per-machine Claude Code state that git
+    # ignores; it records the literal commands a contributor approved, so
+    # anyone who ever ran a grep for the detector word has it sitting in
+    # there and would trip this gate locally while CI, on a fresh checkout,
+    # stayed green. Only that one file is filtered, not .claude/ wholesale:
+    # a repository may legitimately TRACK .claude/settings.json (README's
+    # "Sharing with a team"), and that one must keep being scanned.
+    #
+    # Narrow fix. The general problem is that this gate walks the working
+    # tree, ignored files included, rather than what git actually tracks.
+    filtered=$(printf '%s\n' "$hits" \
+      | grep -v -e '^\./\.github/' -e '^\./docs/design/' -e '^\./docs/plans/' \
+                -e '^\./\.claude/settings\.local\.json:') || true
     if [ -n "$filtered" ]; then
-      echo "$prog: error: SLURM-GREP found matches (source-project name leaked outside docs/test/root-.github):" >&2
+      echo "$prog: error: SLURM-GREP found matches (source-project name leaked outside docs/design, docs/plans, test, root-.github):" >&2
       printf '%s\n' "$filtered" >&2
       exit 1
     fi
-    echo "SLURM-GREP: clean (all hits confined to this repo's own root .github/ CI, exempt — see header)"
+    echo "SLURM-GREP: clean (all hits confined to exempt paths: root .github/ CI, docs/design/, docs/plans/ — see header)"
     ;;
   *) die "SLURM-GREP scan itself failed (grep exit $rc): $hits" ;;
 esac
