@@ -73,9 +73,23 @@ actually been run and shown green.
 The taught knowledge and templates stand on official Prometheus authority
 (`prometheus.io`), never on "distilled from <a specific project>". So no
 shipped file, including this one, may name the production reference exporter
-this plugin's patterns were derived from. Before every commit, run
+this plugin's patterns were derived from, nor the concrete systems it
+monitored: those name it just as surely. Before every commit, run
 `test/zero-source-grep.sh` (the canonical, runnable implementation of
 this gate) and confirm it passes; this is a hard gate.
+
+Its SOURCE-GREP half checks a denylist, `SOURCE_TERMS` at the top of the
+script, and `docs/design/re-sync.md` §1 is the authority for what belongs in
+it. A re-sync that derives templates from a new reference adds that
+reference's terms there. A term must be absent from every shipped artifact
+before it is added, and specific enough to survive a case-insensitive
+substring match with no word boundary.
+
+Names of **public** Prometheus exporters (`node_exporter`, `snmp_exporter`,
+`blackbox_exporter`, `ipmi_exporter`, `postgres_exporter`, `sql_exporter`
+and the rest) never go in that denylist. They are cited on purpose as
+ecosystem precedent for conventions this plugin adopts, and denylisting one
+would fail the build on a correct citation.
 
 The scan excludes `docs/design/` and `docs/plans/` (the design and planning
 history of how the plugin came to be, never loaded by the plugin at

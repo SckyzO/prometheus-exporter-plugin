@@ -32,7 +32,7 @@
   Apache-2.0 `LICENSE` keeps its bracketed appendix placeholder unfilled per
   convention, so the handle does not appear there. It must never appear under `skills/`,
   `commands/`, `agents/`, or `assets/` — checked by
-  `test/zero-source-grep.sh`'s HANDLE-GREP (hygiene, non-blocking) — and
+  `test/zero-source-grep.sh`'s HANDLE-GREP (blocking: exit 1 on a match) — and
   templates always attribute the *generated* exporter to `@@OWNER@@`, a
   placeholder for whoever runs `/new-prometheus-exporter`, never to this
   handle.
