@@ -90,9 +90,11 @@ describe this model unless a section says otherwise.
 Its `--config.file`, if used at all, holds only a `flags:` section (rendered
 into kingpin arguments once, before `main` parses them; a running process
 has no mechanism to re-parse a flag) and an `http_client_config:` section
-whose file-backed secrets and TLS material (`password_file`,
-`bearer_token_file`, `ca_file`, `cert_file`, `key_file`) `prometheus/common`
-already re-reads from disk on every outbound request. There is nothing left
+whose file-backed secrets and TLS material `prometheus/common` already
+re-reads from disk on every outbound request, meaning every `_file` variant
+the section accepts: `username_file`, `password_file`, `credentials_file`,
+`bearer_token_file`, `client_secret_file`, `client_certificate_key_file`,
+`ca_file`, `cert_file` and `key_file`. There is nothing left
 for a reload mechanism to apply on this model, so `/new-prometheus-exporter`
 does not ship `internal/reload/` here at all. Rotating an inline (non-`_file`)
 credential on a `single` build still means restarting the process.

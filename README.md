@@ -172,10 +172,12 @@ leaves the running configuration untouched, drives
 A reload applies the shape of the configuration: an instance or a module
 added, removed, re-addressed, re-labelled or re-pointed, plus any secret
 written inline. It is not what rotates a file-backed credential.
-`prometheus/common` already re-reads `password_file`, `bearer_token_file`,
-`ca_file`, `cert_file` and `key_file` from disk on every outbound request,
-with no reload involved. That is also why a `single` build ships no reload
-at all: its documentation points at those `_file` variants instead.
+`prometheus/common` already re-reads every `_file` variant the section
+accepts, `password_file` and `ca_file` among them, from disk on every
+outbound request, with no reload involved. The generated
+`docs/configuration.md` names all nine. That is also why a `single` build
+ships no reload at all:
+its documentation points at those `_file` variants instead.
 
 Two changes are refused rather than half-applied:
 
