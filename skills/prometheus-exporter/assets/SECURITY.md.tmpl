@@ -50,14 +50,14 @@ exporter reads nothing from disk. If you do use it, its `http_client_config:`
 section is the one place in a generated repository that can hold credentials,
 so treat that file as a secret.
 
-- **Prefer the `_file` variants to inline values.** `username_file`,
-  `password_file`, `credentials_file`, `bearer_token_file`,
-  `client_secret_file`, `client_certificate_key_file`, `ca_file`,
-  `cert_file` and `key_file` keep the value in its own file, which you can
-  permission and rotate separately, and keep it out of the configuration you
-  might paste into an issue. `username`, `password`, `credentials`,
-  `bearer_token`, `client_secret`, `client_certificate_key` and `key` accept
-  the value inline; that is supported, not recommended.
+- **Prefer the `_file` variants to inline values.** `password_file`,
+  `credentials_file`, `bearer_token_file`, `client_secret_file`,
+  `client_certificate_key_file`, `ca_file`, `cert_file` and `key_file` keep
+  the secret in its own file, which you can permission and rotate
+  separately, and keep it out of the configuration you might paste into an
+  issue. `password`, `credentials`, `bearer_token`, `client_secret`,
+  `client_certificate_key` and `key` accept the value inline; that is
+  supported, not recommended.
 - **Restrict the file's permissions.** `0600` owned by the user running the
   exporter is enough, whether it is read once at startup only (a
   single-target build, or `multi`/`multi-instance` before their first
