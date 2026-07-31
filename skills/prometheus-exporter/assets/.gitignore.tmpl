@@ -18,4 +18,13 @@
 coverage.*
 *.test
 
+# Raw material gathered from the monitored target: captured output and the
+# target's own API documentation. Ignored because it is NOT anonymized and
+# may carry real hostnames, tenants or credentials, and because third-party
+# documentation carries redistribution terms this repository does not decide.
+# The README is kept tracked so the directory survives a clone: git does not
+# track empty directories. See samples/README.md.
+/samples/*
+!/samples/README.md
+
 .DS_Store

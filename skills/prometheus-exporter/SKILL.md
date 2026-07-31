@@ -8,7 +8,7 @@ this plugin: an opinionated, end-to-end path from an architecture decision
 to a releasable, documented, monitored repository. It is a router: the
 reasoning behind each step lives in the reference files under
 `references/`; open the one a step points to before acting on it, rather
-than trying to hold all eleven in context at once.
+than trying to hold all twelve in context at once.
 
 **Scope**: Go exporters only. The I/O flavor is `http` (default) or `cli`:
 the only two this plugin ships, ever; database targets are out of scope
@@ -93,16 +93,22 @@ the layout it would otherwise produce.
 
 ### 3. Per-collector loop
 
-Add each collector from the step 0 list one at a time with
+Add each collector still unticked under the journal's `## Collectors` in
+`docs/exporter-journal.md`, or, in a repository predating it, from the step 0
+list, one at a time with
 `/add-collector <name>`: a `Data`/fetch piece that does I/O and nothing
 else, a pure `Parse` function that does no I/O, and the full test triad
 (parser, `_Collect`, `_Describe`, `_ErrorHandling`) before `Collect` is
 wired into the registry. On error, log and return zero metrics, never a
 partial metric. On a healthy-but-empty scrape, still emit every metric with
 zero *values*, never zero metrics, which reads as a failed scrape to the
-shared `StatusTracker`.
+shared `StatusTracker`. Every command in this workflow reads
+`docs/exporter-journal.md` on entry and completes it on exit, so the remaining
+list, the cardinality budget and the shared label vocabulary live on disk
+rather than in the context window: `/clear` between two collectors is the
+recommended move, not a destructive one.
 
-→ `references/collector-pattern.md`
+→ `references/collector-pattern.md`, `references/project-journal.md`
 
 ### 4. Harden
 
@@ -149,8 +155,10 @@ from, never a dependency it requires.
       against `prometheus.io` via context7.
 - [ ] **2. Scaffold**: `/new-prometheus-exporter <name>` run; repository
       builds and passes its own gate.
-- [ ] **3. Collectors**: `/add-collector <name>` run once per collector in
-      the list; test triad green each time.
+- [ ] **3. Collectors**: `/add-collector <name>` run once per collector left
+      unticked under the journal's `## Collectors` in
+      `docs/exporter-journal.md`, or, in a repository predating it, in the
+      step 0 list; test triad green each time, `/clear` safe between two.
 - [ ] **4. Harden**: `make check` green; `make docs-check` green.
 - [ ] **5. Release & observability**: GoReleaser configured; Definition of
       Done met; `monitoring/` (health alerts + dashboard) in place.
@@ -183,13 +191,14 @@ time, not just once at project start.
 
 ## Reference index
 
-All eleven reference files live under `references/`, alongside the
+All twelve reference files live under `references/`, alongside the
 templates they document:
 
 | Reference | Covers |
 |---|---|
 | `exporter-architecture.md` | Step 0: source order, the three target models (single/multi/multi-instance), collector decomposition, cardinality budget |
-| `discovery-inputs.md` | Step 0: discovery input taxonomy, preference order, the degradation ladder, the architecture-brief format |
+| `discovery-inputs.md` | Step 0: discovery input taxonomy, preference order, the degradation ladder, per-source extraction |
+| `project-journal.md` | Every step: the journal that survives a cleared context, its format and lifecycle, section ownership, reconciliation against disk, the resumption block |
 | `prometheus-principles.md` | Step 1: naming, types, labels, OpenMetrics, self-instrumentation |
 | `collector-pattern.md` | Step 3: the mockable I/O boundary, the five-piece collector shape, the test triad |
 | `project-scaffold.md` | Step 2: repository layout, registry wiring, flags, endpoints, signal-aware shutdown |

@@ -145,51 +145,26 @@ back into this reference or into a shipped template.
 
 The ladder's output is a single markdown file, `./exporter-design-brief.md`
 by default in the working directory (overridable with an explicit path).
-It is consumed by the **model** executing `/new-prometheus-exporter`'s
-prose (never parsed by `scaffold.sh`, which stays a plain `sed`
-substitutor), so its format optimizes for human review and model
-comprehension, not machine parsing. Identity fields (`MODULE_PATH`,
-`OWNER`, `LICENSE`) are deliberately absent: they belong to whoever is
-scaffolding, not to the target being discovered, and
-`/new-prometheus-exporter` always asks for them whether or not a brief is
-present. The exact format:
+Identity fields (`MODULE_PATH`, `OWNER`, `LICENSE`) are deliberately absent
+from it: they belong to whoever is scaffolding, not to the target being
+discovered, and `/new-prometheus-exporter` always asks for them whether or
+not a brief is present.
 
-```markdown
-# Exporter design brief: <target>
+Two of the brief's sections are the ladder's own output, and this reference
+is where their content is decided:
 
-## Provenance
-- Grounded by: <rung(s) actually used, e.g. "OpenAPI spec ./openapi.yaml,
-  corroborated by live probe of http://localhost:9100/metrics">
-- Skipped: <rungs skipped and why, e.g. "context7: no entry for <target>;
-  live probe: no running instance offered">
-- Confidence: <high | medium | low>
+- `## Provenance` is the ladder's audit trail: which rung(s) actually
+  grounded the design, which were skipped and why, the resulting confidence,
+  and a `Source material:` entry naming the paths or URLs the walk was given
+  (or "none offered"), so a later session can reread the same material
+  instead of re-soliciting the target for it.
+- `## Open questions / assumptions` is where a rung that came back ambiguous
+  (a spec silent on auth, a doc page that didn't say how big a collection
+  gets) is flagged for the user instead of quietly assumed.
 
-## Architecture decisions
-- Data source: <REST API | gRPC | CLI>, <base URL / command>
-- I/O flavor: <http | cli>
-- Target model: <single | multi | multi-instance>
-- Collectors (ordered):
-  1. `<name>`, <resource>, endpoint `<path>`, <one line>
-  2. ...
-- Cardinality budget (per collector): labels, worst-case series, reduction flag
-- Business-alert candidates: per collector, one line each
-
-## Scaffold inputs
-- EXPORTER_NAME: <name>
-- NAMESPACE: <suggested>
-- DATA_SOURCE: <url or command>
-- DATA_SOURCE_PATH: <first collector endpoint, or "unused" for CLI>
-- DEFAULT_PORT: <port>
-
-## Open questions / assumptions
-- <anything discovery could not resolve, flagged for the user>
-```
-
-Every section maps to something the ladder produced or a gap it left open:
-`## Provenance` is the ladder's own audit trail; `## Architecture decisions`
-is `exporter-architecture.md`'s output items in brief form;
-`## Scaffold inputs` is exactly what `/new-prometheus-exporter` step 1 asks
-for, minus identity; and `## Open questions / assumptions` is where a rung
-that came back ambiguous (a spec silent on auth, a doc page that didn't say
-how big a collection gets) is flagged for the user instead of quietly
-assumed.
+The brief's **format** (its full section list, the frozen headers, and what
+happens to the file after scaffolding, when it becomes the project journal
+at `docs/exporter-journal.md`) is defined once in
+`project-journal.md`. Read that file before writing a brief, and do not
+restate its format here: two files describing one artifact diverge, and the
+divergence is silent.

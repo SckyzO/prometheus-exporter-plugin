@@ -193,6 +193,30 @@ from real code, not substituted from a template:
 | `EXPORTER_NAME` | The single subdirectory name under `cmd/` |
 | (http only) the existing base-URL default | Any existing `--collector.<x>.target` flag's `.Default("<literal>")` in `cmd/*/main.go`: the new collector's own target flag should default to this same value unless the user says this collector really talks to a different base URL |
 
+### The project journal
+
+Read `docs/exporter-journal.md` if it exists, following
+`${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/references/project-journal.md`.
+That reference owns the format, the section ownership, and the reconciliation
+and degradation rules. All this step adds is where each disk truth it asks for
+has already been read in this command:
+
+| Journal claim | Beaten by |
+|---|---|
+| `I/O flavor` | the flavor detection in step 0 |
+| `Target model` | the target-model detection in `## Multi-target scaffolds` |
+| `Namespace` | `const namespace` in `cmd/*/main.go`, read just above |
+| A `## Collectors` box | the `## <Name>Collector` headers in `docs/metrics.md` |
+
+Correct the file, mark each corrected line `(reconciled <date>)`, add one
+`## Session log` line, and **tell the user what you corrected and why**. This
+is the ordinary case, not an error: a collector built by hand, an interrupted
+run, a colleague who pushed.
+
+**Absent or corrupt**: apply the degradation rules in `project-journal.md`.
+Continue this command to the end either way. Never refuse: a repository
+scaffolded before the journal existed has none, and must keep working.
+
 ## 2. Collect the new collector's identity
 
 **Name.** Use $ARGUMENTS as the candidate if given, otherwise ask. Validate
@@ -225,9 +249,8 @@ which applies to this collector before going further:
   that it should refresh on a fixed background interval instead of
   synchronously on every scrape?" A "yes" selects the background variant; a
   "no", or no clear signal, selects the synchronous variant (the default).
-- If the design brief's `## Architecture decisions` already flagged this
-  collector as background-refresh candidate (see `/design-exporter`'s own
-  probe), read that back to the user for confirmation rather than asking
+- If the journal's `## Collectors` already lists this collector with a
+  variant, read that back to the user for confirmation rather than asking
   from scratch.
 
 **Idempotent refusal.** Before writing anything, check:
@@ -278,6 +301,19 @@ Remind the user (and yourself, when writing step 3's code):
   queue can legitimately be empty"). This decides whether you need an
   always-emitted summary gauge alongside a per-item one. See step 3's
   collector-authoring rule.
+
+**Apply the shared label vocabulary.** If the journal's
+`## Architecture decisions` carries a `Shared label vocabulary:` line, the
+label keys chosen here must come from it wherever the concept matches. If
+this collector genuinely needs a new label, add it to that line and say so.
+Do not invent a spelling that differs from an existing one by an underscore
+or a suffix: `pool` and `pool_name` cannot be joined in any query, and
+nothing on disk states which one is the rule.
+
+**Check the planned budget.** If the journal's `## Cardinality budget` carries
+a line for this collector, read it back: labels, worst-case series, any
+planned reduction flag. Ask whether the metrics just described still fit. If
+they do not, resolve it here, before writing code, and record what changed.
 
 ## 3. Materialize the collector file
 
@@ -447,6 +483,34 @@ template's "2":
 Add a `testdata/<name>.{json,txt}` fixture (http: JSON matching your struct;
 cli: whatever `parse<Name>` expects) with realistic, anonymized sample data
 (see this repo's own `CONTRIBUTING.md`, "Test Data").
+
+**Prefer deriving it from `samples/`.** If `samples/` exists and holds
+material covering this collector's endpoint or command, build the fixture
+from that instead of inventing one:
+
+1. Find the file. Match on the endpoint path or command recorded in step 2.
+   If several could match, show the candidates and ask; never guess.
+2. **Trim** it to the shape `parse<Name>` actually reads. A capture commonly
+   covers several resources; the fixture covers one.
+3. **Anonymize** it per
+   `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/references/collector-pattern.md`'s
+   Fixtures rules and this repo's own `CONTRIBUTING.md`, which own the
+   substitutions between them: real hostnames and endpoints become
+   `host1`/`example.internal`, usernames become `user1`/`alice`/`bob`,
+   account or tenant names become `team_a`/`org_b`, and anything else
+   identifying gets a placeholder that preserves shape (field count, rough
+   magnitude) without preserving content. Never commit a fixture copy-pasted
+   straight from a production system, and a `samples/` file is exactly that:
+   deriving from one is recommended, committing one unchanged is not.
+4. **State what you anonymized**, field by field, in your reply. The user is
+   the only one who can tell you that something you left alone was actually
+   sensitive.
+5. **Leave the original in `samples/`.** Never move or delete it: one capture
+   feeds several collectors, and a later session should not have to go back
+   to the live target.
+
+If `samples/` is absent or covers nothing relevant, say so in one line and
+write the fixture as before. This is a shortcut, never a requirement.
 
 ## 5. Register the collector
 
@@ -771,6 +835,61 @@ add `<name>` to `docs/configuration.md`'s "Available collectors" table and,
 if you added a `--collector.<name>.*` flag, its own flags table too. This
 keeps that reference from going stale.
 
+### Regenerate the README's collector block
+
+`README.md` carries a generated block:
+
+```
+<!-- BEGIN GENERATED COLLECTORS -->
+<!-- Regenerated from docs/metrics.md. Edits inside this block are overwritten. -->
+- [`example`](docs/metrics.md#examplecollector)
+<!-- END GENERATED COLLECTORS -->
+```
+
+Replace **everything between the two markers** with one line per
+`## <Name>Collector` header now present in `docs/metrics.md`, in the order
+they appear:
+
+```
+- [`<name>`](docs/metrics.md#<anchor>)
+```
+
+`<name>` is the **registered collector name**, read from `cmd/*/main.go`:
+`register("<name>"` on the single target model, `Name: *"<name>"` on either
+multi model, the same two greps step 2's idempotent refusal already uses.
+Keep that ` *` in the second one: `gofmt` aligns the `multi-instance` wiring's
+struct fields, so a literal single space matches `multi` but not
+`multi-instance`.
+Never recover it by inverting the header's PascalCase, which cannot tell
+`job_queue` from `jobqueue`: because this block is regenerated in full on
+every run, a guess silently rewrites a correct line the next time a collector
+is added. `docs/metrics.md`'s own `Defined in` line is not a source either;
+the bundled first collector's section names `internal/collector/collector.go`,
+not its collector name.
+
+Only headers ending in `Collector` are collectors. `## Self-instrumentation`,
+and the multi-target and configuration-reload sections that may sit below it,
+are not, and never appear in this list.
+
+The anchor is the GitHub-flavored slug of the `## <Name>Collector` header
+itself, never of `<name>`: lowercase it and drop spaces and punctuation.
+`## PoolsCollector` becomes `#poolscollector`, and `## JobQueueCollector`
+becomes `#jobqueuecollector`. Mind the underscore: a collector named
+`job_queue` has a header spelled `## JobQueueCollector` with no underscore in
+it, so its anchor has none either, while its link text keeps the underscore.
+
+Keep the second comment line: it is what tells the next reader the block is
+not theirs to edit. Regenerate in full; never append. The block is a
+projection of a file `make docs-check` already locks, which is what stops it
+drifting and lets it repair itself if someone edits it by hand.
+
+**If either marker is missing**, skip this silently and change nothing. A
+repository scaffolded before the markers existed, or an owner who removed
+them, is not an error. Do not inject them.
+
+Touch nothing else in `README.md`. Nothing else in it goes stale when a
+collector is added.
+
 ## 7. Propose a business alert
 
 Open `monitoring/prometheus/alerts.yml`. Insert a new, real (uncommented)
@@ -839,12 +958,81 @@ and the full `make check` (vet + lint + test + vuln + actionlint + zizmor +
 `deadcode` + docs-check) are worth running too: `deadcode` in particular
 would catch a new collector file that never made it into step 5's registry.
 
+## 8b. Complete the journal
+
+Only once `make test` and `make docs-check` have both printed green in step 8.
+Never before: a journal that records a collector the build rejects is exactly
+the lie this file exists to prevent.
+
+If `docs/exporter-journal.md` is absent, offer to create it now, per
+`project-journal.md`'s degradation rules, writing all eight headers from its
+`## Format` with a placeholder line under every section this step cannot fill
+yet (its `## Section ownership` rule), then continue. A file holding only the
+three sections below would be missing headers, which is exactly what
+`## Degradation` calls corrupt, so the next command would open with a
+rebuild-or-leave prompt on a perfectly healthy repository. If the journal is
+already corrupt, ask before writing anything.
+
+Three edits:
+
+1. **Tick the collector** under `## Collectors`, appending the date:
+
+   ```
+   - [x] `<name>`  <variant>  built <date>
+   ```
+
+   If it was not on the list at all (a collector nobody planned), add it,
+   already ticked, and say so.
+
+2. **Record the observed cardinality** under `## Cardinality budget`, next to
+   the planned figure rather than replacing it. The gap between intent and
+   observation is the interesting part:
+
+   ```
+   - `<name>`: labels <list>; worst case ~<N> series; observed <N>
+   ```
+
+   Count from the fixture: one series per fixed-shape metric, plus one per
+   label combination the variable-label metrics actually emit. That is the
+   same count step 4's `GatherAndCount` assertion already uses.
+
+   If no planned line exists for this collector (the unplanned case item 1
+   admits), write `worst case unplanned` in place of the figure. Never
+   back-fill it from the observation: that would manufacture an intention
+   nobody had, and the gap this line exists to show would read as zero.
+
+3. **Append one `## Session log` line**, dated, naming the collector, its
+   variant, and where the fixture came from.
+
 ## 9. What's next
 
 - Run the built binary against the real target and confirm the new metric(s)
   with `curl -s http://localhost:<port>/metrics | grep <metric_name>` (this
   repo's own `CONTRIBUTING.md` Definition of Done, steps 5-8).
-- Repeat this whole command, one collector at a time, for the rest of the
-  architecture phase's collector list.
+- Read the remaining unticked entries from the journal's `## Collectors` and
+  name the next one explicitly. Do not say "repeat for the rest of the list":
+  the point of the journal is that the list is on disk and can be named.
 - Commit with `feat(collector): add <name> collector` (see `CONTRIBUTING.md`'s
   commit-message convention).
+
+End with the resumption block `project-journal.md` defines:
+
+```
+Collector `<name>` added. make test and make docs-check are green.
+Journal: <N> of <M> collectors built. Next planned: `<next>` (<variant>).
+
+Safe to /clear now: everything above is in docs/exporter-journal.md.
+Then run:
+
+    /add-collector <next>
+```
+
+When no unticked collector remains, suggest `/generate-dashboard` instead.
+Print the block; never invoke the command.
+
+With no usable journal (absent and step 8b's offer declined, or corrupt and
+left untouched at its prompt) there is no list to read from. Drop the
+`Journal:` line rather than inventing counts, suggest `/add-collector <name>`
+with a name the user must choose, and say plainly that this one is a
+placeholder rather than something read from the journal. The rest of the
+block still holds: the gate is green and the work is on disk.

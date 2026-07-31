@@ -500,6 +500,66 @@ case "$grep_rc" in
   *) die "master-branch scan of $release_doc failed (grep exit $grep_rc): $hits" ;;
 esac
 
+# samples/ holds raw target output and the target's own API documentation.
+# It must survive a clone (so its README is tracked) while its contents never
+# reach git (they are not anonymized and may carry hostnames, tenants,
+# credentials, or third-party documentation). Both halves are asserted:
+# a directory that is fully ignored would not exist after a clone, and a
+# directory that is fully tracked would leak.
+echo "== samples/ survives a clone, its contents do not ($flavor/$forge) =="
+[ -d "$work/samples" ] || die "samples/ missing after scaffold ($flavor/$forge)"
+[ -f "$work/samples/README.md" ] || die "samples/README.md missing after scaffold ($flavor/$forge)"
+if git -C "$work" check-ignore -q samples/README.md; then
+  die "samples/README.md is gitignored; samples/ would not survive a clone ($flavor/$forge)"
+fi
+printf '{"gate": 1}\n' > "$work/samples/_gate-probe.json"
+git -C "$work" check-ignore -q samples/_gate-probe.json \
+  || die "a file dropped in samples/ is NOT gitignored ($flavor/$forge)"
+rm -f "$work/samples/_gate-probe.json"
+
+# CLAUDE.md states this repository's invariants. The generic no-residual-
+# sentinel scan would catch an entirely unsubstituted @@TARGET_MODEL@@, but
+# not a template that hardcodes "single" in every cell, which is the failure
+# this assertion exists for.
+echo "== CLAUDE.md states this cell's real target model and flavor ($flavor/$forge) =="
+claude_md="$work/CLAUDE.md"
+[ -f "$claude_md" ] || die "CLAUDE.md missing after scaffold ($flavor/$forge)"
+grep -q "^| Target model | \`$target_model\` |$" "$claude_md" \
+  || die "CLAUDE.md does not state target model '$target_model' ($flavor/$forge): $(grep -n 'Target model' "$claude_md" 2>/dev/null || echo '<no Target model row>')"
+grep -q "^| I/O flavor | \`$flavor\` |$" "$claude_md" \
+  || die "CLAUDE.md does not state I/O flavor '$flavor' ($flavor/$forge): $(grep -n 'I/O flavor' "$claude_md" 2>/dev/null || echo '<no I/O flavor row>')"
+
+# The README carries a generated collector list between two markers.
+# /add-collector regenerates everything between them from docs/metrics.md.
+# Assert the markers exist exactly once each, in the right order, and that
+# the block is not empty on a fresh scaffold.
+echo "== README carries the generated-collectors markers, paired and ordered ($flavor/$forge) =="
+readme="$work/README.md"
+[ -f "$readme" ] || die "README.md missing after scaffold ($flavor/$forge)"
+n_begin=$(grep -c '^<!-- BEGIN GENERATED COLLECTORS -->$' "$readme" || true)
+n_end=$(grep -c '^<!-- END GENERATED COLLECTORS -->$' "$readme" || true)
+[ "$n_begin" = 1 ] || die "expected exactly 1 BEGIN GENERATED COLLECTORS marker in README.md, found $n_begin ($flavor/$forge)"
+[ "$n_end" = 1 ] || die "expected exactly 1 END GENERATED COLLECTORS marker in README.md, found $n_end ($flavor/$forge)"
+l_begin=$(grep -n '^<!-- BEGIN GENERATED COLLECTORS -->$' "$readme" | cut -d: -f1)
+l_end=$(grep -n '^<!-- END GENERATED COLLECTORS -->$' "$readme" | cut -d: -f1)
+[ "$l_begin" -lt "$l_end" ] || die "README.md collector markers out of order (BEGIN line $l_begin, END line $l_end) ($flavor/$forge)"
+# The listing must sit strictly between the markers, not merely somewhere in
+# the file: extract only that span and assert against the extract, and treat
+# an empty (or adjacent-markers) span as a failure rather than an empty grep
+# that would silently pass.
+n_between=$((l_end - l_begin - 1))
+[ "$n_between" -gt 0 ] \
+  || die "README.md generated collector block is empty (BEGIN line $l_begin, END line $l_end) ($flavor/$forge)"
+between=$(sed -n "$((l_begin + 1)),$((l_end - 1))p" "$readme")
+echo "$between" | grep -q '^- \[`example`\](docs/metrics.md#examplecollector)$' \
+  || die "README.md generated block does not list the bundled example collector between the markers ($flavor/$forge)"
+# The block must live under the Metrics section, not merely exist somewhere
+# in the README: the nearest preceding heading above BEGIN must be the exact
+# '## Metrics' heading.
+section_heading=$(sed -n "1,${l_begin}p" "$readme" | grep '^## ' | tail -1)
+[ "$section_heading" = "## Metrics" ] \
+  || die "README.md generated collector block is not under '## Metrics' (nearest preceding heading: '${section_heading:-<none>}') ($flavor/$forge)"
+
 # .github/workflows/dev-release.yml only exists for --forge github (asserted
 # above); when present, its push trigger must include `main` so a freshly
 # scaffolded repo using the modern default branch name still gets a dev

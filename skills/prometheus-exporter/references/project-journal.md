@@ -1,0 +1,344 @@
+# The project journal: format, ownership, reconciliation, and the resumption block
+
+Building an exporter is not one session. A target with a dozen collectors
+takes several, and between two of them a context window is cleared or
+compacted. Exactly one hand-off across that boundary is durable today:
+`/design-exporter` writes an architecture brief and `/new-prometheus-exporter`
+reads it. Everything decided after that (which collectors are left, in what
+order, which need the background variant, what the cardinality budget was
+meant to be, which label name the whole exporter agreed on) lives only in the
+conversation, and dies with it, while the repository sits right there on disk.
+
+This reference defines the one file that closes that gap, and the protocol the
+four commands (`/design-exporter`, `/new-prometheus-exporter`,
+`/add-collector`, `/generate-dashboard`) follow around it. Each of them points
+here rather than restating any of it.
+
+Everything below is `[G]`: it holds for any exporter, whatever it monitors. The
+concrete values a real journal carries (a target's endpoints, its label names,
+its budget) are `[S]` and live only in that project's own journal, never folded
+back into this reference or into a shipped template.
+
+## What the journal is for
+
+The journal is the durable state the four commands hand to each other. One
+rule fixes its scope, and it is the rule to apply whenever a new line is
+proposed for it:
+
+> **The journal holds only what the repository cannot state about itself.**
+> Anything derivable from disk is read from disk.
+
+A generated exporter already carries a great deal of durable state, and one
+command already lives off it: `/generate-dashboard` runs its entire design
+dialogue out of `docs/metrics.md`, which `make docs-check` keeps truthful
+against the registered descriptors. That precedent decides the split. On-disk
+state verified by a gate beats a model-written summary of it, so the journal
+never restates the flavor, the target model, the namespace, the collectors
+already built, their metrics, types and labels, the alerts already proposed,
+or the configuration surface already demonstrated. It reads them (see
+`## Reconciliation`).
+
+What has no home on disk, and therefore belongs here:
+
+- collectors **planned but not yet built**, and in what order;
+- the cardinality budget as an **intention** (worst-case series, reduction
+  flags) rather than an observation;
+- the **credential convention** (`a`/`b`/`c`) and the **concurrency ceiling**,
+  both decided at design time and otherwise abandoned at scaffold time;
+- which planned collectors need the **background** variant;
+- the **naming convention**: the metric-name shape, and the shared label
+  vocabulary every collector must reuse;
+- the **provenance** of the design, and the open questions discovery left;
+- **why** any of the above was decided.
+
+That list is the journal's scope, and nothing else. A line that duplicates
+something a gate already verifies is not extra safety: it is a second copy
+free to drift, and the drift is silent.
+
+## Lifecycle
+
+One artifact, two names, because before the repository exists it genuinely is
+only a brief.
+
+```
+/design-exporter          ->  ./exporter-design-brief.md   (cwd, name unchanged)
+/new-prometheus-exporter  ->  ./<name>/                    (scaffold, --dst still empty)
+                          ->  docs/exporter-journal.md     (moved, retitled)
+/add-collector            ->  docs/exporter-journal.md     (read, reconciled, appended)
+/generate-dashboard       ->  docs/exporter-journal.md     (read, appended)
+```
+
+The step-0 name stays `./exporter-design-brief.md`, in the working directory,
+so a brief written before the journal existed is still found and consumed. Its
+title line at that stage is `# Exporter design brief: <target>`, and that is
+the string the move looks for: the file to be relocated is the one whose first
+line matches it. The move to `docs/exporter-journal.md`, and the retitling from
+`# Exporter design brief: <target>` to `# Exporter journal: <name>`, happen
+**after** scaffolding, so `scaffold.sh`'s refusal of a non-empty `--dst` is
+untouched: it still scaffolds into an empty destination and the journal arrives
+afterward. Where the brief already carries the eight section headers, only the
+title line changes. A brief written before those headers were the brief's own
+carries fewer, so the move also adds each missing header with a placeholder
+line, in `## Format` order, and lifts a planned-collector or cardinality-budget
+bullet out of `## Architecture decisions` into the section that owns it now:
+carried across unedited, such a brief lands as a file this reference's
+`## Degradation` calls corrupt.
+
+The journal is **committed**. Two reasons, one of them decisive:
+
+- An untracked file is destroyed by `git clean -xdf`, a routine command. A
+  journal that vanishes silently at the first cleanup is worse than no journal,
+  because by the time it vanishes it is trusted.
+- A generated repository's `docs/` already hosts builder-facing material
+  (`development.md`, `release-process.md`, `validation-checklist.md`) next to
+  user-facing material (`configuration.md`, `metrics.md`). The journal is not
+  an intruder there.
+
+The cost is stated rather than hidden: a generated exporter then publishes an
+artifact that names this plugin's commands, in its own public repository.
+
+## Format
+
+Markdown, with eight frozen section headers, verbatim, in this order. The
+position is the one the architecture brief has always had and the journal
+inherits: it is consumed by the **model** executing a command's prose, never
+parsed by a script (`scaffold.sh` stays a plain `sed` substitutor), so the
+format optimizes for human review and model comprehension rather than machine
+parsing. There is no parser to write, no schema to version, and a partially
+damaged file leaves the rest usable.
+
+```markdown
+# Exporter journal: <name>
+
+## Provenance
+- Grounded by: <rung(s) actually used>
+- Skipped: <rungs skipped, and why>
+- Confidence: <high | medium | low>
+- Source material: <paths/URLs recorded at step 0, or "none offered">
+
+## Architecture decisions
+- Data source: <REST API | gRPC | CLI>, <base URL / command>
+- I/O flavor: <http | cli>
+- Target model: <single | multi | multi-instance>
+- Credential convention: <a | b | c>            (multi only)
+- Concurrency ceiling: <unlimited | N>          (single, multi-instance)
+- Metric name shape: <namespace>_<subsystem>_<name>_<unit>
+- Shared label vocabulary: <label>, <label>, <label>
+- Business-alert candidates: per collector, one line each
+
+## Scaffold inputs
+- EXPORTER_NAME / NAMESPACE / DATA_SOURCE / DATA_SOURCE_PATH / DEFAULT_PORT
+- Selectors actually passed: --flavor, --target-model, --forge, --instance-label
+
+## Collectors
+- [x] `<name>`  sync        built <date>
+- [ ] `<name>`  background  endpoint <path>
+
+## Cardinality budget
+- `<name>`: labels <list>; worst case ~<N> series; observed <N>
+
+## Dashboards
+- <audience>, <RED | USE> because <reason>, <decomposition>, files: <paths>
+
+## Session log
+- <date> <command> <name>: <one line>
+
+## Open questions / assumptions
+- <anything discovery could not resolve>
+```
+
+`Shared label vocabulary` is the highest-value line in the file. If collector 1
+emits `pool` and collector 7 emits `pool_name`, no dashboard joins them, and
+nothing on disk states which of the two is the rule: existing names can be
+*observed*, the convention cannot be *derived*. The same holds for the
+metric-name shape, one line above it.
+
+Every `<...>` above is a hole, filled per project. The headers are not: a
+command looking for `## Cardinality budget` must find that exact string, which
+is also what makes the corruption test of `## Degradation` checkable.
+
+## Section ownership
+
+| Section | Created by | Completed by | Regime |
+|---|---|---|---|
+| `## Provenance` | `/design-exporter` | nobody | frozen on write |
+| `## Architecture decisions` | `/design-exporter` | `/new-prometheus-exporter` | mutable |
+| `## Scaffold inputs` | `/design-exporter` | `/new-prometheus-exporter` | frozen after scaffold |
+| `## Collectors` | `/design-exporter` | `/add-collector` | mutable |
+| `## Cardinality budget` | `/design-exporter` | `/add-collector` | mutable |
+| `## Dashboards` | `/generate-dashboard` | `/generate-dashboard` | mutable |
+| `## Session log` | `/design-exporter` | all four | append-only |
+| `## Open questions / assumptions` | `/design-exporter` | all four | mutable |
+
+**"Created by" means first *content*, not first header.** Whichever command
+creates the file writes all eight headers at once, in the order `## Format`
+gives, and every section a command has nothing to put in yet gets a placeholder
+line rather than being left out: `- (none yet)` under `## Dashboards` on a
+journal born at design time, and the same for any other section still empty.
+Only `## Dashboards` is routinely in that state on the main path, since
+`/generate-dashboard` runs late or not at all, but the rule is the same for all
+eight and does not depend on which one happens to be empty.
+
+This is not a formatting preference. An empty section and a missing header are
+two different states, and only one of them is a defect: `## Degradation`
+declares a file corrupt when a header is *absent*, so a command that omitted
+`## Dashboards` until the first dashboard existed would make every healthy
+journal fail that test and offer to rebuild itself on the happy path. Emitting
+the header with a placeholder keeps the corruption test meaning what it says.
+
+A command writes only the sections it owns, and leaves the rest byte-identical.
+`## Provenance` is never rewritten by anything: it is the discovery ladder's
+own audit trail (`discovery-inputs.md`), and rewriting it would erase why the
+design is trusted at the confidence level it claims. `## Scaffold inputs` is
+completed once, with the selectors actually passed, and is then a historical
+record of how the repository was produced, not a live setting to edit.
+`## Session log` is only ever appended to; an entry is never edited or removed,
+for the same reason.
+
+> Reconciliation is the one exception, and it applies to every command.
+> `## Reconciliation`'s corrections copy a fact disk has already proved, so
+> they are not authorship and two commands cannot disagree about them: the
+> value comes from the tree, not from the command's judgement. A command that
+> finds a stale line therefore corrects it wherever it sits, including the
+> namespace under the otherwise-frozen `## Scaffold inputs`, marks it
+> `(reconciled <date>)`, logs it and reports it. Ownership settles who *fills*
+> a section; it never licenses leaving a line disk has falsified. That binds
+> `/generate-dashboard` like the rest, and most of all: it runs last, so a
+> correction it declines to write is one nothing later repairs.
+
+### Read on entry, write on exit
+
+The protocol is the same in all four commands, and the timing is not
+negotiable:
+
+- **On entry**, before asking the user anything: read the journal, reconcile it
+  against disk (`## Reconciliation`), and report every correction. What the
+  journal states about the non-derivable half (the budget, the label
+  vocabulary, the remaining collectors, the credential convention) is read back
+  to the user rather than re-derived or re-asked.
+- **On exit**, *after* the command's own verification gate is green and never
+  before: write the sections it owns, append one `## Session log` line, then
+  print the resumption block (`## The resumption block`). A journal entry
+  written before the gate records an outcome that has not happened yet.
+
+> The two creating commands are exceptions, each on a different half.
+> `/design-exporter` runs no gate, so its resumption block simply omits the
+> gate clause. `/new-prometheus-exporter` has no journal to read on entry,
+> and its only commit is the initial one, so it writes the journal after the
+> scaffold and **before** that commit, leaving the file tracked rather than
+> destroyed by the first `git clean -xdf`. Only its resumption block waits
+> for the gate. Nothing either command writes before its commit records a
+> gate outcome, so the rule's reason still holds where the rule's letter
+> cannot.
+
+## Reconciliation
+
+Authority is shared but never overlapping. **The disk decides everything it can
+state. The journal is sole authority on everything else.** The tick boxes under
+`## Collectors` are a *cache* of disk truth, never a source of it.
+
+On entry, every command reconciles:
+
+| Read from disk | How | If the journal disagrees |
+|---|---|---|
+| I/O flavor | `internal/collector/client.go` vs `execute.go` | corrected, reported |
+| Target model | `internal/instance/` vs `internal/probe/` vs neither | corrected, reported |
+| Namespace | `const namespace = "..."` in `cmd/*/main.go` | corrected, reported |
+| Collectors built | `## <Name>Collector` headers in `docs/metrics.md` | box ticked or unticked, marked `(reconciled <date>)`, reported |
+| A collector with no box at all | a `## <Name>Collector` header no `## Collectors` line names | a box is added, ticked, marked `(reconciled <date>)`, reported |
+
+That last row is ordinary, not exotic. Any journal not born under this release
+is missing at least one box: a repository scaffolded before the journal shipped
+has every collector on disk and none in a journal it does not have, and the
+collector every scaffold ships built and documented was planned by no design
+brief. A collector added by hand, or an `/add-collector` interrupted between
+the code and the docs, lands in the same state. `/new-prometheus-exporter`
+writes that scaffolded collector's box itself, so a journal this release
+produced starts complete and the row is what keeps it so afterwards. It is
+also why `## Collectors` is a section the create-offer below **fills from
+disk** rather than placeholders: the `## <Name>Collector` headers state exactly
+which collectors exist, so a repository predating this file recovers all of
+them as ticked boxes, where a placeholder line would strand them (nothing
+reconciles a box that was never written).
+
+**No correction is silent.** Each one is stated in the command's output to the
+user and leaves a `## Session log` line. A journal that asserts a false state is
+more harmful than an absent one, precisely because it has been trusted: the
+whole point of writing it down was to stop re-deriving it.
+
+Reconciliation is not a corruption check. It covers the ordinary case far more
+often than the pathological one: a collector added by hand, an `/add-collector`
+interrupted between the code and the docs, a colleague who pushed while the
+journal sat in a local branch. None of those should stop anything. The box is
+brought in line with `docs/metrics.md`, the correction is reported, and the
+command carries on.
+
+## Degradation
+
+**Corrupt** has a checkable definition, not a judgement call: the file exists
+but has no `# Exporter journal:` title line, or is missing at least one of the
+required `##` headers listed under `## Format`.
+
+The test is on the header, never on what sits under it. An empty section, or
+one holding only a placeholder line, is a normal journal: sections are created
+all eight at a time and filled later (`## Section ownership`). A journal whose
+`## Dashboards` reads `- (none yet)` is healthy, and a command that treats it
+as corrupt is raising a false alarm on the main path.
+
+- **Absent.** The command does exactly what it did before this file existed,
+  all the way through. At the end it offers to build the journal: derivable
+  facts read from disk, non-derivable ones asked. This is the upgrade path for
+  every repository scaffolded before the journal shipped, and it needs no
+  migration of any kind, because a documentation file touches no code seam.
+- **Corrupt.** The command also does its full job, then asks: rebuild with a
+  backup at `docs/exporter-journal.md.bak`, or leave it untouched. **It writes
+  nothing before an answer.** A file that cannot be understood may hold
+  hand-written prose worth keeping, and overwriting it to restore a format is
+  the wrong trade.
+
+**Never a refusal.** A command refuses when proceeding would be dangerous, such
+as an outdated code seam it would have to migrate in place. A missing or
+malformed documentation file is not that: refusing there would break the
+command on every exporter generated before the journal existed, to protect
+nothing.
+
+## The resumption block
+
+Every command ends, **after its verification gate is green and never before**
+where it has one (`### Read on entry, write on exit` carves out
+`/design-exporter`, the one command that runs no gate), with a literal,
+copy-pasteable block:
+
+```
+<what this command just did>. <its gate> is green.
+Journal: <N> of <M> collectors built. Next planned: `<name>` (<variant>).
+
+Safe to /clear now: everything above is in docs/exporter-journal.md.
+Then run:
+
+    /<next-command> <argument read from the journal>
+```
+
+Three things make it work:
+
+- **The argument is read from the journal**, not templated: the first unticked
+  entry under `## Collectors`, with its variant. `/design-exporter` suggests
+  `/new-prometheus-exporter <name>`; `/new-prometheus-exporter` suggests the
+  first planned collector; `/add-collector` suggests the next one, and
+  `/generate-dashboard` once the list is empty.
+- **The gate is named, and it has already run**, wherever there is one to
+  name. "Safe to `/clear`" is a claim about state on disk, so it is only
+  honest once the state on disk has been verified and written. That binds
+  `/new-prometheus-exporter`, `/add-collector` and `/generate-dashboard`
+  without exception. `/design-exporter` omits the clause rather than
+  inventing a gate to name, for the reason `### Read on entry, write on exit`
+  gives.
+- **Nothing is invoked.** All four commands carry
+  `disable-model-invocation: true`: the model cannot trigger them, only the
+  user can type them. The block is a suggestion printed as text, which is why
+  it is copy-pasteable rather than automatic.
+
+The payoff is the reason the whole file exists: with the block printed and the
+journal written, `/clear` between two collectors becomes the *recommended* move
+rather than a destructive one. Several short sessions beat one context window
+swelling to suffocation.

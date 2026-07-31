@@ -5,6 +5,93 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **A project journal, `docs/exporter-journal.md`, in every scaffolded
+  exporter.** All four commands read it on entry and complete it on exit,
+  so a build spanning several sessions survives a compaction or a cleared
+  context: `/design-exporter` opens it as the architecture brief,
+  `/new-prometheus-exporter` brings it into the repository in the initial
+  commit and completes the decisions the scaffold settled, `/add-collector`
+  ticks collectors off the plan and records the cardinality it actually
+  observed, and `/generate-dashboard` records each dashboard's audience and
+  method. Eight frozen section headers with one owner each, and the disk
+  deciding everything it can state about itself: the journal carries only
+  the half no file in the repository can, such as the collectors still to
+  build, the cardinality budget as an intention, the credential convention
+  and the shared label vocabulary. Every command reconciles the journal
+  against the repository on entry and reports each correction rather than
+  trusting a stale claim. On a repository that has none, `/add-collector`
+  and `/generate-dashboard` do exactly what they did before this release,
+  all the way through, and only then offer to build one: from scratch when
+  the file is absent, behind a `.bak` when its headers are damaged, and
+  nothing is written before the user answers. Exporters scaffolded before
+  this release keep working, and no migration of any kind is involved.
+- **`samples/` in every scaffolded exporter**: a gitignored home for raw
+  target output and the target's own API documentation, deliberately
+  separate from `internal/collector/testdata/`, which stays trimmed,
+  anonymized and committed. `/add-collector` derives a fixture from it when
+  it covers the collector's endpoint or command, instead of inventing one,
+  and leaves the original in place for the next collector.
+  `/new-prometheus-exporter` offers to copy in whatever source material the
+  brief recorded. Only `samples/README.md` is tracked.
+- **`CLAUDE.md` in every scaffolded exporter**, stating the repository's
+  invariants and where each kind of state lives, so a session that opens
+  the generated repository cold learns its rules from the repository rather
+  than from this plugin.
+- **A generated collector block in the scaffolded `README.md`**, between
+  `<!-- BEGIN GENERATED COLLECTORS -->` and
+  `<!-- END GENERATED COLLECTORS -->`, regenerated in full from
+  `docs/metrics.md` by `/add-collector` so the front page lists every
+  collector the exporter actually has.
+- **`@@TARGET_MODEL@@` and `@@FLAVOR@@` substitutions in `scaffold.sh`**,
+  derived from the selectors it already parses and validates, alongside the
+  `@@INSTANCE_LABEL@@` that shipped in v0.5.0.
+
+### Changed
+
+- **`<namespace>_exporter_request_wait_seconds` gained an `outcome`
+  label.** Deferred from v0.7.0, where the histogram conflated a request
+  that got its slot with one that gave up waiting: `Acquire` observes on
+  both paths, so a wait that never paid off looked identical to one that
+  did. The label carries `success` and `error`, the same convention
+  `RequestDuration` and `CommandDuration` already use beside it, and both
+  values are touched once at package init so a build with no ceiling
+  configured (every deployment by default, and `multi`'s permanent state)
+  still reports a visible, permanent zero instead of the series vanishing
+  from `/metrics`, which is a `HistogramVec`'s behaviour for a label
+  combination that has never been observed.
+- **On the CLI flavor, `Execute` refuses a context carrying no deadline
+  once a concurrency ceiling is attached.** Also deferred from v0.7.0. The
+  shipped collector always applied a deadline, but nothing stopped a
+  collector added later from passing a bare `context.Background()` through,
+  which would then block on the limiter forever. The contract is enforced
+  now rather than merely documented, and `/add-collector`'s CLI section
+  states it where a collector author will actually see it.
+- **`discovery-inputs.md` no longer describes the architecture brief's
+  format.** It points at `project-journal.md`, this skill's twelfth
+  reference, which owns the format, the section-ownership table, the
+  reconciliation rules, and the resumption block all four commands now
+  share.
+
+### Notes
+
+- **What this release proves, and what it does not.** The scaffold-side
+  artifacts (`samples/`, the generated `CLAUDE.md`, the `README.md` marker
+  block, the two new substitutions) are covered by the six-cell golden
+  matrix, which scaffolds and builds each one; what it asserts about the
+  `README.md` block is that the markers are present, paired, non-empty and
+  under `## Metrics`, never the `/add-collector` regeneration that later
+  rewrites what sits between them. Everything the commands themselves do is
+  prose, not code: the journal protocol (reading on entry, reconciling
+  against the repository, degrading when the file is absent or unreadable),
+  deriving a fixture from `samples/`, and regenerating that collector block
+  from `docs/metrics.md`. No test in this repository can exercise any of it,
+  and none is claimed to. All of it was verified by review against the
+  reference that defines it.
+
 ## [0.7.0] - 2026-07-29
 
 ### Added

@@ -399,5 +399,5 @@ collector list; the release/observability step takes the alert candidates.
 
 When produced via `/design-exporter`, these seven items are serialized into
 an architecture brief (`./exporter-design-brief.md`) that
-`/new-prometheus-exporter` consumes; see `discovery-inputs.md` for the
-format.
+`/new-prometheus-exporter` consumes; see `project-journal.md` for the
+format, and for what becomes of that file once the repository exists.

@@ -48,15 +48,31 @@ A scaffolded repo has no `@@VAR@@` sentinels left. Read real values:
 
 `docs/metrics.md` is not just the list of metric names: it is the substrate
 that drives the whole dialogue below. For each metric read its name, `Type`
-(Gauge/Counter/Histogram/Summary), and labels. If a brief
-(`./exporter-design-brief.md`) is present, read it too: its audience,
-business-alert candidates, and cardinality-budget sections seed steps 2/5/6
-below instead of asking cold.
+(Gauge/Counter/Histogram/Summary), and labels.
 
-If the doc contains **no** business metric (only self-instrumentation), stop:
-tell the user to add collectors and document them with `make docs-check`
-first. There is nothing business to visualize yet. (The backbone enforces
-this same refusal with a non-zero exit; do not hand-write an empty dashboard.)
+If `docs/exporter-journal.md` is present, read it too, following
+`${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/references/project-journal.md`:
+the audiences already recorded under `## Dashboards`, the business-alert
+candidates under `## Architecture decisions`, and `## Cardinality budget`
+seed steps 2, 5 and 6 below instead of asking cold. Reconcile it against
+`docs/metrics.md` first, as that reference describes: the documented metrics
+win over anything the journal claims about which collectors exist. Write each
+correction back, marked `(reconciled <date>)`, with one `## Session log` line,
+and report it to the user: `## Section ownership` carves reconciliation out of
+writing only what you own, precisely because this command runs last and a
+correction it declines to write is one nothing later repairs. Filling
+`## Collectors` with entries nobody planned yet stays `/add-collector`'s job;
+bringing the boxes in line with `docs/metrics.md`, including adding one a
+documented collector never got, is not that. If the
+journal is absent or corrupt, do not write here at all: apply that reference's
+degradation rules, which hold step 6b's offer until the user has answered, and
+carry this command through to the end either way.
+
+If `docs/metrics.md` contains **no** business metric (only
+self-instrumentation), stop: tell the user to add collectors and document
+them with `make docs-check` first. There is nothing business to visualize
+yet. (The backbone enforces this same refusal with a non-zero exit; do not
+hand-write an empty dashboard.)
 
 ## 2. Design dialogue, anchored in `metrics.md`
 
@@ -210,6 +226,55 @@ Confirm every name printed is documented in `docs/metrics.md` (a Histogram
 dashboard analogue of `make docs-check`'s PromQL bar, and exactly the property
 the golden test asserts on this same backbone.
 
+## 6b. Record the design in the journal
+
+Only once step 6's `jq empty` and panel-expr anti-lie checks have both printed
+green. Never before: an entry written ahead of its gate records an outcome
+that has not happened yet.
+
+If `docs/exporter-journal.md` is absent, offer to create it now, per
+`project-journal.md`'s degradation rules, writing all eight headers from its
+`## Format` with a placeholder line under every section this step cannot fill
+yet (its `## Section ownership` rule), then continue. `## Collectors` is not
+one of those: its `## Reconciliation` makes that section fillable from disk, so
+write one ticked box per `## <Name>Collector` header in `docs/metrics.md`. A
+placeholder there would be permanent, this command being the last to run, and
+the block at the end of this file would then report zero collectors on a
+repository whose own metrics reference lists them. A file holding only the
+two sections below would be missing headers, which is exactly what
+`## Degradation` calls corrupt, so the next command would open with a
+rebuild-or-leave prompt on a perfectly healthy repository. If the journal is
+already corrupt, ask before writing anything.
+
+**Never skip that offer on the grounds that a repository holding business
+metrics must already have run `/add-collector` and been offered a journal
+there.** An exporter scaffolded before the journal shipped has collectors and
+no journal, which is precisely the upgrade path `## Degradation` describes,
+and `## Section ownership` makes this command the only one that ever fills
+`## Dashboards`: everything below is lost for good rather than merely
+postponed. If the offer is declined, say so in one line and skip the rest of
+this step, since the dashboards themselves are already on disk.
+
+Then replace the journal's `## Dashboards` section with one line per dashboard
+produced:
+
+```
+- <audience>, <RED | USE> because <reason>, <decomposition>, files: <paths>
+```
+
+The header itself is already in the file, carrying a placeholder line until
+this step first fills it (`project-journal.md`'s `## Section ownership`):
+replace what sits under the header, never write the header, and never read
+that placeholder as an absent section.
+
+Everything on that line is chosen in the dialogue above and **cannot be read
+back from the JSON**: the emitted panels show what was built, never why RED
+was chosen over USE, nor why the set was split into an overview plus
+drill-downs rather than one dashboard. A second session that extends or
+regenerates a dashboard reads this and stays consistent with the first.
+
+Append one dated `## Session log` line naming the dashboards written.
+
 ## 7. What's next
 
 - Import each dashboard in Grafana (UI "Import → Upload JSON file", the HTTP
@@ -217,4 +282,29 @@ the golden test asserts on this same backbone.
 - Re-running this command after `/add-collector` is safe: it reuses each uid
   and asks before overwriting a generated file (step 4).
 - Commit with `feat(monitoring): add generated business dashboard(s)` (see
-  `CONTRIBUTING.md`'s commit-message convention).
+  `CONTRIBUTING.md`'s commit-message convention), staging
+  `docs/exporter-journal.md` alongside them: the journal is a committed file
+  (`project-journal.md`'s `## Lifecycle`), so step 6b's edit belongs in the
+  same commit as the dashboards it describes.
+
+End with the resumption block `project-journal.md` defines, and only once
+step 6's checks have been shown green:
+
+```
+Dashboards written to <paths>. jq empty and the panel-expr anti-lie scan are green.
+Journal: <N> of <M> collectors built. Next planned: `<next>` (<variant>).
+
+Safe to /clear now: everything above is in docs/exporter-journal.md.
+Then run:
+
+    /add-collector <next>
+```
+
+When no unticked collector remains, drop the `Next planned:` clause and the
+`Then run:` lines with it: this command is the end of the lifecycle, and
+there is no next one to name. Print the block; never invoke the command.
+
+With no usable journal (absent and step 6b's offer declined, or corrupt and
+left untouched at its prompt) there is no list to read from. Drop the
+`Journal:` line rather than inventing counts. The rest of the block still
+holds: the checks are green and the dashboards are on disk.
