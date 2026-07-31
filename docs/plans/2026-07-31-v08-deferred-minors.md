@@ -12,6 +12,10 @@ concret, l'étiquette « Move the brief. », le grep `Name: *`, la ligne de 123
 caractères, la clause ambiguë sur `samples/`, `SKILL.md:96`/`:152`, le crédit
 d'anonymisation, les « sections » de `/generate-dashboard`).
 
+La branche `chore/v08-deferred-minors` (2026-07-31) en a fermé six de plus,
+listés en bas. Ce qui reste ouvert tient en trois lignes : une qui a déjà son
+propre prompt, deux parkées avec ruling.
+
 ## Reste ouvert
 
 ### Documentation du plugin
@@ -19,20 +23,8 @@ d'anonymisation, les « sections » de `/generate-dashboard`).
 - **Le `README.md` racine ne mentionne ni le journal, ni `samples/`, ni le
   `CLAUDE.md` généré.** Rien n'y est faux, mais « What it gives you » est
   désormais incomplet. Un `NEXT-PROMPT-docs-readme-refresh.md` existait déjà
-  avant cette release ; le rafraîchissement peut accompagner le tag.
-- **`ROADMAP.md:153`** dit « appears in none of the eleven reference
-  documents », au présent, dans la section v0.6. La tâche 10 a délibérément
-  refusé de passer le compte à douze : la phrase est l'énoncé du problème de
-  ce jalon, et la dette est payée (`multi-instance` apparaît maintenant dans 8
-  des 12 références), donc « twelve » serait devenu activement faux plutôt que
-  rafraîchi. L'item mérite d'être clos ou reformulé, pas recompté.
-- **`SKILL.md`, ligne d'index de `project-journal.md`**, ouvre sur « Every
-  step: » là où les onze autres ouvrent sur « Step N: ». Défendable (le
-  journal traverse les quatre commandes), signalé comme préférence de
-  mainteneur.
-- **La ligne d'index de `discovery-inputs.md`** ne mentionne plus le brief
-  d'architecture, alors que ce fichier en possède toujours deux sections. Un
-  lecteur de l'index seul ne saurait pas y chercher `## Provenance`.
+  avant cette release ; le rafraîchissement peut accompagner le tag. Traité
+  comme sa propre tâche, délibérément pas dans le lot ci-dessous.
 
 ### Cohérence entre fichiers, pré-existante
 
@@ -42,7 +34,7 @@ d'anonymisation, les « sections » de `/generate-dashboard`).
   v0.8, **parké avec ruling** : le « six » est cohérent avec la façon dont ce
   fichier traite déjà ses sous-questions non comptées (convention de
   crédentials, plafond de concurrence, et désormais `5b`). Mérite sa propre
-  passe.
+  passe. Non touché par ce lot, le ruling tient.
 
 ### Duplication assumée
 
@@ -53,39 +45,48 @@ d'anonymisation, les « sections » de `/generate-dashboard`).
   non anonymisé et à en écrire un fichier commité, donc la règle doit être au
   point d'usage. **Condition posée** : la copie a déjà dérivé de deux de ses
   sources à l'intérieur d'un seul commit, avant d'être complétée. Si elle
-  dérive une fois de plus, la forme pointeur gagne.
-- **`assets/CLAUDE.md.tmpl`, section « The gate »**, répète la liste des
-  sous-vérifications de `make check` et `NATIVE=1`, tous deux déjà dans
-  `CONTRIBUTING.md.tmpl:19,78`, dans un fichier dont l'en-tête dit que
-  `CONTRIBUTING.md` est celui à lire. À resserrer en pointeur.
+  dérive une fois de plus, la forme pointeur gagne. Non touchée non plus, la
+  condition reste armée.
 
-### Robustesse de test
+## Fermé par `chore/v08-deferred-minors` (2026-07-31)
 
-- **L'assertion `check-ignore` de `golden-smoke.sh` peut faux-passer** sur un
-  runner dont le `core.excludesFile` global filtre `*.json` : la moitié
-  « README non ignoré » échouerait bruyamment, mais la moitié « fichier
-  déposé ignoré » passerait pour la mauvaise raison. La CI est propre. Le
-  durcissement tient en un token :
-  `git -c core.excludesFile=/dev/null -C "$work" check-ignore`.
-- **`/add-collector` ne dit pas comment apparier** l'en-tête *k* de
-  `docs/metrics.md` avec la *k*-ième chaîne de registre de `cmd/*/main.go`.
-  L'appariement positionnel tient (metrics.md insère avant
-  `## Self-instrumentation`, le registre appende), mais l'invariant n'est
-  écrit nulle part.
+- **`ROADMAP.md:153`**, l'énoncé au présent du jalon v0.6 : reformulé au passé
+  (« delivered », dette « paid here »), sur la forme des autres items clos de
+  la liste, sans recompter les références. `f17b427`.
+- **`SKILL.md`, ligne d'index de `project-journal.md`** : « Every step: »
+  devient « Steps 0, 2, 3, 5: », les quatre étapes dont les commandes touchent
+  réellement le journal. La colonne garde sa forme sans revendiquer les étapes
+  1, 4 et 6. `2ad9481`.
+- **`SKILL.md`, ligne d'index de `discovery-inputs.md`** : le brief revient par
+  ses deux sections possédées (`## Provenance`, `## Open questions /
+  assumptions`), jamais par le format que la v0.8 avait déplacé. `2ad9481`.
+- **`assets/CLAUDE.md.tmpl`, section « The gate »** : resserrée en pointeur
+  vers `CONTRIBUTING.md`. La liste des sous-vérifications et `NATIVE=1`
+  disparaissent du template ; restent la commande et la règle (« pas de
+  sous-ensemble »). `78f3289`.
+- **L'assertion `check-ignore` de `golden-smoke.sh`** : les deux invocations
+  passent par `git -c core.excludesFile=/dev/null`, le `.gitignore` du dépôt
+  scaffoldé restant seul en vigueur. **RED refait** : `/samples/*` retiré de
+  `.gitignore.tmpl`, la cellule `http/none` meurt bien sur l'assertion, avec
+  et sans excludes global hostile ; la même cellule, non durcie et sous un
+  excludes global qui filtre `*.json`, passait de bout en bout (`PASS`).
+  `b1d0d6d`.
+- **L'appariement du bloc README de `/add-collector`** : l'invariant positionnel
+  est désormais écrit (la *k*-ième en-tête `## <Name>Collector` répond à la
+  *k*-ième chaîne de registre), avec sa raison d'être (les deux listes ne sont
+  jamais insérées au milieu) et le seul cas qui le casse (longueurs
+  différentes : on s'arrête, on ne réapparie pas). `d325e8f`.
+- **Les deux écarts lettre/esprit du référentiel**, tous deux résolus côté
+  `project-journal.md`, pas côté commandes : la réconciliation devient une
+  dérogation de *timing* (elle recopie un état que le disque prouve, donc elle
+  n'anticipe aucun résultat de gate), et la dérogation du bloc de reprise de
+  `/design-exporter` couvre maintenant ses deux lignes correctes (le chemin
+  `./exporter-design-brief.md` et la revue du brief avant le `/clear`).
+  `23066ec`.
 
-### Écart lettre/esprit dans le référentiel
-
-- **`/add-collector` écrit le journal avant son garde-fou**, à l'étape 1
-  (réconciliation), alors que `project-journal.md` dit « never before » et que
-  la dérogation ne nomme que les deux commandes créatrices. La raison
-  invoquée par la règle (« records an outcome that has not happened yet ») ne
-  s'applique pas : une entrée de réconciliation recopie un état que le disque
-  prouve déjà. La lettre est violée, l'esprit non. Une clause suffirait.
-- **Le bloc de reprise de `/design-exporter` dévie sur deux lignes** que la
-  dérogation ne couvre pas : « Review the brief, then it is safe to /clear: »
-  au lieu de « Safe to /clear now: », et `./exporter-design-brief.md` au lieu
-  de `docs/exporter-journal.md`. Les deux déviations sont *correctes* (il n'y
-  a pas encore de journal) ; c'est la dérogation qui est trop étroite.
+Gates de ce lot : `zero-source-grep`, `claude plugin validate`, les trois
+suites `scaffold*_test.sh`, `golden-smoke --all` (six cellules) et le grep
+tirets longs sur `skills/` + `commands/`.
 
 ## Ce qu'aucun test ne couvre
 
