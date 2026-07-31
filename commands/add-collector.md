@@ -871,6 +871,25 @@ Only headers ending in `Collector` are collectors. `## Self-instrumentation`,
 and the multi-target and configuration-reload sections that may sit below it,
 are not, and never appear in this list.
 
+**Pair the two lists positionally.** Once the headers are filtered that way,
+the *k*-th `## <Name>Collector` header in `docs/metrics.md` names the same
+collector as the *k*-th registered name the grep returns, both read top to
+bottom. Nothing else joins a header to a name, so this is the invariant the
+whole block rests on, and it holds because neither list is ever inserted into
+the middle: step 6 above adds the new section immediately before
+`## Self-instrumentation`, the last collector position `docs/metrics.md` has,
+and step 5 adds the new registration after the last existing one at its
+marker. The scaffolded collector opens both lists at the same index, and each
+`/add-collector` run extends both by one, in the same run.
+
+If the two come back with **different lengths**, the invariant was broken
+outside this command: a section or a registration removed by hand, or an
+earlier run interrupted between step 5 and step 6. Say so, change nothing in
+`README.md`, and let the user reconcile first. Pairing what is left would
+mislabel every line after the gap, and since this block is regenerated in
+full from the same two greps every time, the wrong labels would then look
+authoritative.
+
 The anchor is the GitHub-flavored slug of the `## <Name>Collector` header
 itself, never of `<name>`: lowercase it and drop spaces and punctuation.
 `## PoolsCollector` becomes `#poolscollector`, and `## JobQueueCollector`
