@@ -224,20 +224,27 @@ its siblings instead of a reload.
 
 ## v0.8
 
-- **A project journal that survives a cleared context.** Originally
-  scoped into v0.7 alongside configuration reload; unrelated to it, so it
-  moved out to its own design session rather than share this one. Today
-  only step 0 hands anything durable to a later step: `/design-exporter`
-  writes an architecture brief that `/new-prometheus-exporter` reads.
-  Everything after that (which collectors are left to build, the
-  cardinality budget, which ones need the background variant, the
-  credential convention chosen) lives only in the conversation, so a
-  compaction or a `/clear` between two collectors loses decisions that are
-  already recorded on disk two metres away. Promote the brief into a
-  journal every command reads on entry and appends to on exit, making each
-  step resumable from a cold start and turning the file into the reference
-  base for building a complete exporter. It reshapes the contract of all
-  four commands at once and deserves its own design.
+- **A project journal that survives a cleared context, delivered.**
+  Originally scoped into v0.7 alongside configuration reload; unrelated to
+  it, so it moved out to its own design session rather than share this one.
+  Until now only step 0 handed anything durable to a later step:
+  `/design-exporter` wrote an architecture brief that
+  `/new-prometheus-exporter` read. Everything after that (which collectors
+  are left to build, the cardinality budget, which ones need the background
+  variant, the credential convention chosen) lived only in the conversation,
+  so a compaction or a `/clear` between two collectors lost decisions that
+  were already recorded on disk two metres away. The brief is now promoted
+  into `docs/exporter-journal.md`, which all four commands read on entry and
+  complete on exit, so each step is resumable from a cold start and `/clear`
+  between two collectors becomes the recommended move rather than a
+  destructive one. Eight frozen sections with one owner each, and the disk
+  deciding everything it can state about itself, so the journal carries only
+  the half no file in the repository can. Delivered alongside it: a
+  gitignored `samples/` for raw target output, a generated `CLAUDE.md`, and
+  a collector block in the scaffolded `README.md` that `/add-collector`
+  regenerates from `docs/metrics.md`. It reshaped the contract of all four
+  commands at once, which is why it got its own design in
+  [`docs/design/2026-07-30-project-journal-design.md`](docs/design/2026-07-30-project-journal-design.md).
 - **A child registry per watched instance, so every label change becomes
   reloadable.** v0.7 refuses a reload that changes the SET of label keys
   an instance carries, because a Prometheus registry never releases a
