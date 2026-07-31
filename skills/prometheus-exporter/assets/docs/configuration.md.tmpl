@@ -194,10 +194,13 @@ the wait would have no deadline of its own to honor.
 A single-target build has no reload at all: its `--config.file`, if any,
 holds only a `flags:` section (applied once at startup, and a running
 process cannot adopt a new value for a flag) and an `http_client_config:`
-section whose file-backed secrets and TLS material (`password_file`,
-`bearer_token_file`, `ca_file`, `cert_file`, `key_file`) `prometheus/common`
+section whose file-backed secrets and TLS material `prometheus/common`
 already re-reads from disk on every outbound request, so there is nothing
-left for a reload to apply. See `SECURITY.md` for the full reasoning.
+left for a reload to apply. That covers every `_file` variant the section
+accepts: `username_file`, `password_file`, `credentials_file`,
+`bearer_token_file`, `client_secret_file`, `client_certificate_key_file`,
+`ca_file`, `cert_file` and `key_file`. See `SECURITY.md` for the full
+reasoning.
 
 Multi-target and multi-instance builds both reload `--config.file` in
 place, two ways:
