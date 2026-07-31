@@ -264,22 +264,23 @@ anonymized and may not be this repository's to redistribute. If there is no
 such line, say so and move on: `samples/` keeps only its README, and
 `/add-collector` will fall back to its own fixture generation.
 
-**2. Move the brief.** `project-journal.md`'s `## Lifecycle` gives this file
-two names for one thing, so a brief sitting at the default path is relocated
-rather than duplicated: there it is the plugin's own artifact, not the user's.
-Using `git mv` is wrong here (the brief was never in this repository).
-Identify it by its first line, `# Exporter design brief: <target>`: that is
-the string the move keys on. Copy it to
-`<target-dir>/docs/exporter-journal.md` and confirm the copy exists. Remove
-the original **only** when it is `./exporter-design-brief.md` in the working
-directory, the one path `## Lifecycle` contemplates. If step 0 read the brief
-from a path the user named instead, copy from it, leave it exactly where it
-is, and say so: that file is the user's, and this command removes nothing the
-user owns. Either way the content now lives in the committed journal. Retitle
-the copy's first line from `# Exporter design brief: <target>` to
-`# Exporter journal: <name>`, `<name>` being `EXPORTER_NAME`. Only that line
-changes; the eight section headers below it are already the journal's own and
-are carried across unedited.
+**2. Bring the brief in as the journal.** `project-journal.md`'s
+`## Lifecycle` gives this file two names for one thing, so a brief sitting at
+the default path is relocated rather than duplicated: there it is the
+plugin's own artifact, not the user's. Using `git mv` is wrong here (the
+brief was never in this repository). Identify it by its first line,
+`# Exporter design brief: <target>`: that is the string the move keys on.
+Copy it to `<target-dir>/docs/exporter-journal.md` and confirm the copy
+exists. Remove the original **only** when it is `./exporter-design-brief.md`
+in the working directory, the one path `## Lifecycle` contemplates. If step 0
+read the brief from a path the user named instead, copy from it, leave it
+exactly where it is, and say so: that file is the user's, and this command
+removes nothing the user owns. Either way the content now lives in the
+committed journal. Retitle the copy's first line from
+`# Exporter design brief: <target>` to `# Exporter journal: <name>`,
+`<name>` being `EXPORTER_NAME`. Only that line changes; the eight section
+headers below it are already the journal's own and are carried across
+unedited.
 
 **3. Complete `## Architecture decisions`.** Step 0 hands the user the final
 call on every line in that section, and step 1 re-confirms the I/O flavor. If
@@ -381,8 +382,10 @@ over or silently retry past.
 
 Point the user to:
 
-- **`/add-collector <name>`** to add each further collector from the step 0
-  list, with its full test triad and registry wiring.
+- **`/add-collector <name>`** to add each further collector still unticked
+  under `## Collectors` in `docs/exporter-journal.md`, with its full test
+  triad and registry wiring. The journal is where that list survives a
+  `/clear`; this conversation is not.
 - **`docs/configuration.md`** and `config.example.yml`: every scaffold ships
   `internal/config` and an unconditional `--config.file` flag, empty by
   default, so an operator can override flag values from a file instead of the

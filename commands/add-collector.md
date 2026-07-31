@@ -494,13 +494,14 @@ from that instead of inventing one:
    covers several resources; the fixture covers one.
 3. **Anonymize** it per
    `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/references/collector-pattern.md`'s
-   Fixtures rules, which own the substitutions: real hostnames and endpoints
-   become `host1`/`example.internal`, usernames become `user1`/`alice`/`bob`,
+   Fixtures rules and this repo's own `CONTRIBUTING.md`, which own the
+   substitutions between them: real hostnames and endpoints become
+   `host1`/`example.internal`, usernames become `user1`/`alice`/`bob`,
    account or tenant names become `team_a`/`org_b`, and anything else
    identifying gets a placeholder that preserves shape (field count, rough
    magnitude) without preserving content. Never commit a fixture copy-pasted
-   straight from a production system, which is exactly what a `samples/` file
-   is.
+   straight from a production system, and a `samples/` file is exactly that:
+   deriving from one is recommended, committing one unchanged is not.
 4. **State what you anonymized**, field by field, in your reply. The user is
    the only one who can tell you that something you left alone was actually
    sensitive.
@@ -854,8 +855,11 @@ they appear:
 ```
 
 `<name>` is the **registered collector name**, read from `cmd/*/main.go`:
-`register("<name>"` on the single target model, `Name: "<name>"` on either
+`register("<name>"` on the single target model, `Name: *"<name>"` on either
 multi model, the same two greps step 2's idempotent refusal already uses.
+Keep that ` *` in the second one: `gofmt` aligns the `multi-instance` wiring's
+struct fields, so a literal single space matches `multi` but not
+`multi-instance`.
 Never recover it by inverting the header's PascalCase, which cannot tell
 `job_queue` from `jobqueue`: because this block is regenerated in full on
 every run, a guess silently rewrites a correct line the next time a collector
@@ -1027,7 +1031,8 @@ When no unticked collector remains, suggest `/generate-dashboard` instead.
 Print the block; never invoke the command.
 
 With no usable journal (absent and step 8b's offer declined, or corrupt and
-left untouched at its prompt) there is no list to read from. Drop the `Journal:` line rather than inventing counts, suggest
-`/add-collector <name>` with a name the user must choose, and say plainly that
-this one is a placeholder rather than something read from the journal. The
-rest of the block still holds: the gate is green and the work is on disk.
+left untouched at its prompt) there is no list to read from. Drop the
+`Journal:` line rather than inventing counts, suggest `/add-collector <name>`
+with a name the user must choose, and say plainly that this one is a
+placeholder rather than something read from the journal. The rest of the
+block still holds: the gate is green and the work is on disk.

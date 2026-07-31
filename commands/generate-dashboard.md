@@ -52,17 +52,19 @@ that drives the whole dialogue below. For each metric read its name, `Type`
 
 If `docs/exporter-journal.md` is present, read it too, following
 `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/references/project-journal.md`:
-its audience, business-alert candidates and cardinality-budget sections seed
-steps 2, 5 and 6 below instead of asking cold. Reconcile it against
+the audiences already recorded under `## Dashboards`, the business-alert
+candidates under `## Architecture decisions`, and `## Cardinality budget`
+seed steps 2, 5 and 6 below instead of asking cold. Reconcile it against
 `docs/metrics.md` first, as that reference describes: the documented metrics
 win over anything the journal claims about which collectors exist. Report
 every correction to the user, but do not write it back: `## Collectors` is
 `/add-collector`'s to complete, not this command's.
 
-If the doc contains **no** business metric (only self-instrumentation), stop:
-tell the user to add collectors and document them with `make docs-check`
-first. There is nothing business to visualize yet. (The backbone enforces
-this same refusal with a non-zero exit; do not hand-write an empty dashboard.)
+If `docs/metrics.md` contains **no** business metric (only
+self-instrumentation), stop: tell the user to add collectors and document
+them with `make docs-check` first. There is nothing business to visualize
+yet. (The backbone enforces this same refusal with a non-zero exit; do not
+hand-write an empty dashboard.)
 
 ## 2. Design dialogue, anchored in `metrics.md`
 

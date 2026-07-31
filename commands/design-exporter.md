@@ -18,20 +18,30 @@ Candidate target from the command argument: $ARGUMENTS, a name (e.g.
 `demo_exporter`), or a short description of what it monitors if no name is
 picked yet. If empty, ask.
 
-## 1. Read the three references this phase runs on
+## 1. Read the four references this phase runs on
 
-Read all three fully before asking the user anything:
+Read all four fully before asking the user anything:
 
 - `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/references/discovery-inputs.md`:
   the discovery ladder and the per-source extraction method for each rung.
 - `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/references/exporter-architecture.md`:
   the six architecture decisions this phase must produce.
+- `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/references/prometheus-principles.md`:
+  naming, types and labels, which decision 5b below binds every collector to.
 - `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/references/project-journal.md`:
   the journal's format and the protocol every command follows.
 
 ## 2. Walk the discovery ladder, top-down
 
-Ask, in this order, moving to the next rung only when the current one is
+Say this to the user plainly, once, at the top of the walk:
+
+> Put whatever you already have wherever suits you, and tell me where: an
+> OpenAPI or gRPC specification, exported documentation pages, and any output
+> you have captured from the target by hand. I will record the paths. If you
+> have none, that is fine: nothing here is blocking, and the plugin will
+> produce what it needs as we go.
+
+Then ask, in this order, moving to the next rung only when the current one is
 genuinely unavailable. A higher rung is *supplemented* by a lower one where
 the lower adds detail the higher left silent, never replaced by it:
 
@@ -65,14 +75,6 @@ Rungs 1 and 2 already ask for a path or a URL. **Record it.** Whatever the
 user names, and whatever the live probe was pointed at, goes into the brief's
 `## Provenance` section as a `Source material:` line, so a later session does
 not have to ask again or re-solicit a running machine.
-
-Say this to the user plainly, once, at the top of the walk:
-
-> Put whatever you already have wherever suits you, and tell me where: an
-> OpenAPI or gRPC specification, exported documentation pages, and any output
-> you have captured from the target by hand. I will record the paths. If you
-> have none, that is fine: nothing here is blocking, and the plugin will
-> produce what it needs as we go.
 
 Record, for the brief's `## Provenance` section: which rung(s) actually
 grounded the design, including whether the live-target probe (rung 4) was run
@@ -181,7 +183,7 @@ Whatever the ladder grounded, and whatever gaps it left, run
 
     ```
     - Metric name shape: <namespace>_<subsystem>_<name>_<unit>
-    - Shared label vocabulary: pool, node, tenant
+    - Shared label vocabulary: <label>, <label>, <label>
     ```
 6. **Business-alert candidates** per collector, one line each.
 
@@ -256,9 +258,10 @@ just written:
 
 ```
 Design brief written to ./exporter-design-brief.md.
-Journal: 0 of <N> collectors built. First planned: `<name>` (<variant>).
+Journal: 0 of <N> collectors built. Next planned: `<name>` (<variant>).
 
-Review the brief, then it is safe to /clear: everything above is in the file.
+Review the brief, then it is safe to /clear: everything above is in
+./exporter-design-brief.md.
 Then run:
 
     /new-prometheus-exporter <name>
