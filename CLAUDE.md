@@ -97,9 +97,12 @@ Scaffold templates always attribute the generated exporter to `@@OWNER@@`
 never a hardcoded real handle. That is why a real maintainer handle never appears
 under `assets/`.
 
-As a light hygiene check (not a hard gate), the maintainer's handle should
-also stay absent from `skills/`, `commands/`, and `agents/`: generic
-knowledge has no reason to credit anyone. This repository's own credited
+The maintainer's handle must also stay absent from `skills/`, `commands/`,
+and `agents/`: generic knowledge has no reason to credit anyone, and a
+handle leaking into taught content ships to every third party who installs
+the plugin. This is the same hard gate, enforced by the same script:
+`test/zero-source-grep.sh` runs it as HANDLE-GREP and exits non-zero on a
+match, in CI as well as locally. This repository's own credited
 maintainer, named above, is a separate concern: it legitimately appears in
 this file, the `.claude-plugin/` manifests, and README. (The stock
 Apache-2.0 `LICENSE` keeps its bracketed `[name of copyright owner]`

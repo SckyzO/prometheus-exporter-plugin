@@ -63,7 +63,10 @@ case "$rc" in
   *) die "SLURM-GREP scan itself failed (grep exit $rc): $hits" ;;
 esac
 
-# HANDLE-GREP: non-blocking-by-design hygiene, scoped to the taught content
+# HANDLE-GREP: blocking (exit 1 on a match, same as SLURM-GREP above), and
+# has been since this script existed. A handle in taught content ships to
+# every third party who installs the plugin, which is a real defect, not a
+# style nit. Scoped to the taught content
 # under skills/ commands/ agents/ only — the maintainer's own real handle
 # legitimately appears in .claude-plugin/*.json, LICENSE, README.md, and
 # the root CLAUDE.md (exempt by design — see CLAUDE.md's
