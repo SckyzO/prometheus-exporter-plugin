@@ -93,16 +93,22 @@ the layout it would otherwise produce.
 
 ### 3. Per-collector loop
 
-Add each collector from the step 0 list one at a time with
+Add each collector still unticked under the journal's `## Collectors` in
+`docs/exporter-journal.md`, or, in a repository predating it, from the step 0
+list, one at a time with
 `/add-collector <name>`: a `Data`/fetch piece that does I/O and nothing
 else, a pure `Parse` function that does no I/O, and the full test triad
 (parser, `_Collect`, `_Describe`, `_ErrorHandling`) before `Collect` is
 wired into the registry. On error, log and return zero metrics, never a
 partial metric. On a healthy-but-empty scrape, still emit every metric with
 zero *values*, never zero metrics, which reads as a failed scrape to the
-shared `StatusTracker`.
+shared `StatusTracker`. Every command in this workflow reads
+`docs/exporter-journal.md` on entry and completes it on exit, so the remaining
+list, the cardinality budget and the shared label vocabulary live on disk
+rather than in the context window: `/clear` between two collectors is the
+recommended move, not a destructive one.
 
-→ `references/collector-pattern.md`
+→ `references/collector-pattern.md`, `references/project-journal.md`
 
 ### 4. Harden
 
@@ -149,8 +155,10 @@ from, never a dependency it requires.
       against `prometheus.io` via context7.
 - [ ] **2. Scaffold**: `/new-prometheus-exporter <name>` run; repository
       builds and passes its own gate.
-- [ ] **3. Collectors**: `/add-collector <name>` run once per collector in
-      the list; test triad green each time.
+- [ ] **3. Collectors**: `/add-collector <name>` run once per collector left
+      unticked under the journal's `## Collectors` in
+      `docs/exporter-journal.md`, or, in a repository predating it, in the
+      step 0 list; test triad green each time, `/clear` safe between two.
 - [ ] **4. Harden**: `make check` green; `make docs-check` green.
 - [ ] **5. Release & observability**: GoReleaser configured; Definition of
       Done met; `monitoring/` (health alerts + dashboard) in place.
