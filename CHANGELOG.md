@@ -10,14 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **A project journal, `docs/exporter-journal.md`, in every scaffolded
-  exporter.** All four commands read it on entry and complete it on exit,
-  so a build spanning several sessions survives a compaction or a cleared
-  context: `/design-exporter` opens it as the architecture brief,
-  `/new-prometheus-exporter` brings it into the repository in the initial
-  commit and completes the decisions the scaffold settled, `/add-collector`
-  ticks collectors off the plan and records the cardinality it actually
-  observed, and `/generate-dashboard` records each dashboard's audience and
-  method. Eight frozen section headers with one owner each, and the disk
+  exporter.** It carries a build across several sessions, so one survives a
+  compaction or a cleared context. `/design-exporter` opens it as the
+  architecture brief, in the working directory, before any repository
+  exists; `/new-prometheus-exporter` brings it into the repository in the
+  initial commit and completes the decisions the scaffold settled; and
+  `/add-collector` and `/generate-dashboard`, the two with a journal already
+  on disk to find, each read it on entry and complete it on exit, the first
+  ticking collectors off the plan and recording the cardinality it actually
+  observed, the second recording each dashboard's audience and method.
+  Eight frozen section headers, each created by exactly one command, and the disk
   deciding everything it can state about itself: the journal carries only
   the half no file in the repository can, such as the collectors still to
   build, the cardinality budget as an intention, the credential convention
