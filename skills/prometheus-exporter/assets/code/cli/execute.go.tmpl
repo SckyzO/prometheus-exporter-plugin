@@ -27,7 +27,7 @@ import (
 // registry.frag registers this var the exact same way it registers every
 // other collector: no promauto, no second registry to thread through.
 //
-// Single process-wide histogram, labeled only by outcome: if /add-collector
+// Single process-wide histogram, labeled only by outcome: if /prometheus-exporter:add-collector
 // later wires a second CLI-flavor collector that runs a different command,
 // both collectors' timings share these same "success"/"error" buckets and
 // are not distinguishable from each other by command. Fine for this
@@ -103,7 +103,7 @@ var Execute = func(ctx context.Context, name string, args ...string) (out []byte
 	// for its own Limiter (see that Client.Fetch's own comment).
 	//
 	// Enforced here, not just documented above: a collector added later by
-	// /add-collector that forgets its own context.WithTimeout and passes a
+	// /prometheus-exporter:add-collector that forgets its own context.WithTimeout and passes a
 	// bare context.Background() through would otherwise reach
 	// CommandLimiter.Acquire with no bound at all, once a ceiling is
 	// configured, and block forever. Checked only when CommandLimiter is

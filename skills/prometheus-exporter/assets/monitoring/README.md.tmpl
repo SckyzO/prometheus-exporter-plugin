@@ -33,7 +33,7 @@ Everything in `alerts.yml` follows the same shape:
   bottom of `alerts.yml` teaches the same warning/critical + `for:` +
   portable-labels pattern against the bundled `ExampleCollector`'s metric.
   Uncomment and adapt it, or add a new one, as you build real collectors.
-  `/add-collector` (if you have the scaffolding plugin available) proposes
+  `/prometheus-exporter:add-collector` (if you have the scaffolding plugin available) proposes
   a real alert here for every collector's own metrics as you add them.
 
 Both tiers share the same conventions:
@@ -129,7 +129,7 @@ A business-metric dashboard (what your collectors actually measure: queue
 depth, error rates, saturation, whatever your target's domain is) is
 deliberately **not** shipped here: unlike the health dashboard above, there
 is no version of it that's generic across every exporter. Generate one from
-this repo's own `docs/metrics.md` with `/generate-dashboard` (if you have the
+this repo's own `docs/metrics.md` with `/prometheus-exporter:generate-dashboard` (if you have the
 scaffolding plugin available), a short design pass (audience, the RED/USE
 method, key metrics, template variables, drill-down) on top of a deterministic
 backbone that emits exportable Grafana JSON, one panel per documented metric.

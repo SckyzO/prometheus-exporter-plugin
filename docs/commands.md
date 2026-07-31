@@ -1,13 +1,13 @@
 # Commands
 
-The four commands and the review subagent this plugin adds. They are meant to
-be run in order the first time, then `/add-collector` on repeat for the rest
-of the exporter's life.
+The four commands and the review subagent this plugin adds. They are meant
+to be run in order the first time, then `/prometheus-exporter:add-collector`
+on repeat for the rest of the exporter's life.
 
-## `/design-exporter`
+## `/prometheus-exporter:design-exporter`
 
-The architecture-design phase, run before any code is written. It grounds the
-design in a local API spec, a docs folder or URL, context7, or a live
+The architecture-design phase, run before any code is written. It grounds
+the design in a local API spec, a docs folder or URL, context7, or a live
 instance of the target (opt-in, with secret redaction), then writes a
 reviewable design brief.
 
@@ -17,10 +17,10 @@ as a last resort; a database-only target is out of scope), which of the
 and a cardinality budget.
 
 The brief is the journal before the repository exists:
-`/new-prometheus-exporter` moves it in and retitles it. See
-[the generated repository](generated-repository.md).
+`/prometheus-exporter:new-prometheus-exporter` moves it in and retitles it.
+See [the generated repository](generated-repository.md).
 
-## `/new-prometheus-exporter`
+## `/prometheus-exporter:new-prometheus-exporter`
 
 Scaffolds a complete, buildable exporter repository with your choice of HTTP
 or CLI I/O flavor, target model, and license. It includes a working example
@@ -28,7 +28,7 @@ collector with its full test triad, a container-first Makefile, and
 host-agnostic release tooling (GoReleaser, with an optional GitHub Actions
 layer).
 
-## `/add-collector`
+## `/prometheus-exporter:add-collector`
 
 Adds a new collector plus its test triad to an existing scaffolded exporter,
 the action repeated most often over an exporter's life.
@@ -45,7 +45,7 @@ covers the endpoint or command, ticks the collector off the journal with the
 cardinality it actually observed, and regenerates the collector block in the
 exporter's own `README.md` from `docs/metrics.md`.
 
-## `/generate-dashboard`
+## `/prometheus-exporter:generate-dashboard`
 
 Generates one or more business Grafana dashboards from a scaffolded
 exporter's own `docs/metrics.md`, on top of a deterministic backbone that

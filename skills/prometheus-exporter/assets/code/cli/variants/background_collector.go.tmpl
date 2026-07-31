@@ -112,7 +112,7 @@ func (c *ExampleCollector) exampleGetMetrics(ctx context.Context) ([]exampleMetr
 }
 
 // ExampleCollector is the background-refresh variant materialized by
-// /add-collector --variant background. Unlike the synchronous collector
+// /prometheus-exporter:add-collector --variant background. Unlike the synchronous collector
 // (collector.go.tmpl), Collect never runs the command: a background
 // goroutine (started by Start, below) refreshes a cached metric slice on a
 // fixed interval, and Collect only ever reads that cache under mu. This

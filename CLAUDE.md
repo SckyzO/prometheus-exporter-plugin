@@ -5,17 +5,17 @@ Guidance for contributing to this plugin's own development: the
 governs the plugin repository itself, not the exporters it scaffolds (each
 generated exporter ships its own `CONTRIBUTING.md`).
 
-These rules encode universal OSS engineering principles, de-personalized from
-any individual's working preferences. The plugin must depend on no external
-`CLAUDE.md` or personal profile: once installed by a third party, it has to
-behave identically for them as it does here, with no hidden assumption about
-the maintainer's own setup.
+These rules encode universal OSS engineering principles, de-personalized
+from any individual's working preferences. The plugin must depend on no
+external `CLAUDE.md` or personal profile: once installed by a third party,
+it has to behave identically for them as it does here, with no hidden
+assumption about the maintainer's own setup.
 
 ## Commit convention
 
 Conventional Commits with a scope naming the affected area, e.g.
-`feat(scaffold): …`, `fix(templates): …`, `docs(plugin): …`,
-`feat(command): …`, `feat(agent): …`.
+`feat(scaffold): …`, `fix(templates): …`, `docs(plugin): …`, `feat(command):
+…`, `feat(agent): …`.
 
 ## Language
 
@@ -75,8 +75,8 @@ The taught knowledge and templates stand on official Prometheus authority
 shipped file, including this one, may name the production reference exporter
 this plugin's patterns were derived from, nor the concrete systems it
 monitored: those name it just as surely. Before every commit, run
-`test/zero-source-grep.sh` (the canonical, runnable implementation of
-this gate) and confirm it passes; this is a hard gate.
+`test/zero-source-grep.sh` (the canonical, runnable implementation of this
+gate) and confirm it passes; this is a hard gate.
 
 Its SOURCE-GREP half checks a denylist, `SOURCE_TERMS` at the top of the
 script, and `docs/design/re-sync.md` §1 is the authority for what belongs in
@@ -96,35 +96,34 @@ history of how the plugin came to be, never loaded by the plugin at
 runtime), `.git/` and `.superpowers/` (version control and scratch state,
 not shipped artifacts), and `test/` (the harness legitimately contains the
 detector word as its own search pattern, which is why it excludes itself
-from the walk). The rest of `docs/` **is** scanned: it holds the
-user-facing documentation the README links to, which ships as surely as
-anything under `skills/`. This repository's own root `.github/` is excluded for the same
-reason: its CI workflow calls the harness and would otherwise have to
-spell out, in its own YAML, the exact word the harness is checking for.
-That exemption does **not** extend to the taught templates shipped under
+from the walk). The rest of `docs/` **is** scanned: it holds the user-facing
+documentation the README links to, which ships as surely as anything under
+`skills/`. This repository's own root `.github/` is excluded for the same
+reason: its CI workflow calls the harness and would otherwise have to spell
+out, in its own YAML, the exact word the harness is checking for. That
+exemption does **not** extend to the taught templates shipped under
 `skills/prometheus-exporter/assets/.github/`. Those are fully scanned,
-because a leak there would ship inside every generated exporter, which is
-a real defect, not a self-reference artifact. See
-`test/zero-source-grep.sh` for the exact exclude set and how it tells the
-two `.github/` directories apart.
+because a leak there would ship inside every generated exporter, which is a
+real defect, not a self-reference artifact. See `test/zero-source-grep.sh`
+for the exact exclude set and how it tells the two `.github/` directories
+apart.
 
 Scaffold templates always attribute the generated exporter to `@@OWNER@@`
-(its own creator, the third party who runs `/new-prometheus-exporter`),
-never a hardcoded real handle. That is why a real maintainer handle never appears
-under `assets/`.
+(its own creator, the third party who runs
+`/prometheus-exporter:new-prometheus-exporter`), never a hardcoded real
+handle. That is why a real maintainer handle never appears under `assets/`.
 
 The maintainer's handle must also stay absent from `skills/`, `commands/`,
 and `agents/`: generic knowledge has no reason to credit anyone, and a
 handle leaking into taught content ships to every third party who installs
 the plugin. This is the same hard gate, enforced by the same script:
 `test/zero-source-grep.sh` runs it as HANDLE-GREP and exits non-zero on a
-match, in CI as well as locally. This repository's own credited
-maintainer, named above, is a separate concern: it legitimately appears in
-this file, the `.claude-plugin/` manifests, and README. (The stock
-Apache-2.0 `LICENSE` keeps its bracketed `[name of copyright owner]`
-placeholder in the "how to apply" appendix, per Apache convention, so the
-handle does not appear there.) See `docs/design/re-sync.md` for the
-concrete strings and mapping.
+match, in CI as well as locally. This repository's own credited maintainer,
+named above, is a separate concern: it legitimately appears in this file,
+the `.claude-plugin/` manifests, and README. (The stock Apache-2.0 `LICENSE`
+keeps its bracketed `[name of copyright owner]` placeholder in the "how to
+apply" appendix, per Apache convention, so the handle does not appear
+there.) See `docs/design/re-sync.md` for the concrete strings and mapping.
 
 ## Re-sync rule
 
@@ -133,7 +132,7 @@ concrete strings and mapping.
 > source-to-template mapping lives only in `docs/design/re-sync.md`.
 
 When the patterns taught under `skills/prometheus-exporter/` fall behind
-real-world practice, refresh them from a (new or updated) reference exporter,
-reapplying the same de-personalization and [G]/[S] split used originally,
-and record what changed and why in `docs/design/re-sync.md`, not here and
-not in any other shipped file.
+real-world practice, refresh them from a (new or updated) reference
+exporter, reapplying the same de-personalization and [G]/[S] split used
+originally, and record what changed and why in `docs/design/re-sync.md`, not
+here and not in any other shipped file.

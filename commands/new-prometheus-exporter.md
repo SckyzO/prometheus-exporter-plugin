@@ -4,11 +4,11 @@ argument-hint: <name>
 disable-model-invocation: true
 ---
 
-Scaffold a complete, buildable, tested Go Prometheus exporter repository from
-the plugin's templates. This is a side-effecting operation (it creates a new
-directory tree, initializes a git repository, and runs a real build), so only
-run it when the user explicitly invokes this command, and walk through every
-step below in order rather than skipping ahead.
+Scaffold a complete, buildable, tested Go Prometheus exporter repository
+from the plugin's templates. This is a side-effecting operation (it creates
+a new directory tree, initializes a git repository, and runs a real build),
+so only run it when the user explicitly invokes this command, and walk
+through every step below in order rather than skipping ahead.
 
 Candidate exporter name from the command argument: $ARGUMENTS
 
@@ -16,7 +16,8 @@ Candidate exporter name from the command argument: $ARGUMENTS
 
 Look for an architecture brief before asking anything interactively: an
 explicit path if the user named one, otherwise `./exporter-design-brief.md`
-in the current directory (the file `/design-exporter` produces).
+in the current directory (the file `/prometheus-exporter:design-exporter`
+produces).
 
 - **If a brief is found:** read it, then present its `## Architecture
   decisions` section back to the user for confirmation. Do not silently
@@ -29,13 +30,13 @@ in the current directory (the file `/design-exporter` produces).
 
 Either way, read
 `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/references/project-journal.md`
-before step 3c: a brief found here becomes this repository's journal, and that
-reference owns the move. Keep the path the brief was read from, step 3c needs
-it; with no brief, step 3c builds a journal from scratch instead.
+before step 3c: a brief found here becomes this repository's journal, and
+that reference owns the move. Keep the path the brief was read from, step 3c
+needs it; with no brief, step 3c builds a journal from scratch instead.
 
-Do not scaffold a repository whose shape hasn't actually been decided. Before
-collecting a single variable, confirm the architecture-design phase is done.
-If you have not already, read
+Do not scaffold a repository whose shape hasn't actually been decided.
+Before collecting a single variable, confirm the architecture-design phase
+is done. If you have not already, read
 `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/references/exporter-architecture.md`
 for the full method, then confirm the following with the user (don't guess
 on their behalf):
@@ -48,21 +49,21 @@ on their behalf):
   `mysqld_exporter` or the config-driven `sql_exporter` instead.
 - **Single-target vs. multi-target vs. multi-instance.** Maps to
   `--target-model single` (default), `--target-model multi` (one target per
-  request via `?target=`), or `--target-model multi-instance` (a fixed list of
-  instances polled in the background, from `--config.file`). Both multi models
-  **require `--flavor http`**. If the design brief describes many machines with
-  per-machine credentials known ahead of time, or a source that refreshes more
-  slowly than Prometheus's 5-minute staleness window, that is multi-instance;
-  if Prometheus should pick the target per scrape, that is multi. Reject a
-  multi model with a CLI-flavored source rather than silently falling back.
-  `/add-collector` works against any target model, so the choice made here
-  does not close that door.
+  request via `?target=`), or `--target-model multi-instance` (a fixed list
+  of instances polled in the background, from `--config.file`). Both multi
+  models **require `--flavor http`**. If the design brief describes many
+  machines with per-machine credentials known ahead of time, or a source
+  that refreshes more slowly than Prometheus's 5-minute staleness window,
+  that is multi-instance; if Prometheus should pick the target per scrape,
+  that is multi. Reject a multi model with a CLI-flavored source rather than
+  silently falling back. `/prometheus-exporter:add-collector` works against
+  any target model, so the choice made here does not close that door.
 - **The collector list**: which resources/metrics this exporter will track,
   even if only the first one is built today. Later collectors are added one
-  at a time with `/add-collector`.
+  at a time with `/prometheus-exporter:add-collector`.
 - **A rough cardinality budget** and any business-alert candidates per
-  collector (useful context for `/add-collector` later; not a template
-  variable here).
+  collector (useful context for `/prometheus-exporter:add-collector` later;
+  not a template variable here).
 
 If these haven't been worked out yet, stop here and point the user at the
 architecture reference instead of guessing. Once they're decided, continue.
@@ -71,14 +72,14 @@ architecture reference instead of guessing. Once they're decided, continue.
 
 The scaffolder needs a value for every variable below, plus three directory/
 layer selections (`--flavor`, `--forge`, `--target-model`) that are **not**
-template variables: they choose which files get copied, not text
-substituted into them.
+template variables: they choose which files get copied, not text substituted
+into them.
 
 If a brief was consumed in step 0, `DATA_SOURCE`, `DATA_SOURCE_PATH`,
 `NAMESPACE`, and `DEFAULT_PORT` arrive pre-filled from its `## Scaffold
 inputs` section, and the I/O flavor from its `## Architecture decisions`
-section. Confirm them with the user rather than re-asking;
-`MODULE_PATH`, `OWNER`, and `LICENSE` are always asked here regardless.
+section. Confirm them with the user rather than re-asking; `MODULE_PATH`,
+`OWNER`, and `LICENSE` are always asked here regardless.
 
 | Variable | Meaning | HTTP example | CLI example |
 |---|---|---|---|
@@ -97,8 +98,8 @@ Derive or ask for each:
   ask. Validate it per step 2 before deriving anything else from it.
 - **`NAMESPACE`**: suggest a default by stripping a trailing
   `_exporter`/`-exporter` from `EXPORTER_NAME` (e.g. `redis_exporter` →
-  `redis`) and confirm with the user: this becomes a permanent metric prefix,
-  so it's worth getting right before scaffolding.
+  `redis`) and confirm with the user: this becomes a permanent metric
+  prefix, so it's worth getting right before scaffolding.
 - **`MODULE_PATH`**: ask for the Go module path matching wherever this repo
   will actually be hosted, conventionally `github.com/<owner>/<name>`. It is
   independent of the `--forge` choice below (a repo can live on GitHub with
@@ -115,8 +116,8 @@ Derive or ask for each:
 - **`--forge`** (`github` or `none`, not a `--var`): ask which. `github`
   ships the `.github/` layer (CI workflows, dependabot, CODEOWNERS, issue/PR
   templates); `none` omits it entirely. Either way the repo stays versioned
-  and releasable: SemVer tags, a CHANGELOG, and GoReleaser work with no forge
-  at all.
+  and releasable: SemVer tags, a CHANGELOG, and GoReleaser work with no
+  forge at all.
 - **`--flavor`** (`http` or `cli`, not a `--var`): carried over directly
   from the step 0 decision; don't ask again.
 - **`--target-model`** (`single`, `multi`, or `multi-instance`, not a
@@ -125,10 +126,10 @@ Derive or ask for each:
   with `--flavor cli` yourself, with a clear message, before running
   scaffold.sh (which also rejects it, but don't rely on that alone: fail
   fast here, same posture as step 2's name validation).
-- **`--instance-label`** (not a `--var`; multi-instance only): the label name
-  this exporter applies to every instance's series; default `target`. Ask
-  only if the design brief named a more natural dimension (e.g. `library`,
-  `device`). Ignored for single/multi.
+- **`--instance-label`** (not a `--var`; multi-instance only): the label
+  name this exporter applies to every instance's series; default `target`.
+  Ask only if the design brief named a more natural dimension (e.g.
+  `library`, `device`). Ignored for single/multi.
 
 ## 1b. Offer a license
 
@@ -150,8 +151,8 @@ scaffolder's bundled license files): `apache-2.0`, `mit`, `gpl-3.0`, or
 ## 2. Validate the exporter name
 
 Before it touches anything else (including before deriving `NAMESPACE` or
-`MODULE_PATH` from it), check `EXPORTER_NAME` against these rules. Reject and
-ask again (explain why) if it:
+`MODULE_PATH` from it), check `EXPORTER_NAME` against these rules. Reject
+and ask again (explain why) if it:
 
 - is empty,
 - contains a `/` (it must be a single path component, not a path),
@@ -159,12 +160,12 @@ ask again (explain why) if it:
 - contains any whitespace, or
 - starts with a leading `.`.
 
-Any of these can corrupt the scaffolder's path renaming, break the Go module/
-binary name, or produce an invalid systemd unit/user name. Do not pass an
-unvalidated name through to step 3 under any circumstance. As a (non-blocking)
-suggestion, a lowercase `snake_case` name ending in `_exporter` fits Go and
-Prometheus convention best (e.g. `redis_exporter`), but only the five rules
-above are hard rejections.
+Any of these can corrupt the scaffolder's path renaming, break the Go
+module/ binary name, or produce an invalid systemd unit/user name. Do not
+pass an unvalidated name through to step 3 under any circumstance. As a
+(non-blocking) suggestion, a lowercase `snake_case` name ending in
+`_exporter` fits Go and Prometheus convention best (e.g. `redis_exporter`),
+but only the five rules above are hard rejections.
 
 ## 3. Scaffold the repository
 
@@ -174,9 +175,9 @@ check whether that directory already exists and is non-empty. If it does,
 stop: tell the user plainly that this command will not overwrite an existing
 project, and ask them to pick a different or empty directory (the scaffolder
 enforces the same refusal independently, but don't rely on it alone: fail
-fast with a readable message). Never add `--force` unless the user explicitly
-confirms, in this conversation, that they want to overwrite that exact
-directory's contents.
+fast with a readable message). Never add `--force` unless the user
+explicitly confirms, in this conversation, that they want to overwrite that
+exact directory's contents.
 
 Then run:
 
@@ -201,8 +202,8 @@ Then run:
 ```
 
 For `single`/`multi`, pass `--var COLLECTOR_HEALTH_BY=job --var
-COLLECTOR_LOCATION=instance` (the shipped rules aggregate by job and name the
-exporter host). For `multi-instance`, pass `--var
+COLLECTOR_LOCATION=instance` (the shipped rules aggregate by job and name
+the exporter host). For `multi-instance`, pass `--var
 COLLECTOR_HEALTH_BY=job,<instance-label> --var
 COLLECTOR_LOCATION=<instance-label>` so the health rules break down per
 instance.
@@ -215,13 +216,14 @@ working around the failure.
 ## 3b. Apply the concurrency ceiling, if the brief recorded one
 
 If the brief consumed in step 0 carries a `Concurrency ceiling:` line under
-`## Architecture decisions` (only present when `/design-exporter` asked its
-follow-up: target model `multi-instance`, or `single` with at least one
-background collector), set `exporter.max-requests-per-target` in the
-just-scaffolded `<target-dir>/config.example.yml`'s `flags:` section to:
+`## Architecture decisions` (only present when
+`/prometheus-exporter:design-exporter` asked its follow-up: target model
+`multi-instance`, or `single` with at least one background collector), set
+`exporter.max-requests-per-target` in the just-scaffolded
+`<target-dir>/config.example.yml`'s `flags:` section to:
 
-- **`Concurrency ceiling: unlimited`**: commented out, e.g.
-  `# exporter.max-requests-per-target: 4`, documenting the option without
+- **`Concurrency ceiling: unlimited`**: commented out, e.g. `#
+  exporter.max-requests-per-target: 4`, documenting the option without
   changing the shipped unlimited default.
 - **`Concurrency ceiling: <N>`**: active, `exporter.max-requests-per-target:
   <N>`, using the number the user gave.
@@ -230,79 +232,81 @@ Edit in place, don't just append. Check first whether a line naming
 `exporter.max-requests-per-target` (commented or not) already exists under
 `flags:` (it will: `config.example.yml.tmpl` ships one, commented out): if
 so, rewrite that line to the state above; if not, add one, alongside the
-other top-level flags. Either way the file must end
-up with exactly one `exporter.max-requests-per-target` line: `flags:` reads
-each key once, and duplicating it would violate the file's own header
-comment, which promises no setting is ever expressible in two places.
+other top-level flags. Either way the file must end up with exactly one
+`exporter.max-requests-per-target` line: `flags:` reads each key once, and
+duplicating it would violate the file's own header comment, which promises
+no setting is ever expressible in two places.
 
 No brief, or a brief with no `Concurrency ceiling:` line: leave
 `config.example.yml` exactly as scaffold.sh produced it; there is nothing to
-apply. This never triggers on a `multi` scaffold: `/design-exporter` never
-asks the follow-up there, and `--exporter.max-requests-per-target` does not
-exist on a multi-target binary in the first place, since a probed target
-arrives per request rather than accumulating a persistent per-target
-limiter.
+apply. This never triggers on a `multi` scaffold:
+`/prometheus-exporter:design-exporter` never asks the follow-up there, and
+`--exporter.max-requests-per-target` does not exist on a multi-target binary
+in the first place, since a probed target arrives per request rather than
+accumulating a persistent per-target limiter.
 
 ## 3c. Turn the brief into this repository's journal
 
 The scaffold has just run, so `<target-dir>` holds the generated tree, but
 `git init` has not happened yet: that is step 4. Everything written here
 therefore lands in the initial commit, which is exactly what the journal
-needs. An untracked journal is destroyed by a routine `git clean -xdf`, and a
-journal that vanishes silently is worse than no journal, because by then it is
-trusted.
+needs. An untracked journal is destroyed by a routine `git clean -xdf`, and
+a journal that vanishes silently is worse than no journal, because by then
+it is trusted.
 
 Do these five things, in order, and report each one.
 
 **1. Offer to bring the source material in.** If the brief's `## Provenance`
 carries a `Source material:` line naming local paths, show them and ask
 whether to copy them into `<target-dir>/samples/`. That directory already
-exists, with its own `README.md` explaining what belongs there: do not create
-it, and do not touch the README. Copy, never move: the user's originals stay
-exactly where they are, and nothing the user owns is deleted or relocated by
-this command. A URL is recorded, not fetched. The scaffolded `.gitignore`
-already excludes everything under `samples/` except that README, so material
-copied in now stays out of step 4's commit, which is deliberate: it is not
-anonymized and may not be this repository's to redistribute. If there is no
-such line, say so and move on: `samples/` keeps only its README, and
-`/add-collector` will fall back to its own fixture generation.
+exists, with its own `README.md` explaining what belongs there: do not
+create it, and do not touch the README. Copy, never move: the user's
+originals stay exactly where they are, and nothing the user owns is deleted
+or relocated by this command. A URL is recorded, not fetched. The scaffolded
+`.gitignore` already excludes everything under `samples/` except that
+README, so material copied in now stays out of step 4's commit, which is
+deliberate: it is not anonymized and may not be this repository's to
+redistribute. If there is no such line, say so and move on: `samples/` keeps
+only its README, and `/prometheus-exporter:add-collector` will fall back to
+its own fixture generation.
 
-**2. Bring the brief in as the journal.** `project-journal.md`'s
-`## Lifecycle` gives this file two names for one thing, so a brief sitting at
+**2. Bring the brief in as the journal.** `project-journal.md`'s `##
+Lifecycle` gives this file two names for one thing, so a brief sitting at
 the default path is relocated rather than duplicated: there it is the
 plugin's own artifact, not the user's. Using `git mv` is wrong here (the
-brief was never in this repository). Identify it by its first line,
-`# Exporter design brief: <target>`: that is the string the move keys on.
-Copy it to `<target-dir>/docs/exporter-journal.md` and confirm the copy
-exists. Remove the original **only** when it is `./exporter-design-brief.md`
-in the working directory, the one path `## Lifecycle` contemplates. If step 0
-read the brief from a path the user named instead, copy from it, leave it
-exactly where it is, and say so: that file is the user's, and this command
-removes nothing the user owns. Either way the content now lives in the
-committed journal. Retitle the copy's first line from
-`# Exporter design brief: <target>` to `# Exporter journal: <name>`,
-`<name>` being `EXPORTER_NAME`. A brief carrying the eight section headers
-needs nothing else: only that line changes. A brief written by an earlier
-release carries fewer, so add each missing header with a placeholder line, in
-`## Format` order, and lift a `Collectors (ordered):` or cardinality-budget
-bullet out of `## Architecture decisions` into the section that owns it now.
-A placeholder is what an empty section carries, never what real content sits
-beside: drop it again from any section the lift, or the `example` box below,
-has just filled. Report the added headers and the moved bullets, because
-copying such a brief across unedited would commit a file `## Degradation`
-calls corrupt, and would leave the planned collectors somewhere
-`/add-collector` never looks.
+brief was never in this repository). Identify it by its first line, `#
+Exporter design brief: <target>`: that is the string the move keys on. Copy
+it to `<target-dir>/docs/exporter-journal.md` and confirm the copy exists.
+Remove the original **only** when it is `./exporter-design-brief.md` in the
+working directory, the one path `## Lifecycle` contemplates. If step 0 read
+the brief from a path the user named instead, copy from it, leave it exactly
+where it is, and say so: that file is the user's, and this command removes
+nothing the user owns. Either way the content now lives in the committed
+journal. Retitle the copy's first line from `# Exporter design brief:
+<target>` to `# Exporter journal: <name>`, `<name>` being `EXPORTER_NAME`. A
+brief carrying the eight section headers needs nothing else: only that line
+changes. A brief written by an earlier release carries fewer, so add each
+missing header with a placeholder line, in `## Format` order, and lift a
+`Collectors (ordered):` or cardinality-budget bullet out of `## Architecture
+decisions` into the section that owns it now. A placeholder is what an empty
+section carries, never what real content sits beside: drop it again from any
+section the lift, or the `example` box below, has just filled. Report the
+added headers and the moved bullets, because copying such a brief across
+unedited would commit a file `## Degradation` calls corrupt, and would leave
+the planned collectors somewhere `/prometheus-exporter:add-collector` never
+looks.
 
 **3. Complete `## Architecture decisions`.** Step 0 hands the user the final
-call on every line in that section, and step 1 re-confirms the I/O flavor. If
-any line was overruled while confirming, correct it here **and** record the
-change in `## Session log`, for the same reason as point 4 below. Nothing
-repairs this later: `## Reconciliation` recovers the I/O flavor, the target
-model and the namespace from the generated tree, but the credential
+call on every line in that section, and step 1 re-confirms the I/O flavor.
+If any line was overruled while confirming, correct it here **and** record
+the change in `## Session log`, for the same reason as point 4 below.
+Nothing repairs this later: `## Reconciliation` recovers the I/O flavor, the
+target model and the namespace from the generated tree, but the credential
 convention, the concurrency ceiling, the metric-name shape and the shared
-label vocabulary are exactly the half no file on disk can state. A wrong value
-there is wrong for the life of the repository, and it is trusted, which is
-what makes a journal asserting a false state worse than no journal at all.
+label vocabulary are exactly the half no file on disk can state. A wrong
+value there is wrong for the life of the repository, and it is trusted,
+which is what makes a journal asserting a false state worse than no journal
+at all.
 
 **4. Freeze `## Scaffold inputs`.** Append the selectors actually passed to
 `scaffold.sh`, which the brief never contained because they are the
@@ -312,18 +316,18 @@ scaffolder's own choices:
 - Selectors actually passed: --flavor <f>, --target-model <m>, --forge <g>[, --instance-label <l>]
 ```
 
-Do not rewrite the five values already there. If any of them differ from what
-was actually used (the user changed the port, say), correct the line **and**
-record the change in `## Session log`, so the difference is visible rather
-than silently overwritten.
+Do not rewrite the five values already there. If any of them differ from
+what was actually used (the user changed the port, say), correct the line
+**and** record the change in `## Session log`, so the difference is visible
+rather than silently overwritten.
 
-**5. Append to `## Session log`.** One dated line naming the scaffold and its
-selectors, plus the corrections from points 3 and 4 if there were any. Append
-only; never edit or remove an entry already there.
+**5. Append to `## Session log`.** One dated line naming the scaffold and
+its selectors, plus the corrections from points 3 and 4 if there were any.
+Append only; never edit or remove an entry already there.
 
 **If there was no brief**, build the journal from scratch at
-`<target-dir>/docs/exporter-journal.md` instead, with the same title line and
-the same eight headers, verbatim, in this order:
+`<target-dir>/docs/exporter-journal.md` instead, with the same title line
+and the same eight headers, verbatim, in this order:
 
 ```markdown
 # Exporter journal: <name>
@@ -339,38 +343,38 @@ the same eight headers, verbatim, in this order:
 ```
 
 Write all eight, including the ones there is nothing to put under yet: a
-missing header is what makes a journal corrupt, an empty section does not, so
-a section with no content yet carries a placeholder line (`- (none yet)`)
+missing header is what makes a journal corrupt, an empty section does not,
+so a section with no content yet carries a placeholder line (`- (none yet)`)
 rather than being left out. Fill them from what steps 0 to 2 just confirmed
 interactively:
 
 - `## Provenance`: `Grounded by: interactive confirmation only`,
-  `Confidence: low`, and `Source material: none offered` unless the user named
-  paths anyway, in which case record them and offer the copy above.
-- `## Architecture decisions`: the data source, I/O flavor, target model, and
-  any credential convention, concurrency ceiling or naming convention the user
-  stated while confirming step 0.
+  `Confidence: low`, and `Source material: none offered` unless the user
+  named paths anyway, in which case record them and offer the copy above.
+- `## Architecture decisions`: the data source, I/O flavor, target model,
+  and any credential convention, concurrency ceiling or naming convention
+  the user stated while confirming step 0.
 - `## Scaffold inputs`: the five values passed as `--var`, plus the
   `Selectors actually passed:` line from point 4.
-- `## Collectors`: whatever collectors the user named at step 0, one per line,
-  every box unticked.
-- `## Cardinality budget`, `## Dashboards`, `## Open questions / assumptions`:
-  opened with a placeholder line each.
+- `## Collectors`: whatever collectors the user named at step 0, one per
+  line, every box unticked.
+- `## Cardinality budget`, `## Dashboards`, `## Open questions /
+  assumptions`: opened with a placeholder line each.
 - `## Session log`: this scaffold's own dated entry.
 
-**Either way**, brief or no brief, `## Collectors` also gets a ticked box for
-the collector the scaffold itself just built, with the variant it was actually
-wired with:
+**Either way**, brief or no brief, `## Collectors` also gets a ticked box
+for the collector the scaffold itself just built, with the variant it was
+actually wired with:
 
 ```
 - [x] `example`  <variant>  built <date>
 ```
 
-`docs/metrics.md` documents it as `## ExampleCollector` from the initial commit
-on, so `project-journal.md`'s `## Reconciliation` would add exactly this box on
-the next command's entry anyway. Writing it now keeps the journal true from the
-first commit, instead of opening the next session with a correction on a
-repository where nothing is wrong.
+`docs/metrics.md` documents it as `## ExampleCollector` from the initial
+commit on, so `project-journal.md`'s `## Reconciliation` would add exactly
+this box on the next command's entry anyway. Writing it now keeps the
+journal true from the first commit, instead of opening the next session with
+a correction on a repository where nothing is wrong.
 
 No path through this command ends without a journal.
 
@@ -385,8 +389,8 @@ git commit -m "feat: initial scaffold of <EXPORTER_NAME>"
 
 Use a plain Conventional Commit message. Add **no** AI/automation
 attribution of any kind (no `Co-authored-by: Claude`, no "Generated with…",
-no `claude.ai` link). This repository belongs entirely to its new owner,
-not to this tool.
+no `claude.ai` link). This repository belongs entirely to its new owner, not
+to this tool.
 
 ## 5. Prove it builds and passes its own gate
 
@@ -407,15 +411,16 @@ over or silently retry past.
 
 Point the user to:
 
-- **`/add-collector <name>`** to add each further collector still unticked
-  under `## Collectors` in `docs/exporter-journal.md`, with its full test
-  triad and registry wiring. The journal is where that list survives a
-  `/clear`; this conversation is not.
+- **`/prometheus-exporter:add-collector <name>`** to add each further
+  collector still unticked under `## Collectors` in
+  `docs/exporter-journal.md`, with its full test triad and registry wiring.
+  The journal is where that list survives a `/clear`; this conversation is
+  not.
 - **`docs/configuration.md`** and `config.example.yml`: every scaffold ships
   `internal/config` and an unconditional `--config.file` flag, empty by
-  default, so an operator can override flag values from a file instead of the
-  command line and, on the http flavor, set an `http_client_config:` section
-  for authentication or TLS no flag can express.
+  default, so an operator can override flag values from a file instead of
+  the command line and, on the http flavor, set an `http_client_config:`
+  section for authentication or TLS no flag can express.
 - **`docs/metrics.md`**: the metrics reference, kept truthful by `make
   docs-check`.
 - **`monitoring/`**: the shipped Prometheus health alerts, recording rules,
@@ -423,25 +428,25 @@ Point the user to:
 - **`docs/release-process.md`**: how to cut a first real release with
   GoReleaser once there's something worth releasing.
 
-If this exporter was scaffolded with `--target-model multi`, `/add-collector`
-detects that and appends a factory at `// @@PROBE_FACTORIES@@` in
-`cmd/*/main.go` rather than a `register(...)` call into a single-target
-registry.
+If this exporter was scaffolded with `--target-model multi`,
+`/prometheus-exporter:add-collector` detects that and appends a factory at
+`// @@PROBE_FACTORIES@@` in `cmd/*/main.go` rather than a `register(...)`
+call into a single-target registry.
 
-If the architecture brief recorded a credential convention
-(`Credential convention: a|b|c` under `## Architecture decisions`), point the
-user at the matching commented block in `config.example.yml`: `a` is the
-plain `http_client_config:` block (or nothing at all, if no target needs
-credentials), `b` is the block marked "Convention 1", `c` is the block marked
-"Convention 2". Point them at `docs/configuration.md`'s `### Selecting a
-module` section either way, for the scrape config that goes with whichever
-block they uncomment.
+If the architecture brief recorded a credential convention (`Credential
+convention: a|b|c` under `## Architecture decisions`), point the user at the
+matching commented block in `config.example.yml`: `a` is the plain
+`http_client_config:` block (or nothing at all, if no target needs
+credentials), `b` is the block marked "Convention 1", `c` is the block
+marked "Convention 2". Point them at `docs/configuration.md`'s `###
+Selecting a module` section either way, for the scrape config that goes with
+whichever block they uncomment.
 
-If the architecture brief recorded a concurrency ceiling
-(`Concurrency ceiling: unlimited|<N>` under `## Architecture decisions`),
-step 3b above already applied it to `config.example.yml`; point the user
-there, and at `<namespace>_exporter_request_wait_seconds` in
-`docs/metrics.md`, to see it in effect once the exporter is running.
+If the architecture brief recorded a concurrency ceiling (`Concurrency
+ceiling: unlimited|<N>` under `## Architecture decisions`), step 3b above
+already applied it to `config.example.yml`; point the user there, and at
+`<namespace>_exporter_request_wait_seconds` in `docs/metrics.md`, to see it
+in effect once the exporter is running.
 
 ## 7. Hand off to the first collector
 
@@ -457,16 +462,17 @@ Journal: 1 of <N> collectors built. Next planned: `<name>` (<variant>).
 Safe to /clear now: everything above is in docs/exporter-journal.md.
 Then run:
 
-    /add-collector <first planned collector>
+    /prometheus-exporter:add-collector <first planned collector>
 ```
 
-Print it. Never invoke the command: `/add-collector` carries
-`disable-model-invocation: true`, so only the user can run it, which is why
-the block is copy-pasteable text rather than an action. The argument is read
-from the journal, the first unticked entry under `## Collectors`, with its
-variant, not templated. Both counts are read from that same section rather
-than assumed: on a fresh scaffold the built one is the `example` collector
-step 3c ticked, and `<N>` is the planned list plus it. If the journal lists no
-planned collector, suggest
-`/add-collector <name>` with a name the user must choose, and say plainly that
-this one is a placeholder rather than something read from the journal.
+Print it. Never invoke the command: `/prometheus-exporter:add-collector`
+carries `disable-model-invocation: true`, so only the user can run it, which
+is why the block is copy-pasteable text rather than an action. The argument
+is read from the journal, the first unticked entry under `## Collectors`,
+with its variant, not templated. Both counts are read from that same section
+rather than assumed: on a fresh scaffold the built one is the `example`
+collector step 3c ticked, and `<N>` is the planned list plus it. If the
+journal lists no planned collector, suggest
+`/prometheus-exporter:add-collector <name>` with a name the user must
+choose, and say plainly that this one is a placeholder rather than something
+read from the journal.

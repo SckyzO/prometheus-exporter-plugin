@@ -265,7 +265,7 @@ func TestExecute_RespectsCommandLimiter(t *testing.T) {
 
 // TestExecute_RejectsNoDeadlineContextWhenLimiterAttached proves Execute
 // enforces the deadline contract its own doc comment states, rather than
-// merely documenting it: a collector added later by /add-collector that
+// merely documenting it: a collector added later by /prometheus-exporter:add-collector that
 // forgets its own context.WithTimeout and calls Execute with a bare
 // context.Background() must fail fast here, not reach CommandLimiter.Acquire
 // with no bound at all and block forever. The slot is free (ceiling 1, none

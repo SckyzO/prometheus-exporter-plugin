@@ -31,7 +31,7 @@
 #      single business alert that's honest for every exporter. The commented
 #      block teaches the same tiered pattern against the bundled
 #      ExampleCollector's placeholder metric instead of asserting a lie.
-#      `/add-collector` (if you have the scaffolding plugin available)
+#      `/prometheus-exporter:add-collector` (if you have the scaffolding plugin available)
 #      proposes a real, uncommented alert here for every collector you add.
 
 groups:
@@ -155,7 +155,7 @@ groups:
       # portable-labels pattern as the health alerts above, applied to the
       # bundled ExampleCollector as a worked example, replace the metric
       # name and thresholds with your own once you adapt (or add, via
-      # /add-collector) a real collector:
+      # /prometheus-exporter:add-collector) a real collector:
       #
       #   - alert: ExampleTargetDegraded
       #     expr: @@NAMESPACE@@_your_metric_name > 100          # replace with your metric + threshold
@@ -180,6 +180,6 @@ groups:
       # The bundled ExampleCollector itself emits @@NAMESPACE@@_items /
       # @@NAMESPACE@@_healthy (HTTP flavor) or @@NAMESPACE@@_example /
       # @@NAMESPACE@@_example_entries (CLI flavor). See docs/metrics.md for
-      # the pair your flavor actually ships. `/add-collector` (if you have
+      # the pair your flavor actually ships. `/prometheus-exporter:add-collector` (if you have
       # the scaffolding plugin available) proposes a real, uncommented
       # alert here for every collector's own metrics as you add them.

@@ -32,7 +32,7 @@ import (
 // NewClient.
 //
 // Single process-wide histogram, labeled only by outcome: if
-// /add-collector later wires a second HTTP-flavor collector against a
+// /prometheus-exporter:add-collector later wires a second HTTP-flavor collector against a
 // different target, both collectors' request timings share these same
 // "success"/"error" buckets and are not distinguishable from each other by
 // target. Fine for this scaffold's one-collector v0.1 starting point; a

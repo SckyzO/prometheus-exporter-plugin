@@ -5,7 +5,7 @@
 # Fetches (HTTP GET) or executes (CLI) a RUNNING target's description surface,
 # truncates the capture, and REDACTS common secrets before emitting to stdout.
 # Interpreting the redacted output into metric candidates is the caller's job
-# (the /design-exporter model). This script does nothing "clever".
+# (the /prometheus-exporter:design-exporter model). This script does nothing "clever".
 #
 # Lives outside assets/ so scaffold.sh never ships it (cf. generate-dashboard.sh).
 #

@@ -155,7 +155,7 @@ func (s *LimiterSet) For(target string) *Limiter {
 // collectors' client_build.frag runs in the same main(): the wiring that
 // constructs it (see code/http/wiring/client_build.frag) does so only when
 // this is still nil, so the first collector's frag builds the real
-// *LimiterSet and every later one, including anything /add-collector
+// *LimiterSet and every later one, including anything /prometheus-exporter:add-collector
 // appends, reuses that same set instead of silently replacing it. Reusing
 // the same set is what makes For's own promise hold across collectors, not
 // just within one: two collectors naming the same --collector.<name>.target

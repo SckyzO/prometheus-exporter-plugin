@@ -4,12 +4,12 @@ argument-hint: <name>
 disable-model-invocation: true
 ---
 
-Add exactly **one** new collector to an already-scaffolded exporter repository
-in the current working directory. This edits real, already-committed files
-(`cmd/*/main.go`, `docs/metrics.md`, `monitoring/prometheus/alerts.yml`) and
-writes new ones, so only run it when the user explicitly invokes this
-command, and walk through every step below in order rather than skipping
-ahead.
+Add exactly **one** new collector to an already-scaffolded exporter
+repository in the current working directory. This edits real,
+already-committed files (`cmd/*/main.go`, `docs/metrics.md`,
+`monitoring/prometheus/alerts.yml`) and writes new ones, so only run it when
+the user explicitly invokes this command, and walk through every step below
+in order rather than skipping ahead.
 
 Candidate collector name from the command argument: $ARGUMENTS
 
@@ -17,7 +17,8 @@ Candidate collector name from the command argument: $ARGUMENTS
 
 Refuse to guess at a repository that was never scaffolded by this plugin.
 Confirm `internal/collector/` and a `cmd/*/main.go` both exist; if either is
-missing, stop and point the user at `/new-prometheus-exporter` instead.
+missing, stop and point the user at
+`/prometheus-exporter:new-prometheus-exporter` instead.
 
 Detect the flavor from what actually lives in `internal/collector/`. Never
 ask the user something you can check yourself:
@@ -28,8 +29,8 @@ ask the user something you can check yourself:
 | `internal/collector/execute.go` (defines `var Execute`) | **cli** | The CLI flavor's injectable command-execution boundary |
 | Neither, or somehow both | n/a | **Ask the user** which flavor this repo is. Don't guess: the wrong flavor produces a collector with the wrong factory signature and wires it against the wrong shared self-instrumentation. |
 
-Everything below has two columns, **http** and **cli**, for exactly these two
-v0.1 flavors.
+Everything below has two columns, **http** and **cli**, for exactly these
+two v0.1 flavors.
 
 ## Multi-target scaffolds
 
@@ -41,9 +42,9 @@ elif [ -d internal/probe ]; then echo multi
 else echo single; fi
 ```
 
-Three models now exist, and the two multi ones ship different seams:
-`multi` (`internal/probe/`) and `multi-instance` (`internal/instance/`) are
-not interchangeable. If detection printed `multi-instance`, skip the
+Three models now exist, and the two multi ones ship different seams: `multi`
+(`internal/probe/`) and `multi-instance` (`internal/instance/`) are not
+interchangeable. If detection printed `multi-instance`, skip the
 `multi`-only seam check immediately below (it is specific to
 `internal/probe`'s `NamedFactory`) and jump to the multi-instance seam check
 further down, just above "Multi-instance wiring": that seam has its own
@@ -66,18 +67,18 @@ plugin is pre-1.0 and ships no migration path on purpose: an in-place seam
 rewrite touches four files in a repository you do not own, and no gate in
 this plugin can test that it worked. Tell the user plainly that their
 exporter predates this seam, and that the supported route is to rescaffold
-with `/new-prometheus-exporter` and port their collector bodies across. A
-collector's five pieces and its test triad move over unchanged; it is only
-the wiring that differs, so this is a smaller and far more verifiable
-operation than an automated rewrite. Point them at `CHANGELOG.md` for what
-changed between their version and this one.
+with `/prometheus-exporter:new-prometheus-exporter` and port their collector
+bodies across. A collector's five pieces and its test triad move over
+unchanged; it is only the wiring that differs, so this is a smaller and far
+more verifiable operation than an automated rewrite. Point them at
+`CHANGELOG.md` for what changed between their version and this one.
 
 **If the shape is `current`**, proceed.
 
 Then materialize the collector exactly as for single-target (the five-piece
 shape, the test triad, the `docs/metrics.md` entry, the proposed business
-alert), and append **one** `probe.NamedFactory` block at the
-`// @@PROBE_FACTORIES@@` marker in `cmd/*/main.go`:
+alert), and append **one** `probe.NamedFactory` block at the `//
+@@PROBE_FACTORIES@@` marker in `cmd/*/main.go`:
 
 ```go
 	factories = append(factories, probe.NamedFactory{
@@ -101,8 +102,8 @@ current seam exists to remove.
 Append, never replace: the marker stays in place for the next collector.
 
 **Never touch modules.** The config file's `modules:` section references
-collector names. Adding a collector cannot invalidate an existing module, and
-composing scrape profiles is an operator decision, not yours.
+collector names. Adding a collector cannot invalidate an existing module,
+and composing scrape profiles is an operator decision, not yours.
 
 **Refuse `--variant background` on a multi-target scaffold.** A background
 collector refreshes a cache from a goroutine on a fixed interval. In multi,
@@ -111,11 +112,11 @@ a goroutine per probe is an unbounded leak, and the cache it fills would
 never be read twice. Say exactly that, and offer the standard variant
 instead.
 
-**On a multi-instance scaffold, the mirror rule holds: refuse the SYNCHRONOUS
-variant.** Every collector there is a background poller by construction (a
-scrape serves N instances through one /metrics and must never block on a dead
-machine). A synchronous collector would reintroduce exactly that coupling. Say
-so and use the background variant.
+**On a multi-instance scaffold, the mirror rule holds: refuse the
+SYNCHRONOUS variant.** Every collector there is a background poller by
+construction (a scrape serves N instances through one /metrics and must
+never block on a dead machine). A synchronous collector would reintroduce
+exactly that coupling. Say so and use the background variant.
 
 For a **multi-instance** repository, check the seam's shape before touching
 anything:
@@ -126,29 +127,29 @@ grep -q 'New *func(h ' internal/instance/instance.go && echo current || echo out
 
 **If the shape is `outdated`**, this repository was scaffolded before the
 instance-`Handle` seam existed. Its `instance.Factory.New` takes an address
-and an HTTP client config pointer
-(`func(addr string, hcfg *promconfig.HTTPClientConfig) (BackgroundCollector, error)`),
-not a `*instance.Handle`, and each collector built its own transport instead
-of sharing one per machine. The factory block below would not compile there.
+and an HTTP client config pointer (`func(addr string, hcfg
+*promconfig.HTTPClientConfig) (BackgroundCollector, error)`), not a
+`*instance.Handle`, and each collector built its own transport instead of
+sharing one per machine. The factory block below would not compile there.
 
 **Stop and say so. Do not migrate it, and do not append anyway.** This
 plugin is pre-1.0 and ships no migration path on purpose: an in-place seam
 rewrite touches several files in a repository you do not own, and no gate in
 this plugin can test that it worked. Tell the user plainly that their
 exporter predates this seam, and that the supported route is to rescaffold
-with `/new-prometheus-exporter` and port their collector bodies across. A
-collector's five pieces and its test triad move over unchanged; it is only
-the wiring that differs, so this is a smaller and far more verifiable
-operation than an automated rewrite. Point them at `CHANGELOG.md` for what
-changed between their version and this one.
+with `/prometheus-exporter:new-prometheus-exporter` and port their collector
+bodies across. A collector's five pieces and its test triad move over
+unchanged; it is only the wiring that differs, so this is a smaller and far
+more verifiable operation than an automated rewrite. Point them at
+`CHANGELOG.md` for what changed between their version and this one.
 
 **If the shape is `current`**, proceed.
 
 **Multi-instance wiring.** Read the collector's identity (step 2) and
 materialize the BACKGROUND collector file and its test (step 3-4, background
 templates) exactly as for a single-target background collector. Then, at the
-`// @@INSTANCE_FACTORIES@@` marker in `cmd/*/main.go`, append (after the last
-existing `factories = append(...)` block, never replacing the marker):
+`// @@INSTANCE_FACTORIES@@` marker in `cmd/*/main.go`, append (after the
+last existing `factories = append(...)` block, never replacing the marker):
 
 ```go
 	<name>Timeout := kingpin.Flag("collector.<name>.timeout", "Per-request timeout for the <name> collector.").Default("5s").Duration()
@@ -168,17 +169,17 @@ existing `factories = append(...)` block, never replacing the marker):
 ```
 
 `New` takes the instance's `*instance.Handle`, not an address and a client
-config: the Handle owns the transport every collector of that machine shares,
-built once per machine so a reload can swap it underneath them without
-restarting any poller. `h.ClientFor(*<name>Timeout)` binds this collector's
-own per-request timeout to that shared transport and returns an error if the
-timeout is non-positive (the shared transport carries no deadline of its
-own, so a collector reaching it without one would hang its poller forever);
-that error must propagate out of `New`, exactly as shown, never be
-swallowed.
+config: the Handle owns the transport every collector of that machine
+shares, built once per machine so a reload can swap it underneath them
+without restarting any poller. `h.ClientFor(*<name>Timeout)` binds this
+collector's own per-request timeout to that shared transport and returns an
+error if the timeout is non-positive (the shared transport carries no
+deadline of its own, so a collector reaching it without one would hang its
+poller forever); that error must propagate out of `New`, exactly as shown,
+never be swallowed.
 
-There is no `@@CLIENT_INIT@@`/`@@CLIENT_BUILD@@`/`@@COLLECTOR_REGISTRY@@` in a
-multi-instance main (it carries only `@@INSTANCE_FACTORIES@@`), and no
+There is no `@@CLIENT_INIT@@`/`@@CLIENT_BUILD@@`/`@@COLLECTOR_REGISTRY@@` in
+a multi-instance main (it carries only `@@INSTANCE_FACTORIES@@`), and no
 `--collector.<name>.target` flag (the target is each instance's address).
 
 ## 1. Read this repo's real values
@@ -197,9 +198,9 @@ from real code, not substituted from a template:
 
 Read `docs/exporter-journal.md` if it exists, following
 `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/references/project-journal.md`.
-That reference owns the format, the section ownership, and the reconciliation
-and degradation rules. All this step adds is where each disk truth it asks for
-has already been read in this command:
+That reference owns the format, the section ownership, and the
+reconciliation and degradation rules. All this step adds is where each disk
+truth it asks for has already been read in this command:
 
 | Journal claim | Beaten by |
 |---|---|
@@ -209,9 +210,9 @@ has already been read in this command:
 | A `## Collectors` box | the `## <Name>Collector` headers in `docs/metrics.md` |
 
 Correct the file, mark each corrected line `(reconciled <date>)`, add one
-`## Session log` line, and **tell the user what you corrected and why**. This
-is the ordinary case, not an error: a collector built by hand, an interrupted
-run, a colleague who pushed.
+`## Session log` line, and **tell the user what you corrected and why**.
+This is the ordinary case, not an error: a collector built by hand, an
+interrupted run, a colleague who pushed.
 
 **Absent or corrupt**: apply the degradation rules in `project-journal.md`.
 Continue this command to the end either way. Never refuse: a repository
@@ -224,14 +225,14 @@ before deriving anything else from it or touching a single file:
 
 - reject if empty, contains `/`, contains `..`, contains any whitespace, or
   starts with a leading `.` (same hard-reject shape as
-  `/new-prometheus-exporter`'s `EXPORTER_NAME` check);
+  `/prometheus-exporter:new-prometheus-exporter`'s `EXPORTER_NAME` check);
 - **additionally reject if it is not a valid Go identifier**
   (`^[A-Za-z_][A-Za-z0-9_]*$`). Unlike `EXPORTER_NAME`, this name is spliced
-  directly into Go identifiers (`<name>Data`, `<name>GetMetrics`, ...) in step
-  3, so a shape a directory name tolerates (say, a leading digit) would still
-  break compilation here.
-- Non-blocking suggestion: lowercase `snake_case`, matching the names already
-  registered (`example`, the scaffolded collector, plus the
+  directly into Go identifiers (`<name>Data`, `<name>GetMetrics`, ...) in
+  step 3, so a shape a directory name tolerates (say, a leading digit) would
+  still break compilation here.
+- Non-blocking suggestion: lowercase `snake_case`, matching the names
+  already registered (`example`, the scaffolded collector, plus the
   self-instrumentation `http_client_requests`/`command_exec`, which are
   registered the same way without being collectors), not a hard rule.
 
@@ -240,8 +241,9 @@ before deriving anything else from it or touching a single file:
 (fetches on a fixed interval in a goroutine, serving the last cached result
 on every scrape; use when the backend is slow or expensive enough that a
 scrape should never wait on it directly, see
-`${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/references/exporter-architecture.md`'s background-refresh note). Decide
-which applies to this collector before going further:
+`${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/references/exporter-architecture.md`'s
+background-refresh note). Decide which applies to this collector before
+going further:
 
 - If $ARGUMENTS included a trailing `--variant background` token, strip it
   and use the background variant.
@@ -280,7 +282,8 @@ grep -q 'Name: *"<name>"' cmd/*/main.go
 first letter and the first letter following each underscore, then drop the
 underscores: `queue` → `Queue`, `job_queue` → `JobQueue`. The lowercase
 `<name>` form (underscores intact) is used verbatim as the registry string,
-the flag name, and the file name; `<Name>` is used only inside Go identifiers.
+the flag name, and the file name; `<Name>` is used only inside Go
+identifiers.
 
 **Ask the data source:**
 
@@ -289,67 +292,73 @@ the flag name, and the file name; `<Name>` is used only inside Go identifiers.
 | http | The endpoint **path** this collector fetches (the base URL is shared, see step 1) | `/api/queue` |
 | cli | The **command and its arguments**, as separate tokens (not one shell string: `exec.CommandContext` never goes through a shell) | command `queue-cli`, args `stats` |
 
-**Ask the target metrics**: name(s), labels (if any), and help text for each.
-Remind the user (and yourself, when writing step 3's code):
+**Ask the target metrics**: name(s), labels (if any), and help text for
+each. Remind the user (and yourself, when writing step 3's code):
 
 - Metric names and label **keys** must be **static** (a plain string
   literal, or `prometheus.BuildFQName(ns, sub, name)` with string-literal
   arguments), never computed. `make docs-check`
   (`internal/collector/docs_check_test.go`) statically extracts metrics at
-  exactly this precision; anything else is invisible to it or, worse, flagged
-  as an unresolvable warning.
-- Ask what a **healthy-but-empty** scrape looks like for this data (e.g. "the
-  queue can legitimately be empty"). This decides whether you need an
+  exactly this precision; anything else is invisible to it or, worse,
+  flagged as an unresolvable warning.
+- Ask what a **healthy-but-empty** scrape looks like for this data (e.g.
+  "the queue can legitimately be empty"). This decides whether you need an
   always-emitted summary gauge alongside a per-item one. See step 3's
   collector-authoring rule.
 
-**Apply the shared label vocabulary.** If the journal's
-`## Architecture decisions` carries a `Shared label vocabulary:` line, the
-label keys chosen here must come from it wherever the concept matches. If
-this collector genuinely needs a new label, add it to that line and say so.
-Do not invent a spelling that differs from an existing one by an underscore
-or a suffix: `pool` and `pool_name` cannot be joined in any query, and
-nothing on disk states which one is the rule.
+**Apply the shared label vocabulary.** If the journal's `## Architecture
+decisions` carries a `Shared label vocabulary:` line, the label keys chosen
+here must come from it wherever the concept matches. If this collector
+genuinely needs a new label, add it to that line and say so. Do not invent a
+spelling that differs from an existing one by an underscore or a suffix:
+`pool` and `pool_name` cannot be joined in any query, and nothing on disk
+states which one is the rule.
 
-**Check the planned budget.** If the journal's `## Cardinality budget` carries
-a line for this collector, read it back: labels, worst-case series, any
-planned reduction flag. Ask whether the metrics just described still fit. If
-they do not, resolve it here, before writing code, and record what changed.
+**Check the planned budget.** If the journal's `## Cardinality budget`
+carries a line for this collector, read it back: labels, worst-case series,
+any planned reduction flag. Ask whether the metrics just described still
+fit. If they do not, resolve it here, before writing code, and record what
+changed.
 
 ## 3. Materialize the collector file
 
 Read the flavor's template directly. Do **not** run `scaffold.sh` against
 this repository: it copies a whole tree and expects an empty (or
 `--force`-wiped) destination, which would clobber this already-customized
-repo's `go.mod`/`Makefile`/`README.md`/etc. wholesale. A single new file is a
-plain adaptation, not a re-scaffold.
+repo's `go.mod`/`Makefile`/`README.md`/etc. wholesale. A single new file is
+a plain adaptation, not a re-scaffold.
 
 **Synchronous variant (default):**
 
-- http: `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/assets/code/http/collector.go.tmpl`
-- cli: `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/assets/code/cli/collector.go.tmpl`
+- http:
+  `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/assets/code/http/collector.go.tmpl`
+- cli:
+  `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/assets/code/cli/collector.go.tmpl`
 
 **Background variant (step 2 selected it):**
 
-- http: `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/assets/code/http/variants/background_collector.go.tmpl`
-- cli: `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/assets/code/cli/variants/background_collector.go.tmpl`
+- http:
+  `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/assets/code/http/variants/background_collector.go.tmpl`
+- cli:
+  `${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/assets/code/cli/variants/background_collector.go.tmpl`
 
 The background variant keeps the same five-piece shape and the same
 `example`/`Example` placeholder identifiers as the synchronous template, so
 every rename in the table below applies to it unchanged. It additionally
 introduces `interval time.Duration` (a new constructor parameter, see step
-5's new interval flag), `lastRefreshDesc *prometheus.Desc` (the always-emitted
-freshness gauge, metric name literal
+5's new interval flag), `lastRefreshDesc *prometheus.Desc` (the
+always-emitted freshness gauge, metric name literal
 `"@@NAMESPACE@@_example_last_refresh_timestamp_seconds"`: rename this
-EXACTLY like any other `"@@NAMESPACE@@_..."` literal in the table below;
-its `_last_refresh_timestamp_seconds` suffix is a locked, non-negotiable part
-of the name, only `example`→`<name>` and `@@NAMESPACE@@` ever change in it),
+EXACTLY like any other `"@@NAMESPACE@@_..."` literal in the table below; its
+`_last_refresh_timestamp_seconds` suffix is a locked, non-negotiable part of
+the name, only `example`→`<name>` and `@@NAMESPACE@@` ever change in it),
 `Start(ctx context.Context)`, and `Done() <-chan struct{}`. None of these
-need a new rename rule beyond the existing `example`→`<name>`/`Example`→`<Name>`
-pair, since none of those identifiers contain "example"/"Example" themselves.
-`New<Name>Collector` for this variant returns the **concrete** `*<Name>Collector`
-(never `prometheus.Collector`): step 5's registry snippet calls `.Start(ctx)`
-on it, which the bare interface does not expose.
+need a new rename rule beyond the existing
+`example`→`<name>`/`Example`→`<Name>` pair, since none of those identifiers
+contain "example"/"Example" themselves. `New<Name>Collector` for this
+variant returns the **concrete** `*<Name>Collector` (never
+`prometheus.Collector`): step 5's registry snippet calls `.Start(ctx)` on
+it, which the bare interface does not expose.
 
 Write the result to `internal/collector/<name>.go`, applying these renames:
 
@@ -371,9 +380,9 @@ Write the result to `internal/collector/<name>.go`, applying these renames:
 **cli only**: keep `<name>Data`'s `context.WithTimeout(ctx, c.timeout)` call
 immediately before its `Execute(ctx, ...)` call, exactly as `exampleData`
 already has it. `Execute` rejects a `ctx` with no deadline once
-`--exporter.max-requests-per-target` is configured (a real ceiling attached to
-`collector.CommandLimiter`), so any new call site that reaches `Execute` with
-a bare `context.Background()` fails loudly instead of hanging a poller
+`--exporter.max-requests-per-target` is configured (a real ceiling attached
+to `collector.CommandLimiter`), so any new call site that reaches `Execute`
+with a bare `context.Background()` fails loudly instead of hanging a poller
 forever in `CommandLimiter.Acquire`. This only bites a call site that skips
 `exampleData`'s pattern; following the rename above keeps it intact.
 
@@ -382,14 +391,14 @@ That would also mangle prose. Only the identifiers/literals above move
 mechanically. Separately, **rewrite the doc comments**: drop the template's
 "this is a placeholder... replace it when adapting this collector" framing
 (that's no longer true, this collector already targets its real source) and
-write real documentation of what it actually does. Keep comments that explain
-a durable invariant of this exporter as-is (why `Collect` logs-and-returns
-zero metrics on error, why `StatusTracker` treats that as failure, why a
-duplicate label set breaks `Gather` for the whole scrape): those stay true for
-every collector, not just the one being replaced. Within such a kept comment,
-any embedded `@@…@@` sentinel or `collector="example"` illustration must still
-be updated to the real namespace / new collector name: the "why" prose stays;
-the concrete example values get updated.
+write real documentation of what it actually does. Keep comments that
+explain a durable invariant of this exporter as-is (why `Collect`
+logs-and-returns zero metrics on error, why `StatusTracker` treats that as
+failure, why a duplicate label set breaks `Gather` for the whole scrape):
+those stay true for every collector, not just the one being replaced. Within
+such a kept comment, any embedded `@@…@@` sentinel or `collector="example"`
+illustration must still be updated to the real namespace / new collector
+name: the "why" prose stays; the concrete example values get updated.
 
 **Adapt the shape to the user's real metrics**, not just the field count the
 template happens to ship:
@@ -401,31 +410,50 @@ template happens to ship:
   always emit every metric, with zero *values* when there's nothing to
   report, never zero metrics. The shared `StatusTracker` counts emitted
   metrics per scrape and reports `success=0` for the collector when a
-  `Collect` call sends nothing at all, indistinguishable from a real failure.
-  If any of this collector's metrics has variable labels and can legitimately
-  have zero entries on a healthy scrape (an empty queue, an empty list, ...),
-  keep (or add) a fixed-shape, always-emitted gauge alongside it (exactly
-  what the template's `items`/`entries` field already demonstrates) so a
-  "nothing to report" scrape still sends at least one metric.
+  `Collect` call sends nothing at all, indistinguishable from a real
+  failure. If any of this collector's metrics has variable labels and can
+  legitimately have zero entries on a healthy scrape (an empty queue, an
+  empty list, ...), keep (or add) a fixed-shape, always-emitted gauge
+  alongside it (exactly what the template's `items`/`entries` field already
+  demonstrates) so a "nothing to report" scrape still sends at least one
+  metric.
 - More or fewer than the template's two metrics, and any number of labels,
   are all fine: adapt the struct fields, `*prometheus.Desc` fields, and
   `Collect` body freely to match what step 2 asked for.
 
 ## 4. Materialize the full test triad + fixture
 
-Read the flavor's test template(s), choosing the SAME variant step 2 selected
-(synchronous or background). Never mix a synchronous collector file with a
-background test file or vice versa:
+Read the flavor's test template(s), choosing the SAME variant step 2
+selected (synchronous or background). Never mix a synchronous collector file
+with a background test file or vice versa:
 
 **Synchronous variant (default):**
 
-- http: `.../code/http/collector_test.go.tmpl` → write `internal/collector/<name>_test.go`
-- cli: `.../code/cli/collector_test.go.tmpl` **and** `.../code/cli/parser_test.go.tmpl` → merge both into one `internal/collector/<name>_test.go`. (The shipped repo keeps these split only because the *first* collector's files are generically named `collector_test.go`/`parser_test.go`; your new collector already has a unique name, so one file is simpler and matches the http flavor's own convention.) Both templates declare `package collector` and have overlapping imports (`"os"`, `"testing"`, etc.); the merge must keep **one** `package collector` line and a **single deduplicated import block**: a literal concatenation would cause a duplicate-package/duplicate-import compile error.
+- http: `.../code/http/collector_test.go.tmpl` → write
+  `internal/collector/<name>_test.go`
+- cli: `.../code/cli/collector_test.go.tmpl` **and**
+  `.../code/cli/parser_test.go.tmpl` → merge both into one
+  `internal/collector/<name>_test.go`. (The shipped repo keeps these split
+  only because the *first* collector's files are generically named
+  `collector_test.go`/`parser_test.go`; your new collector already has a
+  unique name, so one file is simpler and matches the http flavor's own
+  convention.) Both templates declare `package collector` and have
+  overlapping imports (`"os"`, `"testing"`, etc.); the merge must keep
+  **one** `package collector` line and a **single deduplicated import
+  block**: a literal concatenation would cause a
+  duplicate-package/duplicate-import compile error.
 
 **Background variant (step 2 selected it):**
 
-- http: `.../code/http/variants/background_collector_test.go.tmpl` → write `internal/collector/<name>_test.go`. Already the complete triad in one file (parser test + lifecycle tests): no separate parser template exists for this variant.
-- cli: `.../code/cli/variants/background_collector_test.go.tmpl` → write `internal/collector/<name>_test.go`. Already merged (parser test + lifecycle tests): do not also read `.../code/cli/parser_test.go.tmpl`, which is the SYNCHRONOUS flavor's separate parser file and would duplicate `TestParse<Name>`.
+- http: `.../code/http/variants/background_collector_test.go.tmpl` → write
+  `internal/collector/<name>_test.go`. Already the complete triad in one
+  file (parser test + lifecycle tests): no separate parser template exists
+  for this variant.
+- cli: `.../code/cli/variants/background_collector_test.go.tmpl` → write
+  `internal/collector/<name>_test.go`. Already merged (parser test +
+  lifecycle tests): do not also read `.../code/cli/parser_test.go.tmpl`,
+  which is the SYNCHRONOUS flavor's separate parser file and would duplicate
+  `TestParse<Name>`.
 
 Either variant:
 
@@ -433,8 +461,8 @@ Apply the same identifier renames as step 3 (whichever of that table's rows
 actually occur in the test template: the endpoint-path/command rows won't,
 since the test stubs I/O via `httptest`/an `Execute` swap instead of calling
 the real target). Then **drop these declarations from the copy**: they are
-shared, package-level, and already declared exactly once by this repo's first
-collector's own test file. Copying them again is a Go compile error
+shared, package-level, and already declared exactly once by this repo's
+first collector's own test file. Copying them again is a Go compile error
 ("redeclared in this block"), not a warning:
 
 | Flavor | Drop this declaration | It tests |
@@ -506,9 +534,9 @@ from that instead of inventing one:
 4. **State what you anonymized**, field by field, in your reply. The user is
    the only one who can tell you that something you left alone was actually
    sensitive.
-5. **Leave the original in `samples/`.** Never move or delete it: one capture
-   feeds several collectors, and a later session should not have to go back
-   to the live target.
+5. **Leave the original in `samples/`.** Never move or delete it: one
+   capture feeds several collectors, and a later session should not have to
+   go back to the live target.
 
 If `samples/` is absent or covers nothing relevant, say so in one line and
 write the fixture as before. This is a shortcut, never a requirement.
@@ -517,37 +545,38 @@ write the fixture as before. This is a shortcut, never a requirement.
 
 `// @@CLIENT_INIT@@`, `// @@COLLECTOR_REGISTRY@@`, and `// @@CLIENT_BUILD@@`
 all already exist verbatim in `cmd/*/main.go` (they survive scaffolding for
-exactly this purpose). Insert **after the last existing line** of each block:
-never replace the marker comment itself, and never re-declare `log`, which the
-closures below capture by reference.
+exactly this purpose). Insert **after the last existing line** of each
+block: never replace the marker comment itself, and never re-declare `log`,
+which the closures below capture by reference.
 
 `// @@CLIENT_BUILD@@` only matters for the **http** flavor: it is where a
-collector's `*collector.Client` is actually built, once flags are parsed, so it
-can honor an operator's `http_client_config:` section. For the **cli** flavor,
-the block already spliced there rejects `http_client_config` outright (this
-exec-only flavor has no HTTP transport to authenticate) and does not reference
-any particular collector, so adding a cli collector never needs a new entry at
-that marker; the cli variants below only touch `@@CLIENT_INIT@@`/
-`@@COLLECTOR_REGISTRY@@`, exactly as before.
+collector's `*collector.Client` is actually built, once flags are parsed, so
+it can honor an operator's `http_client_config:` section. For the **cli**
+flavor, the block already spliced there rejects `http_client_config`
+outright (this exec-only flavor has no HTTP transport to authenticate) and
+does not reference any particular collector, so adding a cli collector never
+needs a new entry at that marker; the cli variants below only touch
+`@@CLIENT_INIT@@`/ `@@COLLECTOR_REGISTRY@@`, exactly as before.
 
-Before touching either http variant below, check whether this repository even
-has the configuration layer:
+Before touching either http variant below, check whether this repository
+even has the configuration layer:
 
 ```sh
 grep -q 'cfg, err := config.Load(' cmd/*/main.go && echo has-config || echo pre-config-layer
 ```
 
-**`pre-config-layer`**: this repository was scaffolded before `--config.file`
-existed, so there is no `cfg` variable anywhere in `cmd/*/main.go`. Skip the
-`@@CLIENT_BUILD@@` step below entirely and use the plain, single-flag shape
-this command taught before that layer existed: declare only the target/timeout
-(and, for the background variant, interval) flags at `@@CLIENT_INIT@@`, and
-build the client inline, inside the `register(...)` closure, with
-`collector.NewClient(*<name>Target, *<name>Timeout)`. Never paste a block that
-reads `cfg` into a repository that does not declare one.
+**`pre-config-layer`**: this repository was scaffolded before
+`--config.file` existed, so there is no `cfg` variable anywhere in
+`cmd/*/main.go`. Skip the `@@CLIENT_BUILD@@` step below entirely and use the
+plain, single-flag shape this command taught before that layer existed:
+declare only the target/timeout (and, for the background variant, interval)
+flags at `@@CLIENT_INIT@@`, and build the client inline, inside the
+`register(...)` closure, with `collector.NewClient(*<name>Target,
+*<name>Timeout)`. Never paste a block that reads `cfg` into a repository
+that does not declare one.
 
-**`has-config`**: one more layer to check before following the three-step http
-blocks below, since `--exporter.max-requests-per-target` (the request
+**`has-config`**: one more layer to check before following the three-step
+http blocks below, since `--exporter.max-requests-per-target` (the request
 concurrency ceiling) arrived after `--config.file` did, so a `has-config`
 repository can still predate it:
 
@@ -556,19 +585,20 @@ grep -q 'maxRequestsPerTarget' cmd/*/main.go && echo has-limiter || echo pre-lim
 ```
 
 **`pre-limiter-layer`**: this repository was scaffolded before
-`--exporter.max-requests-per-target` existed, so neither `maxRequestsPerTarget`
-nor `collector.Limiters` exists anywhere in `cmd/*/main.go`. Paste the
-`// @@CLIENT_BUILD@@` block below verbatim EXCEPT its three ceiling-related
-pieces: the `if collector.Limiters == nil { ... }` construction, the
-boot-time `*maxRequestsPerTarget > 0 && ...` refusal, and the trailing
-`.WithLimiter(...)` line. What remains is exactly the
-`if cfg.HTTPClientConfig != nil { ... } else { ... }` shape. This collector
+`--exporter.max-requests-per-target` existed, so neither
+`maxRequestsPerTarget` nor `collector.Limiters` exists anywhere in
+`cmd/*/main.go`. Paste the `// @@CLIENT_BUILD@@` block below verbatim EXCEPT
+its three ceiling-related pieces: the `if collector.Limiters == nil { ... }`
+construction, the boot-time `*maxRequestsPerTarget > 0 && ...` refusal, and
+the trailing `.WithLimiter(...)` line. What remains is exactly the `if
+cfg.HTTPClientConfig != nil { ... } else { ... }` shape. This collector
 simply has no ceiling, symmetric with every other collector already in that
 repository, not a regression: the whole repository predates this feature.
-Never paste a reference to `maxRequestsPerTarget` or `collector.Limiters` into
-a repository that declares neither.
+Never paste a reference to `maxRequestsPerTarget` or `collector.Limiters`
+into a repository that declares neither.
 
-**`has-limiter`**: follow the three-step http blocks below exactly as written.
+**`has-limiter`**: follow the three-step http blocks below exactly as
+written.
 
 **Synchronous variant (default): http**. After the last existing flag line
 under `// @@CLIENT_INIT@@`:
@@ -591,7 +621,7 @@ then, after the last existing block under `// @@CLIENT_BUILD@@`:
 // every collector's client_build wiring consults; THIS block only builds
 // it the first time it runs. That nil check is load-bearing, not
 // defensive-for-its-own-sake: this exact block is spliced once per
-// collector, by scaffold.sh for the first one and by /add-collector for
+// collector, by scaffold.sh for the first one and by /prometheus-exporter:add-collector for
 // every one after, so with a second collector this block runs a second
 // time in the same main(). A plain `limiters := collector.NewLimiterSet(...)`
 // local declaration would either fail to compile the second time ("no
@@ -633,8 +663,8 @@ if cfg.HTTPClientConfig != nil {
 <name>Client = <name>Client.WithLimiter(collector.Limiters.For(*<name>Target))
 ```
 
-then after the last existing `register(...)` call under
-`// @@COLLECTOR_REGISTRY@@`:
+then after the last existing `register(...)` call under `//
+@@COLLECTOR_REGISTRY@@`:
 
 ```go
 register("<name>", func() prometheus.Collector {
@@ -649,8 +679,8 @@ under `// @@CLIENT_INIT@@`:
 <name>Timeout := kingpin.Flag("collector.<name>.timeout", "Per-command timeout for the <name> collector.").Default("5s").Duration()
 ```
 
-then after the last existing `register(...)` call under
-`// @@COLLECTOR_REGISTRY@@`:
+then after the last existing `register(...)` call under `//
+@@COLLECTOR_REGISTRY@@`:
 
 ```go
 register("<name>", func() prometheus.Collector {
@@ -672,8 +702,8 @@ synchronous branch above, plus one new interval flag):
 var <name>Client *collector.Client
 ```
 
-then, after the last existing block under `// @@CLIENT_BUILD@@` (same shape as
-the synchronous variant above, this marker does not vary by variant):
+then, after the last existing block under `// @@CLIENT_BUILD@@` (same shape
+as the synchronous variant above, this marker does not vary by variant):
 
 ```go
 // One ceiling per distinct target address, so two collectors pointed at
@@ -682,7 +712,7 @@ the synchronous variant above, this marker does not vary by variant):
 // every collector's client_build wiring consults; THIS block only builds
 // it the first time it runs. That nil check is load-bearing, not
 // defensive-for-its-own-sake: this exact block is spliced once per
-// collector, by scaffold.sh for the first one and by /add-collector for
+// collector, by scaffold.sh for the first one and by /prometheus-exporter:add-collector for
 // every one after, so with a second collector this block runs a second
 // time in the same main(). A plain `limiters := collector.NewLimiterSet(...)`
 // local declaration would either fail to compile the second time ("no
@@ -724,8 +754,8 @@ if cfg.HTTPClientConfig != nil {
 <name>Client = <name>Client.WithLimiter(collector.Limiters.For(*<name>Target))
 ```
 
-then after the last existing `register(...)` call under
-`// @@COLLECTOR_REGISTRY@@`:
+then after the last existing `register(...)` call under `//
+@@COLLECTOR_REGISTRY@@`:
 
 ```go
 register("<name>", func() prometheus.Collector {
@@ -744,8 +774,8 @@ flag line under `// @@CLIENT_INIT@@`:
 <name>Interval := kingpin.Flag("collector.<name>.interval", "Refresh interval for the <name> collector.").Default("5m").Duration()
 ```
 
-then after the last existing `register(...)` call under
-`// @@COLLECTOR_REGISTRY@@`:
+then after the last existing `register(...)` call under `//
+@@COLLECTOR_REGISTRY@@`:
 
 ```go
 register("<name>", func() prometheus.Collector {
@@ -763,27 +793,27 @@ itself must run there (it just stores the closure), but `log` is still `nil`
 and every flag pointer (`*<name>Target`, `*<name>Interval`, ...) still holds
 its zero value until `kingpin.Parse()` runs, further down. Putting
 `<name>Coll := collector.New<Name>Collector(log, ...)` directly at the
-marker (outside the closure) would construct the collector with a nil
-logger and a zero-value interval, silently broken. Wrapping construction,
+marker (outside the closure) would construct the collector with a nil logger
+and a zero-value interval, silently broken. Wrapping construction,
 `Start(ctx)`, and the `backgroundCollectors` append inside the closure
 (which Go closures capture by reference) defers all of it to the registry
 loop later in `main()`, which runs AFTER `kingpin.Parse()` and after `log`
 is assigned, exactly how the existing synchronous closures above already
 behave, and how `main.go`'s own `backgroundCollectors` seam (Task 1) expects
-to be populated. `ctx` and `backgroundCollectors` are both declared up-front,
-right after `var log` and BEFORE these two markers (Task 1's seam), precisely
-so this closure can capture them; the closure only *dereferences* `ctx` (in
-`Start(ctx)`) at invocation time, long after `kingpin.Parse()`, exactly as it
-does `log`. (In the pristine `main.go.tmpl`, `ctx` used to be declared far
-below these markers in the shutdown block, Task 1 moved it up for exactly
-this reason: a Go closure cannot close over a name declared textually after
-it.)
+to be populated. `ctx` and `backgroundCollectors` are both declared
+up-front, right after `var log` and BEFORE these two markers (Task 1's
+seam), precisely so this closure can capture them; the closure only
+*dereferences* `ctx` (in `Start(ctx)`) at invocation time, long after
+`kingpin.Parse()`, exactly as it does `log`. (In the pristine
+`main.go.tmpl`, `ctx` used to be declared far below these markers in the
+shutdown block, Task 1 moved it up for exactly this reason: a Go closure
+cannot close over a name declared textually after it.)
 
 **Where `// @@CLIENT_BUILD@@` sits, and why the http variants above assign
-`<name>Client` there instead of building it right where it's declared:**
-`// @@CLIENT_INIT@@` and `// @@COLLECTOR_REGISTRY@@` both sit textually
-BEFORE `kingpin.Parse()`, exactly like the two markers discussed above, but
-`// @@CLIENT_BUILD@@` sits AFTER it, still before `log` is constructed.
+`<name>Client` there instead of building it right where it's declared:** `//
+@@CLIENT_INIT@@` and `// @@COLLECTOR_REGISTRY@@` both sit textually BEFORE
+`kingpin.Parse()`, exactly like the two markers discussed above, but `//
+@@CLIENT_BUILD@@` sits AFTER it, still before `log` is constructed.
 `<name>Client` has to be declared as a `var` at `@@CLIENT_INIT@@` (before
 the parse) purely so the `register(...)` closure can close over it, the same
 reason `ctx`/`backgroundCollectors` were moved up front; it can only be
@@ -804,8 +834,8 @@ exist, it is never specific to "the second collector".
 
 ## 6. Update `docs/metrics.md`
 
-Insert a new section immediately before `## Self-instrumentation`, in the same
-4-cell table format the file's own header comment documents:
+Insert a new section immediately before `## Self-instrumentation`, in the
+same 4-cell table format the file's own header comment documents:
 
 ```markdown
 ## <Name>Collector
@@ -831,10 +861,10 @@ the code can't produce; only warns on the reverse). Every row's Type should
 reflect what step 3 actually constructed (`Gauge`/`Counter`/`Histogram`/
 `Summary`).
 
-Optional, not gated by any automated check but cheap and worth doing:
-add `<name>` to `docs/configuration.md`'s "Available collectors" table and,
-if you added a `--collector.<name>.*` flag, its own flags table too. This
-keeps that reference from going stale.
+Optional, not gated by any automated check but cheap and worth doing: add
+`<name>` to `docs/configuration.md`'s "Available collectors" table and, if
+you added a `--collector.<name>.*` flag, its own flags table too. This keeps
+that reference from going stale.
 
 ### Regenerate the README's collector block
 
@@ -847,9 +877,9 @@ keeps that reference from going stale.
 <!-- END GENERATED COLLECTORS -->
 ```
 
-Replace **everything between the two markers** with one line per
-`## <Name>Collector` header now present in `docs/metrics.md`, in the order
-they appear:
+Replace **everything between the two markers** with one line per `##
+<Name>Collector` header now present in `docs/metrics.md`, in the order they
+appear:
 
 ```
 - [`<name>`](docs/metrics.md#<anchor>)
@@ -858,80 +888,82 @@ they appear:
 `<name>` is the **registered collector name**, read from `cmd/*/main.go`:
 `register("<name>"` on the single target model, `Name: *"<name>"` on either
 multi model, the same two greps step 2's idempotent refusal already uses.
-Keep that ` *` in the second one: `gofmt` aligns the `multi-instance` wiring's
-struct fields, so a literal single space matches `multi` but not
-`multi-instance`.
-Never recover it by inverting the header's PascalCase, which cannot tell
-`job_queue` from `jobqueue`: because this block is regenerated in full on
-every run, a guess silently rewrites a correct line the next time a collector
-is added. `docs/metrics.md`'s own `Defined in` line is not a source either;
-the bundled first collector's section names `internal/collector/collector.go`,
-not its collector name.
+Keep that ` *` in the second one: `gofmt` aligns the `multi-instance`
+wiring's struct fields, so a literal single space matches `multi` but not
+`multi-instance`. Never recover it by inverting the header's PascalCase,
+which cannot tell `job_queue` from `jobqueue`: because this block is
+regenerated in full on every run, a guess silently rewrites a correct line
+the next time a collector is added. `docs/metrics.md`'s own `Defined in`
+line is not a source either; the bundled first collector's section names
+`internal/collector/collector.go`, not its collector name.
 
-**On the single target model, not every `register(...)` call is a collector.**
-Every scaffold registers its own self-instrumentation through the same
-`register("<name>", ...)` call, so that grep returns more names than there are
-collectors. Filter by the **shape of the closure**, never by a list of names:
+**On the single target model, not every `register(...)` call is a
+collector.** Every scaffold registers its own self-instrumentation through
+the same `register("<name>", ...)` call, so that grep returns more names
+than there are collectors. Filter by the **shape of the closure**, never by
+a list of names:
 
 ```sh
 grep -n -A 2 'register("' cmd/*/main.go
 ```
 
 Keep a registration only when its closure **constructs** the collector,
-`collector.New<Name>Collector(...)`, which is what all four templates in step
-5 above write and what the scaffolded first collector already has. Drop the
-ones that return an already-built package-level metric
-(`func() prometheus.Collector { return collector.<Something> }`, on one line):
-those are the exporter's own instrumentation, registered there only so
+`collector.New<Name>Collector(...)`, which is what all four templates in
+step 5 above write and what the scaffolded first collector already has. Drop
+the ones that return an already-built package-level metric (`func()
+prometheus.Collector { return collector.<Something> }`, on one line): those
+are the exporter's own instrumentation, registered there only so
 `--no-collector.<name>` can switch them off. Read that shape rather than
 memorising which names it removes: the names come from the flavor's own
 wiring, and a list copied into this file would drift from it and quietly
 resurrect this bug. The multi models need no such filter, since `Name: *"`
-matches only `probe.NamedFactory` and `instance.Factory` entries, and neither
-carries self-instrumentation.
+matches only `probe.NamedFactory` and `instance.Factory` entries, and
+neither carries self-instrumentation.
 
 This is the register-side mirror of the header-side rule below, and both
 halves are needed: on a single-model repository, skipping it leaves the two
-lists differing in length by exactly two, on every run, in a repository where
-nothing is wrong.
+lists differing in length by exactly two, on every run, in a repository
+where nothing is wrong.
 
-Only headers ending in `Collector` are collectors. `## Self-instrumentation`,
-and the multi-target and configuration-reload sections that may sit below it,
-are not, and never appear in this list.
+Only headers ending in `Collector` are collectors. `##
+Self-instrumentation`, and the multi-target and configuration-reload
+sections that may sit below it, are not, and never appear in this list.
 
-**Pair the two filtered lists positionally.** The *k*-th `## <Name>Collector`
-header in `docs/metrics.md` names the same collector as the *k*-th surviving
-registration, both read top to bottom. Nothing else joins a header to a name.
-It holds because neither list is ever inserted into the middle: step 6 above
-adds the new section immediately before `## Self-instrumentation`, the last
-collector position `docs/metrics.md` has, and step 5 adds the new registration
-after the last existing one at its marker. The scaffolded collector opens both
-lists at the same index, and each `/add-collector` run extends both by one, in
-the same run.
+**Pair the two filtered lists positionally.** The *k*-th `##
+<Name>Collector` header in `docs/metrics.md` names the same collector as the
+*k*-th surviving registration, both read top to bottom. Nothing else joins a
+header to a name. It holds because neither list is ever inserted into the
+middle: step 6 above adds the new section immediately before `##
+Self-instrumentation`, the last collector position `docs/metrics.md` has,
+and step 5 adds the new registration after the last existing one at its
+marker. The scaffolded collector opens both lists at the same index, and
+each `/prometheus-exporter:add-collector` run extends both by one, in the
+same run.
 
 That is an invariant this command maintains, not one the file formats
-guarantee, so **verify each pair before writing it**: lowercasing a header and
-dropping its trailing `Collector` must give the registered name with its
+guarantee, so **verify each pair before writing it**: lowercasing a header
+and dropping its trailing `Collector` must give the registered name with its
 underscores removed. `## JobQueueCollector` against `job_queue` gives
-`jobqueue` both ways and pairs; `## ExampleCollector` against `tape` does not.
-This is a check, not a derivation: it can confirm a pair the two lists propose,
-while inverting the PascalCase to *produce* a name stays forbidden above, for
-the reason given there.
+`jobqueue` both ways and pairs; `## ExampleCollector` against `tape` does
+not. This is a check, not a derivation: it can confirm a pair the two lists
+propose, while inverting the PascalCase to *produce* a name stays forbidden
+above, for the reason given there.
 
-If the two lists come back with **different lengths**, or any pair fails that
-check, something outside this command moved them out of step: a collector
-added by hand, a section or a registration removed, an earlier run interrupted
-between step 5 and step 6. Say exactly which pair failed, change nothing in
-`README.md`, and let the user reconcile first. Pairing anyway would mislabel
-every line after the gap, and since this block is regenerated in full every
-time, the wrong labels would then look authoritative.
+If the two lists come back with **different lengths**, or any pair fails
+that check, something outside this command moved them out of step: a
+collector added by hand, a section or a registration removed, an earlier run
+interrupted between step 5 and step 6. Say exactly which pair failed, change
+nothing in `README.md`, and let the user reconcile first. Pairing anyway
+would mislabel every line after the gap, and since this block is regenerated
+in full every time, the wrong labels would then look authoritative.
 
 The anchor is the GitHub-flavored slug of the `## <Name>Collector` header
-itself, never of `<name>`: lowercase it and drop spaces and punctuation.
-`## PoolsCollector` becomes `#poolscollector`, and `## JobQueueCollector`
+itself, never of `<name>`: lowercase it and drop spaces and punctuation. `##
+PoolsCollector` becomes `#poolscollector`, and `## JobQueueCollector`
 becomes `#jobqueuecollector`. Mind the underscore: a collector named
-`job_queue` has a header spelled `## JobQueueCollector` with no underscore in
-it, so its anchor has none either, while its link text keeps the underscore.
+`job_queue` has a header spelled `## JobQueueCollector` with no underscore
+in it, so its anchor has none either, while its link text keeps the
+underscore.
 
 Keep the second comment line: it is what tells the next reader the block is
 not theirs to edit. Regenerate in full; never append. The block is a
@@ -961,7 +993,7 @@ tiered pattern already established by the health alerts above it:
 
 ```yaml
       # ──────────────────────────────────────────────────────────────────
-      # Business: <Name>Collector (added via /add-collector)
+      # Business: <Name>Collector (added via /prometheus-exporter:add-collector)
       # ──────────────────────────────────────────────────────────────────
       - alert: <Name>Degraded
         expr: <namespace>_<metric>{<label selector, if any>} > <warning threshold>
@@ -1004,9 +1036,10 @@ make docs-check
 Show the real output. Both must be green: `make test` compiles and runs
 everything (a redeclaration from step 4, a wiring typo from step 5, or a
 missing import all surface here as build failures), and `make docs-check`
-fails if step 6 documents something step 3 doesn't produce, or logs a WARNING
-if step 3 produces something step 6 doesn't document: either mismatch means
-go back and fix steps 3/6 against each other, not silence the check.
+fails if step 6 documents something step 3 doesn't produce, or logs a
+WARNING if step 3 produces something step 6 doesn't document: either
+mismatch means go back and fix steps 3/6 against each other, not silence the
+check.
 
 For extra confidence before handing this back, `make lint`/`make vet` (fast)
 and the full `make check` (vet + lint + test + vuln + actionlint + zizmor +
@@ -1015,16 +1048,16 @@ would catch a new collector file that never made it into step 5's registry.
 
 ## 8b. Complete the journal
 
-Only once `make test` and `make docs-check` have both printed green in step 8.
-Never before: a journal that records a collector the build rejects is exactly
-the lie this file exists to prevent.
+Only once `make test` and `make docs-check` have both printed green in step
+8. Never before: a journal that records a collector the build rejects is
+exactly the lie this file exists to prevent.
 
 If `docs/exporter-journal.md` is absent, offer to create it now, per
 `project-journal.md`'s degradation rules, writing all eight headers from its
-`## Format` with a placeholder line under every section this step cannot fill
-yet (its `## Section ownership` rule), then continue. A file holding only the
-three sections below would be missing headers, which is exactly what
-`## Degradation` calls corrupt, so the next command would open with a
+`## Format` with a placeholder line under every section this step cannot
+fill yet (its `## Section ownership` rule), then continue. A file holding
+only the three sections below would be missing headers, which is exactly
+what `## Degradation` calls corrupt, so the next command would open with a
 rebuild-or-leave prompt on a perfectly healthy repository. If the journal is
 already corrupt, ask before writing anything.
 
@@ -1039,9 +1072,9 @@ Three edits:
    If it was not on the list at all (a collector nobody planned), add it,
    already ticked, and say so.
 
-2. **Record the observed cardinality** under `## Cardinality budget`, next to
-   the planned figure rather than replacing it. The gap between intent and
-   observation is the interesting part:
+2. **Record the observed cardinality** under `## Cardinality budget`, next
+   to the planned figure rather than replacing it. The gap between intent
+   and observation is the interesting part:
 
    ```
    - `<name>`: labels <list>; worst case ~<N> series; observed <N>
@@ -1065,10 +1098,11 @@ Three edits:
   with `curl -s http://localhost:<port>/metrics | grep <metric_name>` (this
   repo's own `CONTRIBUTING.md` Definition of Done, steps 5-8).
 - Read the remaining unticked entries from the journal's `## Collectors` and
-  name the next one explicitly. Do not say "repeat for the rest of the list":
-  the point of the journal is that the list is on disk and can be named.
-- Commit with `feat(collector): add <name> collector` (see `CONTRIBUTING.md`'s
-  commit-message convention).
+  name the next one explicitly. Do not say "repeat for the rest of the
+  list": the point of the journal is that the list is on disk and can be
+  named.
+- Commit with `feat(collector): add <name> collector` (see
+  `CONTRIBUTING.md`'s commit-message convention).
 
 End with the resumption block `project-journal.md` defines:
 
@@ -1079,15 +1113,17 @@ Journal: <N> of <M> collectors built. Next planned: `<next>` (<variant>).
 Safe to /clear now: everything above is in docs/exporter-journal.md.
 Then run:
 
-    /add-collector <next>
+    /prometheus-exporter:add-collector <next>
 ```
 
-When no unticked collector remains, suggest `/generate-dashboard` instead.
-Print the block; never invoke the command.
+When no unticked collector remains, suggest
+`/prometheus-exporter:generate-dashboard` instead. Print the block; never
+invoke the command.
 
 With no usable journal (absent and step 8b's offer declined, or corrupt and
 left untouched at its prompt) there is no list to read from. Drop the
-`Journal:` line rather than inventing counts, suggest `/add-collector <name>`
-with a name the user must choose, and say plainly that this one is a
-placeholder rather than something read from the journal. The rest of the
-block still holds: the gate is green and the work is on disk.
+`Journal:` line rather than inventing counts, suggest
+`/prometheus-exporter:add-collector <name>` with a name the user must
+choose, and say plainly that this one is a placeholder rather than something
+read from the journal. The rest of the block still holds: the gate is green
+and the work is on disk.

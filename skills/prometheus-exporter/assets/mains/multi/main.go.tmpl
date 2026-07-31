@@ -149,7 +149,7 @@ func main() {
 
 	// factories holds one entry per probed collector, in declaration order.
 	// The // @@PROBE_FACTORIES@@ marker below is where scaffold.sh injects the
-	// starter collector, and where /add-collector appends every collector you
+	// starter collector, and where /prometheus-exporter:add-collector appends every collector you
 	// add later. Leave the marker in place.
 	var factories []probe.NamedFactory
 

@@ -1,9 +1,9 @@
 # Docs and governance: lockstep metrics docs, `make docs-check`, and the Definition of Done
 
-This is step 4 of the workflow: keeping every doc a scaffolded exporter ships
-truthful against the code, and the contribution process that enforces it
-(`makefile-and-tooling.md` covers the tooling gate itself; this document is
-the docs half of hardening). Everything below matches
+This is step 4 of the workflow: keeping every doc a scaffolded exporter
+ships truthful against the code, and the contribution process that enforces
+it (`makefile-and-tooling.md` covers the tooling gate itself; this document
+is the docs half of hardening). Everything below matches
 `internal/collector/docs_check_test.go.tmpl`, `CONTRIBUTING.md.tmpl`,
 `SECURITY.md.tmpl`, `CHANGELOG.md.tmpl`, and the four `docs/*.md.tmpl` files
 as shipped. Read those alongside this document, not instead of it.
@@ -16,22 +16,21 @@ which is which matters before you edit one by hand:
 - **Templated** ([G] structure, strong across every scaffolded exporter):
   `docs/development.md`, `docs/release-process.md`,
   `docs/validation-checklist.md`, `docs/configuration.md`. These come
-  straight from `docs/*.md.tmpl` under this plugin's own `assets/`: the
-  same `make` targets, the same release flow, the same copy-pasteable
-  validation steps, for any exporter this scaffold produces. Editing one by
-  hand in a generated repo is normal and expected as the exporter grows.
+  straight from `docs/*.md.tmpl` under this plugin's own `assets/`: the same
+  `make` targets, the same release flow, the same copy-pasteable validation
+  steps, for any exporter this scaffold produces. Editing one by hand in a
+  generated repo is normal and expected as the exporter grows.
 - **Generated, and continuously validated against the code**:
-  `docs/metrics.md`. This one is *not* staged under `assets/docs/`: it
-  lives at `code/<flavor>/metrics.md.tmpl`, alongside that flavor's
-  collector template, because its content genuinely differs per flavor
-  (HTTP's bundled collector emits `@@NAMESPACE@@_items`/
-  `@@NAMESPACE@@_healthy`; CLI's emits `@@NAMESPACE@@_example`/
-  `@@NAMESPACE@@_example_entries`: a single shared file would be a lie for
-  whichever flavor didn't get chosen). `scaffold.sh` relocates it to
-  `docs/metrics.md` at scaffold time, after flavor selection, specifically
-  so it lands at the one path every other doc and `make docs-check`
-  (below) expects. Past scaffold time, it is kept honest by a test, not by
-  hand-editing discipline.
+  `docs/metrics.md`. This one is *not* staged under `assets/docs/`: it lives
+  at `code/<flavor>/metrics.md.tmpl`, alongside that flavor's collector
+  template, because its content genuinely differs per flavor (HTTP's bundled
+  collector emits `@@NAMESPACE@@_items`/ `@@NAMESPACE@@_healthy`; CLI's
+  emits `@@NAMESPACE@@_example`/ `@@NAMESPACE@@_example_entries`: a single
+  shared file would be a lie for whichever flavor didn't get chosen).
+  `scaffold.sh` relocates it to `docs/metrics.md` at scaffold time, after
+  flavor selection, specifically so it lands at the one path every other doc
+  and `make docs-check` (below) expects. Past scaffold time, it is kept
+  honest by a test, not by hand-editing discipline.
 - **Stub**: `CHANGELOG.md`, starting at a bare `## [Unreleased]` heading,
   with content accumulating release by release from here (below).
 
@@ -49,11 +48,12 @@ parser expects:
 ```
 
 `docs/configuration.md` (flags and the collectors table),
-`docs/validation-checklist.md` (a `grep`-based `docs/metrics.md`-vs-live-scrape
-diff, Step 8), and the root `README.md` (its own "Metrics" section pointing
-straight at `make docs-check`) all lean on this same file rather than
-re-stating its content: one source of truth for what this exporter emits,
-referenced from four places instead of duplicated into four places.
+`docs/validation-checklist.md` (a `grep`-based
+`docs/metrics.md`-vs-live-scrape diff, Step 8), and the root `README.md`
+(its own "Metrics" section pointing straight at `make docs-check`) all lean
+on this same file rather than re-stating its content: one source of truth
+for what this exporter emits, referenced from four places instead of
+duplicated into four places.
 
 ## `make docs-check`: docs are a subset of code, mechanically
 
@@ -69,8 +69,8 @@ see `makefile-and-tooling.md`).
 metric defined anywhere else, `internal/probe/probe.go`'s `probe_success`/
 `probe_duration_seconds` or `internal/reload/reload.go`'s two
 configuration-reload gauges, is invisible to this check by construction, in
-both directions: it can never be flagged as undocumented, and a plain
-`| \`metric_name\` | ... |` table row naming it would be flagged as a LIE
+both directions: it can never be flagged as undocumented, and a plain `|
+\`metric_name\` | ... |` table row naming it would be flagged as a LIE
 (documented, but absent from `internal/collector/*.go`), on every build,
 regardless of whether that metric is actually registered somewhere else.
 `docs/metrics.md`'s shipped template files document both of these as prose
@@ -87,13 +87,12 @@ under `internal/collector/` via `go/ast`, statically resolving every
 `prometheus.NewDesc(...)` call and every Opts-based constructor
 (`NewHistogramVec`/`NewCounterVec`/`NewGaugeVec`/`NewSummaryVec` and their
 non-Vec `NewHistogram`/`NewCounter`/`NewGauge`/`NewSummary` forms) it finds,
-resolving a metric name built from a plain string literal exactly the
-same way as one built from a `prometheus.BuildFQName(ns, sub, name)` call
-whose three arguments are themselves literals (both are the idiomatic,
-static way to compose a name; neither is treated as more suspect than the
-other). It then parses
-`docs/metrics.md`'s own table rows and diffs the two sets in **both
-directions, with different consequences**:
+resolving a metric name built from a plain string literal exactly the same
+way as one built from a `prometheus.BuildFQName(ns, sub, name)` call whose
+three arguments are themselves literals (both are the idiomatic, static way
+to compose a name; neither is treated as more suspect than the other). It
+then parses `docs/metrics.md`'s own table rows and diffs the two sets in
+**both directions, with different consequences**:
 
 | Direction | Consequence | Why |
 |---|---|---|
@@ -103,8 +102,8 @@ directions, with different consequences**:
 
 That third row is the one easiest to get wrong when adapting this pattern
 elsewhere: an earlier version of this exact checker silently dropped an
-unresolvable call site from its extracted set with no trace at all,
-which meant a *correct*, truthfully-documented metric built from
+unresolvable call site from its extracted set with no trace at all, which
+meant a *correct*, truthfully-documented metric built from
 `prometheus.BuildFQName(...)` could fail the build as a false "lie" simply
 because the extractor didn't yet know how to read that call shape, not
 because the doc was ever actually wrong. `docs_check_test.go`'s own
@@ -120,27 +119,27 @@ themselves literals. A genuinely computed name (string concatenation,
 `fmt.Sprintf`, a variable) is invisible to this check and surfaces as the
 warning above, which is also, independently of this tool, a Prometheus
 naming anti-pattern in its own right (`prometheus-principles.md`). This is
-enforced the same way for a collector `/add-collector` adds as for the
-bundled example: nothing about the mechanism is aware of which collector it
-is looking at.
+enforced the same way for a collector `/prometheus-exporter:add-collector`
+adds as for the bundled example: nothing about the mechanism is aware of
+which collector it is looking at.
 
 **A completely empty extraction fails the build outright** (`t.Fatal`,
-distinct from the per-metric checks above): every flavor this scaffold
-ships defines at least the shared `StatusTracker`'s two metrics, so zero
-extracted metrics means the extractor itself broke (a refactor changed a
-call shape it used to recognize), not that this package genuinely has none.
-Left unguarded, a broken extractor would make every future run vacuously
-pass forever regardless of what `docs/metrics.md` claims, exactly the kind
-of silent hole this test exists to close.
+distinct from the per-metric checks above): every flavor this scaffold ships
+defines at least the shared `StatusTracker`'s two metrics, so zero extracted
+metrics means the extractor itself broke (a refactor changed a call shape it
+used to recognize), not that this package genuinely has none. Left
+unguarded, a broken extractor would make every future run vacuously pass
+forever regardless of what `docs/metrics.md` claims, exactly the kind of
+silent hole this test exists to close.
 
 **This plugin proves the check actually works, not just that it exists.**
-`test/golden-smoke.sh` injects a fabricated row
-(`` `THIS_METRIC_DOES_NOT_EXIST_lie_injection_check` ``) into a freshly
+`test/golden-smoke.sh` injects a fabricated row (``
+`THIS_METRIC_DOES_NOT_EXIST_lie_injection_check` ``) into a freshly
 scaffolded `docs/metrics.md`, confirms `make docs-check` fails on it, then
 reverts the injection and confirms `make docs-check` passes again, on every
 scaffolded flavor/forge combination. A docs-check that always passes
-(because it never actually runs the comparison, say) would look identical
-to a working one from the outside; this round-trip is what tells the
+(because it never actually runs the comparison, say) would look identical to
+a working one from the outside; this round-trip is what tells the
 difference.
 
 ## `CONTRIBUTING.md` is the Definition of Done
@@ -171,34 +170,32 @@ being followed in the first place:
 
 - **Adding a collector**: the five pieces plus the test triad
   (`collector-pattern.md`), the static-metric-name rule `docs_check_test.go`
-  enforces mechanically (above), and registration at the
-  `// @@COLLECTOR_REGISTRY@@` marker (`project-scaffold.md`).
-- **The collector-authoring rule**: always emit your metrics on a
-  successful scrape, zero *values* when there's nothing to report, never
-  zero metrics; a bare `return` on "nothing to report" reads as a failed
-  scrape to `StatusTracker`, indistinguishable from a real outage.
-- **Test-data anonymization**: real hostnames, usernames, and
-  account/tenant names never reach a committed fixture, replaced with a
-  placeholder that preserves shape (field count, rough magnitude) without
-  preserving content.
-- **Common Pitfalls**, named explicitly rather than left to be
-  rediscovered: zero metrics vs. zero-valued metrics (above), two
-  `MustNewConstMetric` calls sharing one descriptor and label set breaking
-  the *entire* scrape at `Gather` time (not just the offending collector's
-  own output), and a flag dereferenced inside a `register()` closure at
-  declaration time instead of construction time always reading its zero
-  value, never the parsed default.
-- **Reviewing contributions**: name the blocking concern, not a judgment
-  on the contributor; *"I'm not closing the PR. I just want to make sure
-  we get this right together"* over silence or a cold rejection.
+  enforces mechanically (above), and registration at the `//
+  @@COLLECTOR_REGISTRY@@` marker (`project-scaffold.md`).
+- **The collector-authoring rule**: always emit your metrics on a successful
+  scrape, zero *values* when there's nothing to report, never zero metrics;
+  a bare `return` on "nothing to report" reads as a failed scrape to
+  `StatusTracker`, indistinguishable from a real outage.
+- **Test-data anonymization**: real hostnames, usernames, and account/tenant
+  names never reach a committed fixture, replaced with a placeholder that
+  preserves shape (field count, rough magnitude) without preserving content.
+- **Common Pitfalls**, named explicitly rather than left to be rediscovered:
+  zero metrics vs. zero-valued metrics (above), two `MustNewConstMetric`
+  calls sharing one descriptor and label set breaking the *entire* scrape at
+  `Gather` time (not just the offending collector's own output), and a flag
+  dereferenced inside a `register()` closure at declaration time instead of
+  construction time always reading its zero value, never the parsed default.
+- **Reviewing contributions**: name the blocking concern, not a judgment on
+  the contributor; *"I'm not closing the PR. I just want to make sure we get
+  this right together"* over silence or a cold rejection.
 
 `CONTRIBUTING.md` hands off to `docs/release-process.md` (the maintainer
 workflow for actually cutting a release: branching, integrating community
 PRs with credit, the defensive audit, validating continuously) and
 `docs/validation-checklist.md` (the same end-to-end validation as a
 copy-pasteable, numbered command/expected/if-it-fails procedure, written so
-a human or an AI agent can run it without prior context) for everything
-past "the change itself is done."
+a human or an AI agent can run it without prior context) for everything past
+"the change itself is done."
 
 ## `SECURITY.md` and `CHANGELOG.md`
 

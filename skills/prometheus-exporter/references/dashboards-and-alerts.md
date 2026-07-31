@@ -1,15 +1,16 @@
 # Dashboards and alerts: Prometheus alerting, recording rules, and the health dashboard
 
-This is step 5 of the workflow: what a scaffolded exporter ships so it can be
-*observed*, not just scraped (`cicd-and-release.md` covers the release
+This is step 5 of the workflow: what a scaffolded exporter ships so it can
+be *observed*, not just scraped (`cicd-and-release.md` covers the release
 pipeline; `packaging-and-ops.md` and `security-and-hardening.md` cover the
 rest of this step). Everything below matches
-`monitoring/prometheus/alerts.yml.tmpl`, `monitoring/prometheus/rules.yml.tmpl`,
-`monitoring/grafana/health-dashboard.json.tmpl`, and `monitoring/README.md.tmpl`
-as shipped. Read those alongside this document, not instead of it. The
-candidate business alerts this document's `/add-collector` section
-materializes are drafted one step earlier, at architecture time
-(`exporter-architecture.md`'s §6).
+`monitoring/prometheus/alerts.yml.tmpl`,
+`monitoring/prometheus/rules.yml.tmpl`,
+`monitoring/grafana/health-dashboard.json.tmpl`, and
+`monitoring/README.md.tmpl` as shipped. Read those alongside this document,
+not instead of it. The candidate business alerts this document's
+`/prometheus-exporter:add-collector` section materializes are drafted one
+step earlier, at architecture time (`exporter-architecture.md`'s §6).
 
 ## The boundary: alerting is Prometheus's job; dashboards are Grafana's
 
@@ -19,8 +20,8 @@ way code is; **dashboards are a Grafana concern**, an extension this
 scaffold ships one example of (health) plus the pattern to build your own
 (business). The two live in the same `monitoring/` directory but answer
 different questions: an alert pages or warns someone; a dashboard is looked
-at, by a person, after something already got their attention (an alert,
-an incident, curiosity). Don't reach for a dashboard panel to do an alert's
+at, by a person, after something already got their attention (an alert, an
+incident, curiosity). Don't reach for a dashboard panel to do an alert's
 job, or vice versa.
 
 ## Two tiers, one pattern
@@ -99,8 +100,8 @@ What your own collectors measure is specific to your target, so there is no
 single business alert that's honest for every exporter this plugin can
 scaffold. `alerts.yml` ships a **commented-out** worked example instead of a
 fabricated one: a `#` YAML comment, so it can neither break `promtool check
-rules` nor assert a metric that doesn't exist for your flavor. It teaches the
-identical warning/critical + `for:` + portable-labels shape against the
+rules` nor assert a metric that doesn't exist for your flavor. It teaches
+the identical warning/critical + `for:` + portable-labels shape against the
 bundled `ExampleCollector`'s placeholder metric:
 
 ```yaml
@@ -118,13 +119,13 @@ bundled `ExampleCollector`'s placeholder metric:
 #       component: exporter
 ```
 
-**`/add-collector` proposes a real, uncommented alert here for every
-collector you add** (its own step 7). The candidate alert you wrote down at
-architecture time (`exporter-architecture.md`'s §6: *"what functional
-condition, if this collector's own metrics showed it, should page or warn
-someone?"*) becomes this concrete two-rule block, inserted immediately
-before the shipped teaching comment (which stays, for the next collector
-after this one):
+**`/prometheus-exporter:add-collector` proposes a real, uncommented alert
+here for every collector you add** (its own step 7). The candidate alert you
+wrote down at architecture time (`exporter-architecture.md`'s §6: *"what
+functional condition, if this collector's own metrics showed it, should page
+or warn someone?"*) becomes this concrete two-rule block, inserted
+immediately before the shipped teaching comment (which stays, for the next
+collector after this one):
 
 ```yaml
 - alert: <Name>Degraded
@@ -142,9 +143,10 @@ after this one):
 ```
 
 If none of a collector's metrics has a sensible "bad" direction (a purely
-informational gauge), `/add-collector` says so explicitly and skips
-proposing an alert rather than inventing a meaningless threshold, the same
-anti-fabrication discipline as the commented example above.
+informational gauge), `/prometheus-exporter:add-collector` says so
+explicitly and skips proposing an alert rather than inventing a meaningless
+threshold, the same anti-fabrication discipline as the commented example
+above.
 
 ## Recording rules: pre-computed, and NaN-guarded where it's real
 
@@ -167,22 +169,22 @@ average down.
 **The `(... > 0)` guard is not decorative here: read why before copying it
 elsewhere.** If *every* collector is failing at once (the scraped target is
 entirely unreachable, say), every collector is still present and reporting,
-just at value `0`, so both the numerator and the denominator evaluate to
-the literal number `0`. That's a **real `0/0`**, not merely "no data," and
+just at value `0`, so both the numerator and the denominator evaluate to the
+literal number `0`. That's a **real `0/0`**, not merely "no data," and
 without the guard PromQL would return `NaN`. The guard turns that case into
 "no data" instead, which is the honest answer: the average duration of the
 currently-healthy collectors is meaningless when there are none.
 
 A second, commented example shows the more familiar counter-based form of
 the same guard (`rate(...) / (rate(...) > 0)`) applied to this exporter's
-own request/command duration histogram (`@@NAMESPACE@@_exporter_request_duration_seconds`
-on HTTP, `@@NAMESPACE@@_exporter_command_duration_seconds` on CLI; only one
-of the two applies to your flavor). Here the guard matters for the more
-textbook reason: on a quiet exporter with zero requests in the last 5
-minutes, both rates are exactly `0`: `0/0` without the guard, "no data"
-with it, instead of a bogus 100%-error-rate-looking `NaN`. Reach for this
-form once a real collector has a counter metric of its own to build an
-error-rate ratio from.
+own request/command duration histogram
+(`@@NAMESPACE@@_exporter_request_duration_seconds` on HTTP,
+`@@NAMESPACE@@_exporter_command_duration_seconds` on CLI; only one of the
+two applies to your flavor). Here the guard matters for the more textbook
+reason: on a quiet exporter with zero requests in the last 5 minutes, both
+rates are exactly `0`: `0/0` without the guard, "no data" with it, instead
+of a bogus 100%-error-rate-looking `NaN`. Reach for this form once a real
+collector has a counter metric of its own to build an error-rate ratio from.
 
 ## PromQL validated against existing metrics: the same anti-lie bar as docs-check
 
@@ -191,9 +193,10 @@ actually exists in `internal/collector/*.go`: the alerting equivalent of
 `docs-and-governance.md`'s "the docs can't lie" rule, just for PromQL
 instead of prose. Three independent checks enforce this at different times:
 
-1. **`/add-collector`'s own step 7** refuses to propose an alert against
-   anything other than a metric its own step 3 just emitted: "no other
-   metric name is acceptable here," in the command's own words.
+1. **`/prometheus-exporter:add-collector`'s own step 7** refuses to propose
+   an alert against anything other than a metric its own step 3 just
+   emitted: "no other metric name is acceptable here," in the command's own
+   words.
 2. **`exporter-reviewer`'s Step 9** flags any alert `expr` naming a metric
    it can't find in `internal/collector/*.go` during an audit.
 3. **This plugin's own golden smoke test** (`test/golden-smoke.sh`) runs
@@ -201,8 +204,8 @@ instead of prose. Three independent checks enforce this at different times:
    monitoring/prometheus/alerts.yml` against every scaffolded flavor/forge
    combination, guarded the same way as everywhere else in that script
    (native `promtool` → Docker's `prom/prometheus` image → Podman → an
-   explicit skip, never a silent pass), proving the *shipped* rules
-   actually parse and validate, not just that they look plausible.
+   explicit skip, never a silent pass), proving the *shipped* rules actually
+   parse and validate, not just that they look plausible.
 
 Run the same check yourself before wiring a new rule file into Prometheus:
 
@@ -216,9 +219,9 @@ docker run --rm -v "$(pwd):/rules" --entrypoint promtool prom/prometheus:latest 
 Both should report `SUCCESS`. Note what this validation does *not* cover,
 though: `promtool check rules` is not part of the generated repository's own
 `make check` (and isn't wired into `ci.yml.tmpl`). It's documented in
-`monitoring/README.md` as a step to run yourself (or add to your own CI) each
-time you touch these files, independently re-verified against the shipped
-templates by this plugin's golden test rather than by the generated
+`monitoring/README.md` as a step to run yourself (or add to your own CI)
+each time you touch these files, independently re-verified against the
+shipped templates by this plugin's golden test rather than by the generated
 repository's automation.
 
 **Match your real `job_name`.** `ExporterDown` hardcodes
@@ -241,16 +244,15 @@ identical across every flavor this plugin scaffolds: only the namespace and
   FAIL / Collectors Healthy (%), each aggregated `sum by (job, instance)`
   (or `count by`) so the panel stays correct with more than one instance
   sharing a `job` label, not just a single-target deployment.
-- **Collector Status**: current OK/FAIL per collector, colored
-  green/red.
-- **Collector Health History**: the same signal as a state timeline over
-  the visible time range.
-- **Scrape Duration**: a status-history colored by duration threshold
-  (green `<1s`, yellow `1-5s`, red `>5s`), a sorted bar gauge of the latest
-  duration per collector, and a time series of duration over time. The
-  panel description calls this out as "useful for spotting a slow
-  degradation before it trips `ExporterCollectorDurationHigh`," tying the
-  dashboard directly back to the alert tier above.
+- **Collector Status**: current OK/FAIL per collector, colored green/red.
+- **Collector Health History**: the same signal as a state timeline over the
+  visible time range.
+- **Scrape Duration**: a status-history colored by duration threshold (green
+  `<1s`, yellow `1-5s`, red `>5s`), a sorted bar gauge of the latest
+  duration per collector, and a time series of duration over time. The panel
+  description calls this out as "useful for spotting a slow degradation
+  before it trips `ExporterCollectorDurationHigh`," tying the dashboard
+  directly back to the alert tier above.
 - **Build Info**: `go_build_info`, client_golang's standard build-info
   collector; explicitly *not* the same thing as this exporter's own release
   tag (a local `go build` typically reports `(devel)`).
@@ -264,23 +266,25 @@ business-metric panel here, by design. See below.
 ## The business dashboard (v0.2, shipped)
 
 A business-metric dashboard (queue depth, error rates, saturation, whatever
-your target's own domain is) is generated by **`/generate-dashboard [name]`**,
-the design-led counterpart to the shipped health dashboard. Unlike the health
-dashboard, there is no single business dashboard generic across every exporter,
-so this command **builds one from your own `docs/metrics.md`**:
+your target's own domain is) is generated by
+**`/prometheus-exporter:generate-dashboard [name]`**, the design-led
+counterpart to the shipped health dashboard. Unlike the health dashboard,
+there is no single business dashboard generic across every exporter, so this
+command **builds one from your own `docs/metrics.md`**:
 
-- **A deterministic backbone** (`skills/prometheus-exporter/scripts/generate-dashboard.sh`,
-  `bash`+`jq`, container-first) parses `docs/metrics.md` + the repo's real
-  namespace and emits valid **exportable** Grafana JSON: one panel per
-  documented business metric, PromQL chosen by `Type` (`rate()` on counters,
-  `histogram_quantile()` with a synthesized `_bucket` on histograms, `avg` on
-  gauges; `$__rate_interval` windows; `by (job, instance)` aggregation),
+- **A deterministic backbone**
+  (`skills/prometheus-exporter/scripts/generate-dashboard.sh`, `bash`+`jq`,
+  container-first) parses `docs/metrics.md` + the repo's real namespace and
+  emits valid **exportable** Grafana JSON: one panel per documented business
+  metric, PromQL chosen by `Type` (`rate()` on counters,
+  `histogram_quantile()` with a synthesized `_bucket` on histograms, `avg`
+  on gauges; `$__rate_interval` windows; `by (job, instance)` aggregation),
   deterministic `<namespace>-<slug>` uids, and `${DS_PROMETHEUS}` datasource
   inputs. This same backbone is invoked by this plugin's golden test, so the
   generated shape is CI-proven.
 - **A design dialogue** on top, anchored entirely in `metrics.md`: target
-  Grafana version, audience, RED vs USE (inferred from the `Type` mix),
-  1..N decomposition (a row per collector, or an overview + linked per-domain
+  Grafana version, audience, RED vs USE (inferred from the `Type` mix), 1..N
+  decomposition (a row per collector, or an overview + linked per-domain
   drill-downs), SLI selection, template variables (conservative, never an
   auto-variable on a presumed high-cardinality label), units/thresholds, and
   drill-down links resting on the deterministic uids. `context7` (the exact
@@ -290,11 +294,11 @@ so this command **builds one from your own `docs/metrics.md`**:
 
 The command **never touches the health dashboard**, never provisions Grafana
 or adds a compose service (that depends on your Grafana topology), and never
-invents a metric absent from `docs/metrics.md`: every panel `expr` references
-only a documented metric (a Histogram's `_bucket` counts as derived from its
-documented parent), the dashboard analogue of `make docs-check`'s anti-lie
-bar. Re-running it is safe: it reuses each uid and asks before overwriting a
-previously generated file.
+invents a metric absent from `docs/metrics.md`: every panel `expr`
+references only a documented metric (a Histogram's `_bucket` counts as
+derived from its documented parent), the dashboard analogue of `make
+docs-check`'s anti-lie bar. Re-running it is safe: it reuses each uid and
+asks before overwriting a previously generated file.
 
 ## Wiring it up
 
@@ -313,9 +317,9 @@ rule_files:
 Reload Prometheus (`SIGHUP` or `/-/reload`) and check **Status → Rules** for
 the `@@NAMESPACE@@.alerts` and `@@NAMESPACE@@.rules` groups loading without
 error. `monitoring/README.md`'s own "What's not in this folder" section is
-worth reading once: Alertmanager routing/silencing/receivers and
-Prometheus storage/retention/scrape-interval tuning are both explicitly out
-of scope here, site-specific by nature: see the Alertmanager docs and
+worth reading once: Alertmanager routing/silencing/receivers and Prometheus
+storage/retention/scrape-interval tuning are both explicitly out of scope
+here, site-specific by nature: see the Alertmanager docs and
 `docs/configuration.md` respectively.
 
 ## Checklist
@@ -337,7 +341,8 @@ of scope here, site-specific by nature: see the Alertmanager docs and
 - [ ] The health dashboard's `job` variable stays multi-select with
       `includeAll`; any new panel aggregates `by (job, instance)`, not a
       bare instant value that breaks the moment a second instance exists.
-- [ ] A business dashboard is generated with `/generate-dashboard`, whose
+- [ ] A business dashboard is generated with
+  `/prometheus-exporter:generate-dashboard`, whose
       every panel `expr` is grep-checked against `docs/metrics.md` (a
       Histogram's `_bucket` counting as derived from its documented parent),
       never a metric the code can't produce.

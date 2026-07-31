@@ -69,7 +69,7 @@
 #     chosen main model actually carries a marker for, then removes that
 #     staging directory.
 #     The marker comments themselves survive the fill (sed inserts after
-#     them, never replacing them) so /add-collector can reuse the same
+#     them, never replacing them) so /prometheus-exporter:add-collector can reuse the same
 #     markers later to insert more collectors.
 #   - Places the licenses/LICENSE-<license, lowercased>.txt as LICENSE, then
 #     discards the unused alternatives.
@@ -421,8 +421,8 @@ if [ "$target_model" = multi-instance ] && [ -d "$dst/internal/collector/variant
   fi
 fi
 
-# variants/ (the background_collector.go.tmpl + test that /add-collector adds,
-# see code/<flavor>/variants/) is /add-collector's own staging ground: it
+# variants/ (the background_collector.go.tmpl + test that /prometheus-exporter:add-collector adds,
+# see code/<flavor>/variants/) is /prometheus-exporter:add-collector's own staging ground: it
 # reads those templates directly from the PLUGIN tree (exactly as it reads
 # code/<flavor>/collector.go.tmpl today), never through scaffold.sh. Landed
 # at internal/collector/variants/ by the flavor-selection move above like any
@@ -531,7 +531,7 @@ done < "$pathlist"
 # github|none precedent. sed's `r` command inserts the frag file's content
 # immediately AFTER the matched marker line without consuming it, so the
 # marker comment itself survives verbatim in the output, deliberate, so
-# /add-collector can find and reuse the same marker later to insert
+# /prometheus-exporter:add-collector can find and reuse the same marker later to insert
 # additional collectors. That is also why the residual-sentinel guard below
 # still needs (and already has) its CLIENT_INIT/CLIENT_BUILD/
 # COLLECTOR_REGISTRY/PROBE_FACTORIES/INSTANCE_FACTORIES exemption after this
