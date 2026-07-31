@@ -34,14 +34,15 @@ In scope:
 - The scaffolding engine (`skills/prometheus-exporter/assets/scaffold.sh`)
   and the `commands/`, `agents/`, and `skills/` that invoke it.
 - The templates under `skills/prometheus-exporter/assets/` — a defect that
-  ships an insecure default into every generated exporter (an unauthenticated
-  bind with no warning, a missing hardening flag, a stale dependency pin) is
-  a real vulnerability in this plugin, not only in its output.
+  ships an insecure default into every generated exporter (an
+  unauthenticated bind with no warning, a missing hardening flag, a stale
+  dependency pin) is a real vulnerability in this plugin, not only in its
+  output.
 - The auxiliary `bash` backbones outside `assets/`
   (`skills/prometheus-exporter/scripts/probe-target.sh`,
-  `skills/prometheus-exporter/scripts/generate-dashboard.sh`) that never ship
-  inside a scaffolded exporter but do run against a user's own inputs (a live
-  target, a `docs/metrics.md` file).
+  `skills/prometheus-exporter/scripts/generate-dashboard.sh`) that never
+  ship inside a scaffolded exporter but do run against a user's own inputs
+  (a live target, a `docs/metrics.md` file).
 
 Out of scope:
 
@@ -55,9 +56,9 @@ Out of scope:
 
 ## Notes
 
-The live-target probe (`/design-exporter`, discovery ladder rung 4) is the
-one place this plugin itself makes outbound requests or runs commands
-against a user-supplied target. It is opt-in and consent-gated — the exact
-command is shown and confirmed before it runs — and every capture passes
-through a deterministic secret-redaction backbone before reaching an
-architecture brief.
+The live-target probe (`/prometheus-exporter:design-exporter`, discovery
+ladder rung 4) is the one place this plugin itself makes outbound requests
+or runs commands against a user-supplied target. It is opt-in and
+consent-gated — the exact command is shown and confirmed before it runs —
+and every capture passes through a deterministic secret-redaction backbone
+before reaching an architecture brief.
