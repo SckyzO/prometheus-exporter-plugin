@@ -230,9 +230,10 @@ before deriving anything else from it or touching a single file:
   directly into Go identifiers (`<name>Data`, `<name>GetMetrics`, ...) in step
   3, so a shape a directory name tolerates (say, a leading digit) would still
   break compilation here.
-- Non-blocking suggestion: lowercase `snake_case`, matching the existing
-  collector-naming convention (`example`, `http_client_requests`/
-  `command_exec`), not a hard rule.
+- Non-blocking suggestion: lowercase `snake_case`, matching the names already
+  registered (`example`, the scaffolded collector, plus the
+  self-instrumentation `http_client_requests`/`command_exec`, which are
+  registered the same way without being collectors), not a hard rule.
 
 **Variant: synchronous or background.** Two collector shapes exist:
 **synchronous** (default, fetches on every scrape) and **background**
@@ -867,28 +868,63 @@ is added. `docs/metrics.md`'s own `Defined in` line is not a source either;
 the bundled first collector's section names `internal/collector/collector.go`,
 not its collector name.
 
+**On the single target model, not every `register(...)` call is a collector.**
+Every scaffold registers its own self-instrumentation through the same
+`register("<name>", ...)` call, so that grep returns more names than there are
+collectors. Filter by the **shape of the closure**, never by a list of names:
+
+```sh
+grep -n -A 2 'register("' cmd/*/main.go
+```
+
+Keep a registration only when its closure **constructs** the collector,
+`collector.New<Name>Collector(...)`, which is what all four templates in step
+5 above write and what the scaffolded first collector already has. Drop the
+ones that return an already-built package-level metric
+(`func() prometheus.Collector { return collector.<Something> }`, on one line):
+those are the exporter's own instrumentation, registered there only so
+`--no-collector.<name>` can switch them off. Read that shape rather than
+memorising which names it removes: the names come from the flavor's own
+wiring, and a list copied into this file would drift from it and quietly
+resurrect this bug. The multi models need no such filter, since `Name: *"`
+matches only `probe.NamedFactory` and `instance.Factory` entries, and neither
+carries self-instrumentation.
+
+This is the register-side mirror of the header-side rule below, and both
+halves are needed: on a single-model repository, skipping it leaves the two
+lists differing in length by exactly two, on every run, in a repository where
+nothing is wrong.
+
 Only headers ending in `Collector` are collectors. `## Self-instrumentation`,
 and the multi-target and configuration-reload sections that may sit below it,
 are not, and never appear in this list.
 
-**Pair the two lists positionally.** Once the headers are filtered that way,
-the *k*-th `## <Name>Collector` header in `docs/metrics.md` names the same
-collector as the *k*-th registered name the grep returns, both read top to
-bottom. Nothing else joins a header to a name, so this is the invariant the
-whole block rests on, and it holds because neither list is ever inserted into
-the middle: step 6 above adds the new section immediately before
-`## Self-instrumentation`, the last collector position `docs/metrics.md` has,
-and step 5 adds the new registration after the last existing one at its
-marker. The scaffolded collector opens both lists at the same index, and each
-`/add-collector` run extends both by one, in the same run.
+**Pair the two filtered lists positionally.** The *k*-th `## <Name>Collector`
+header in `docs/metrics.md` names the same collector as the *k*-th surviving
+registration, both read top to bottom. Nothing else joins a header to a name.
+It holds because neither list is ever inserted into the middle: step 6 above
+adds the new section immediately before `## Self-instrumentation`, the last
+collector position `docs/metrics.md` has, and step 5 adds the new registration
+after the last existing one at its marker. The scaffolded collector opens both
+lists at the same index, and each `/add-collector` run extends both by one, in
+the same run.
 
-If the two come back with **different lengths**, the invariant was broken
-outside this command: a section or a registration removed by hand, or an
-earlier run interrupted between step 5 and step 6. Say so, change nothing in
-`README.md`, and let the user reconcile first. Pairing what is left would
-mislabel every line after the gap, and since this block is regenerated in
-full from the same two greps every time, the wrong labels would then look
-authoritative.
+That is an invariant this command maintains, not one the file formats
+guarantee, so **verify each pair before writing it**: lowercasing a header and
+dropping its trailing `Collector` must give the registered name with its
+underscores removed. `## JobQueueCollector` against `job_queue` gives
+`jobqueue` both ways and pairs; `## ExampleCollector` against `tape` does not.
+This is a check, not a derivation: it can confirm a pair the two lists propose,
+while inverting the PascalCase to *produce* a name stays forbidden above, for
+the reason given there.
+
+If the two lists come back with **different lengths**, or any pair fails that
+check, something outside this command moved them out of step: a collector
+added by hand, a section or a registration removed, an earlier run interrupted
+between step 5 and step 6. Say exactly which pair failed, change nothing in
+`README.md`, and let the user reconcile first. Pairing anyway would mislabel
+every line after the gap, and since this block is regenerated in full every
+time, the wrong labels would then look authoritative.
 
 The anchor is the GitHub-flavored slug of the `## <Name>Collector` header
 itself, never of `<name>`: lowercase it and drop spaces and punctuation.
