@@ -247,9 +247,14 @@ On entry, every command reconciles:
 | Collectors built | `## <Name>Collector` headers in `docs/metrics.md` | box ticked or unticked, marked `(reconciled <date>)`, reported |
 | A collector with no box at all | a `## <Name>Collector` header no `## Collectors` line names | a box is added, ticked, marked `(reconciled <date>)`, reported |
 
-That last row is the day-one state of every project, not an exotic one. Every
-scaffold ships one collector already built and already documented, which no
-design brief ever planned, so no journal is born carrying a box for it. It is
+That last row is ordinary, not exotic. Any journal not born under this release
+is missing at least one box: a repository scaffolded before the journal shipped
+has every collector on disk and none in a journal it does not have, and the
+collector every scaffold ships built and documented was planned by no design
+brief. A collector added by hand, or an `/add-collector` interrupted between
+the code and the docs, lands in the same state. `/new-prometheus-exporter`
+writes that scaffolded collector's box itself, so a journal this release
+produced starts complete and the row is what keeps it so afterwards. It is
 also why `## Collectors` is a section the create-offer below **fills from
 disk** rather than placeholders: the `## <Name>Collector` headers state exactly
 which collectors exist, so a repository predating this file recovers all of

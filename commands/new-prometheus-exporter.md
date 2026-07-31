@@ -283,9 +283,12 @@ needs nothing else: only that line changes. A brief written by an earlier
 release carries fewer, so add each missing header with a placeholder line, in
 `## Format` order, and lift a `Collectors (ordered):` or cardinality-budget
 bullet out of `## Architecture decisions` into the section that owns it now.
-Report both, because copying such a brief across unedited would commit a file
-`## Degradation` calls corrupt, and would leave the planned collectors
-somewhere `/add-collector` never looks.
+A placeholder is what an empty section carries, never what real content sits
+beside: drop it again from any section the lift, or the `example` box below,
+has just filled. Report the added headers and the moved bullets, because
+copying such a brief across unedited would commit a file `## Degradation`
+calls corrupt, and would leave the planned collectors somewhere
+`/add-collector` never looks.
 
 **3. Complete `## Architecture decisions`.** Step 0 hands the user the final
 call on every line in that section, and step 1 re-confirms the I/O flavor. If

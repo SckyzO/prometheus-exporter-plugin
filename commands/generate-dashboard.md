@@ -62,7 +62,11 @@ and report it to the user: `## Section ownership` carves reconciliation out of
 writing only what you own, precisely because this command runs last and a
 correction it declines to write is one nothing later repairs. Filling
 `## Collectors` with entries nobody planned yet stays `/add-collector`'s job;
-bringing an existing box in line with `docs/metrics.md` is not that.
+bringing the boxes in line with `docs/metrics.md`, including adding one a
+documented collector never got, is not that. If the
+journal is absent or corrupt, do not write here at all: apply that reference's
+degradation rules, which hold step 6b's offer until the user has answered, and
+carry this command through to the end either way.
 
 If `docs/metrics.md` contains **no** business metric (only
 self-instrumentation), stop: tell the user to add collectors and document
@@ -231,7 +235,12 @@ that has not happened yet.
 If `docs/exporter-journal.md` is absent, offer to create it now, per
 `project-journal.md`'s degradation rules, writing all eight headers from its
 `## Format` with a placeholder line under every section this step cannot fill
-yet (its `## Section ownership` rule), then continue. A file holding only the
+yet (its `## Section ownership` rule), then continue. `## Collectors` is not
+one of those: its `## Reconciliation` makes that section fillable from disk, so
+write one ticked box per `## <Name>Collector` header in `docs/metrics.md`. A
+placeholder there would be permanent, this command being the last to run, and
+the block at the end of this file would then report zero collectors on a
+repository whose own metrics reference lists them. A file holding only the
 two sections below would be missing headers, which is exactly what
 `## Degradation` calls corrupt, so the next command would open with a
 rebuild-or-leave prompt on a perfectly healthy repository. If the journal is
