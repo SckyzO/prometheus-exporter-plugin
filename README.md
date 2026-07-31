@@ -21,15 +21,16 @@ Updating, pinning to a tag, and sharing with a team:
 
 ## How it works
 
-Run the commands in order the first time, then `/add-collector` on repeat.
+Run the commands in order the first time, then
+`/prometheus-exporter:add-collector` on repeat.
 
 ```mermaid
 flowchart LR
-    D["/design-exporter"] -->|exporter-design-brief.md| N["/new-prometheus-exporter"]
+    D["/prometheus-exporter:design-exporter"] -->|exporter-design-brief.md| N["/prometheus-exporter:new-prometheus-exporter"]
     N --> repo[["scaffolded exporter repo"]]
-    repo --> A["/add-collector"]
+    repo --> A["/prometheus-exporter:add-collector"]
     A -->|new collector| repo
-    repo --> G["/generate-dashboard"]
+    repo --> G["/prometheus-exporter:generate-dashboard"]
     G -->|Grafana JSON| repo
     repo --> R["exporter-reviewer"]
 
@@ -38,23 +39,24 @@ flowchart LR
     G <-.-> J
 ```
 
-Building an exporter takes several sessions. `/design-exporter` opens a
-design brief in your working directory before any repository exists;
-`/new-prometheus-exporter` moves it into the generated repository as a
-committed project journal, and the two commands you run afterwards read it on
-entry and complete it on exit. The collectors still to build, the cardinality
-budget and the label vocabulary therefore live on disk instead of in the
-context window, which makes `/clear` between two collectors the recommended
-move rather than a destructive one.
+Building an exporter takes several sessions.
+`/prometheus-exporter:design-exporter` opens a design brief in your working
+directory before any repository exists;
+`/prometheus-exporter:new-prometheus-exporter` moves it into the generated
+repository as a committed project journal, and the two commands you run
+afterwards read it on entry and complete it on exit. The collectors still to
+build, the cardinality budget and the label vocabulary therefore live on
+disk instead of in the context window, which makes `/clear` between two
+collectors the recommended move rather than a destructive one.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `/design-exporter` | Settles the data source, target model, collector list and cardinality budget, and writes a reviewable design brief |
-| `/new-prometheus-exporter` | Scaffolds a complete, buildable exporter repository with an example collector and its test triad |
-| `/add-collector` | Adds a collector plus its test triad to an existing exporter. The one you run most |
-| `/generate-dashboard` | Generates business Grafana dashboards from the exporter's own `docs/metrics.md` |
+| `/prometheus-exporter:design-exporter` | Settles the data source, target model, collector list and cardinality budget, and writes a reviewable design brief |
+| `/prometheus-exporter:new-prometheus-exporter` | Scaffolds a complete, buildable exporter repository with an example collector and its test triad |
+| `/prometheus-exporter:add-collector` | Adds a collector plus its test triad to an existing exporter. The one you run most |
+| `/prometheus-exporter:generate-dashboard` | Generates business Grafana dashboards from the exporter's own `docs/metrics.md` |
 | `exporter-reviewer` | Subagent that audits an exporter against Prometheus conventions, cardinality and docs truthfulness |
 
 Details, flags and per-target-model behaviour:

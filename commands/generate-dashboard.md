@@ -4,25 +4,26 @@ argument-hint: [name]
 disable-model-invocation: true
 ---
 
-Generate **business** Grafana dashboards for an already-scaffolded exporter in
-the current working directory, the counterpart to the health dashboard
-shipped at scaffold time, which this command **never modifies**. It writes new
-JSON files under `monitoring/grafana/` and appends to `monitoring/README.md`;
-it edits no code and re-scaffolds nothing. Run it only when the user explicitly
-invokes this command, and walk every step below in order.
+Generate **business** Grafana dashboards for an already-scaffolded exporter
+in the current working directory, the counterpart to the health dashboard
+shipped at scaffold time, which this command **never modifies**. It writes
+new JSON files under `monitoring/grafana/` and appends to
+`monitoring/README.md`; it edits no code and re-scaffolds nothing. Run it
+only when the user explicitly invokes this command, and walk every step
+below in order.
 
 Optional dashboard name from the command argument: $ARGUMENTS. If given, it
-becomes the **title** of the overview dashboard (step 3). Its deterministic slug
-and uid are left unchanged, so drill-down links and regeneration-by-uid still
-work. If empty, the overview keeps its default `<namespace> - Business Overview`
-title.
+becomes the **title** of the overview dashboard (step 3). Its deterministic
+slug and uid are left unchanged, so drill-down links and regeneration-by-uid
+still work. If empty, the overview keeps its default `<namespace> - Business
+Overview` title.
 
 ## 0. Confirm this is a scaffolded exporter, and detect its I/O flavor
 
 Refuse to guess at a repository that was never scaffolded by this plugin.
 Confirm `cmd/*/main.go`, `internal/collector/`, and `docs/metrics.md` all
 exist; if any is missing, stop and point the user at
-`/new-prometheus-exporter` instead.
+`/prometheus-exporter:new-prometheus-exporter` instead.
 
 Detect the flavor from what actually lives in `internal/collector/`. Never
 ask what you can check yourself:
@@ -33,9 +34,10 @@ ask what you can check yourself:
 | `internal/collector/execute.go` (defines `var Execute`) | **cli** |
 | Neither, or both | Ask the user which flavor this repo is. |
 
-The flavor does not change the dashboards (they are built from `docs/metrics.md`
+The flavor does not change the dashboards (they are built from
+`docs/metrics.md`
 + the real namespace, both flavor-agnostic). It only confirms this is a real
-scaffolded exporter.
+  scaffolded exporter.
 
 ## 1. Read this repo's real values, and parse `docs/metrics.md`
 
@@ -56,17 +58,17 @@ the audiences already recorded under `## Dashboards`, the business-alert
 candidates under `## Architecture decisions`, and `## Cardinality budget`
 seed steps 2, 5 and 6 below instead of asking cold. Reconcile it against
 `docs/metrics.md` first, as that reference describes: the documented metrics
-win over anything the journal claims about which collectors exist. Write each
-correction back, marked `(reconciled <date>)`, with one `## Session log` line,
-and report it to the user: `## Section ownership` carves reconciliation out of
-writing only what you own, precisely because this command runs last and a
-correction it declines to write is one nothing later repairs. Filling
-`## Collectors` with entries nobody planned yet stays `/add-collector`'s job;
-bringing the boxes in line with `docs/metrics.md`, including adding one a
-documented collector never got, is not that. If the
-journal is absent or corrupt, do not write here at all: apply that reference's
-degradation rules, which hold step 6b's offer until the user has answered, and
-carry this command through to the end either way.
+win over anything the journal claims about which collectors exist. Write
+each correction back, marked `(reconciled <date>)`, with one `## Session
+log` line, and report it to the user: `## Section ownership` carves
+reconciliation out of writing only what you own, precisely because this
+command runs last and a correction it declines to write is one nothing later
+repairs. Filling `## Collectors` with entries nobody planned yet stays
+`/prometheus-exporter:add-collector`'s job; bringing the boxes in line with
+`docs/metrics.md`, including adding one a documented collector never got, is
+not that. If the journal is absent or corrupt, do not write here at all:
+apply that reference's degradation rules, which hold step 6b's offer until
+the user has answered, and carry this command through to the end either way.
 
 If `docs/metrics.md` contains **no** business metric (only
 self-instrumentation), stop: tell the user to add collectors and document
@@ -81,9 +83,9 @@ confirms or adjusts. Never ask what the doc already answers.
 
 1. **Target Grafana version** *(early)*: 11 / 12 / 13 / … It conditions
    `schemaVersion`, the panel model, and the context7 lookup. Propose the
-   latest stable major (resolve it via context7 if present); the deterministic
-   fallback is the health dashboard's baseline (`schemaVersion 38`, which every
-   newer Grafana auto-migrates on import).
+   latest stable major (resolve it via context7 if present); the
+   deterministic fallback is the health dashboard's baseline (`schemaVersion
+   38`, which every newer Grafana auto-migrates on import).
 2. **Audience**: ops on-call / capacity / owner. May justify more than one
    dashboard. A brief's audience section seeds this.
 3. **Method per concern**: **RED** (request-driven services: rate/errors/
@@ -96,11 +98,12 @@ confirms or adjusts. Never ask what the doc already answers.
    linked. Propose the split read from `metrics.md`; the user restructures.
 5. **SLI selection**: candidates surface from the rows of `metrics.md`; not
    every metric deserves a panel.
-6. **Template variables**: the labels column feeds the candidates. `metrics.md`
-   carries no cardinality, so **ask** which labels are low-cardinality
-   partitioning dimensions; default conservative: never auto-add a variable on
-   a presumed high-cardinality label. `datasource` + `job` (multi-select,
-   `includeAll`) are always present, like the health dashboard.
+6. **Template variables**: the labels column feeds the candidates.
+   `metrics.md` carries no cardinality, so **ask** which labels are
+   low-cardinality partitioning dimensions; default conservative: never
+   auto-add a variable on a presumed high-cardinality label. `datasource` +
+   `job` (multi-select, `includeAll`) are always present, like the health
+   dashboard.
 7. **Units & thresholds**: absent from `metrics.md`, inferred from name
    suffixes (`_seconds`/`_bytes`/`_ratio`) and context7 best practice, then
    confirmed.
@@ -115,13 +118,14 @@ dashboards, which panels, which variables, which links.
 Generate into a fresh temp directory first, so nothing under
 `monitoring/grafana/` is touched until step 4 has checked what an overwrite
 would destroy. **Protection precedes materialization**: the backbone's
-`emit_dashboard` writes each file with a truncating `>`, so pointing it at the
-live `monitoring/grafana/` directly would clobber a hand-made or hand-edited
-dashboard *before* step 4's guard could ever run. Stage first, reconcile in
-step 4, place only what clears.
+`emit_dashboard` writes each file with a truncating `>`, so pointing it at
+the live `monitoring/grafana/` directly would clobber a hand-made or
+hand-edited dashboard *before* step 4's guard could ever run. Stage first,
+reconcile in step 4, place only what clears.
 
-**Floor (always).** Run the shared backbone (the same generator this plugin's
-golden test runs, so what you ship is what CI proves) into a staging dir:
+**Floor (always).** Run the shared backbone (the same generator this
+plugin's golden test runs, so what you ship is what CI proves) into a
+staging dir:
 
 ```sh
 staging=$(mktemp -d)
@@ -132,71 +136,74 @@ bash "${CLAUDE_PLUGIN_ROOT}/skills/prometheus-exporter/scripts/generate-dashboar
 ```
 
 This writes valid, exportable `<slug>.json` files into `$staging`: one panel
-per documented business metric, PromQL chosen by `Type` (`rate()` on counters,
-`histogram_quantile()` on histograms with a synthesized `_bucket`, `avg` on
-gauges; `$__rate_interval` windows; `by (job, instance)`), deterministic
-`<namespace>-<slug>` uids, exportable `__inputs`/`__requires` with a
-`${DS_PROMETHEUS}` datasource input. Every `expr` references only a metric in
-`docs/metrics.md`, the anti-lie guarantee.
+per documented business metric, PromQL chosen by `Type` (`rate()` on
+counters, `histogram_quantile()` on histograms with a synthesized `_bucket`,
+`avg` on gauges; `$__rate_interval` windows; `by (job, instance)`),
+deterministic `<namespace>-<slug>` uids, exportable `__inputs`/`__requires`
+with a `${DS_PROMETHEUS}` datasource input. Every `expr` references only a
+metric in `docs/metrics.md`, the anti-lie guarantee.
 
 **Ceiling (interactive only, never breaks the floor).** Refine the STAGED
-files in `$staging` (never the live directory) with the Grafana version known:
+files in `$staging` (never the live directory) with the Grafana version
+known:
 
-- **context7**: `resolve-library-id grafana` → `query-docs` for (a) the exact
-  `schemaVersion` and panel model of that version, and (b) dataviz best
-  practice (panel type by metric type, units, thresholds). Use it to refine the
-  staged JSON (pick a stat/gauge/bar-gauge where it reads better than a
-  timeseries, set thresholds, add a per-label breakdown the user asked for).
+- **context7**: `resolve-library-id grafana` → `query-docs` for (a) the
+  exact `schemaVersion` and panel model of that version, and (b) dataviz
+  best practice (panel type by metric type, units, thresholds). Use it to
+  refine the staged JSON (pick a stat/gauge/bar-gauge where it reads better
+  than a timeseries, set thresholds, add a per-label breakdown the user
+  asked for).
 - **`dataviz`**: if the skill is present, use it to polish layout and color.
 - **Name**: if the user supplied a name via `$ARGUMENTS`, set the staged
-  overview dashboard's `.title` to it (edit the staged JSON in `$staging`). Leave
-  its `uid` and filename/slug at their deterministic defaults. This renames only
-  the display title, never the identity the drill-down links and regeneration
-  rely on.
-- Never add a metric absent from `docs/metrics.md`. The ceiling only reshapes
-  what the floor already grounded.
+  overview dashboard's `.title` to it (edit the staged JSON in `$staging`).
+  Leave its `uid` and filename/slug at their deterministic defaults. This
+  renames only the display title, never the identity the drill-down links
+  and regeneration rely on.
+- Never add a metric absent from `docs/metrics.md`. The ceiling only
+  reshapes what the floor already grounded.
 
-**If context7 is absent**, ship the floor as-is and warn: "dashboards generated
-against the baseline schema, not verified against Grafana <version>." **If
-`dataviz` is absent**, ship without the polish. This is not a blocker: the command always
-produces at least the valid deterministic floor.
+**If context7 is absent**, ship the floor as-is and warn: "dashboards
+generated against the baseline schema, not verified against Grafana
+<version>." **If `dataviz` is absent**, ship without the polish. This is not
+a blocker: the command always produces at least the valid deterministic
+floor.
 
 ## 4. Reconcile against `monitoring/grafana/`, then place: never clobber silently
 
 For each staged `$staging/<slug>.json`, compare it against any existing
 `monitoring/grafana/<slug>.json` **before** moving it into place (design §7,
-this is exactly why step 3 staged into a temp dir instead of writing the live
-directory):
+this is exactly why step 3 staged into a temp dir instead of writing the
+live directory):
 
 - **No existing file** → move it in.
 - **Existing file carrying `tags: ["generated", …]`** (this command's own
   provenance, plus a stable `<namespace>-<slug>` uid) → a prior generation:
-  show a diff (e.g. `diff <(jq -S . monitoring/grafana/<slug>.json) <(jq -S . "$staging"/<slug>.json)`)
-  and ask before overwriting. On confirm, move the staged file over it; the
-  stable uid preserves drill-down links and any dashboard already imported from
-  it.
-- **Existing file WITHOUT that tag** → hand-made: **never overwrite it without
-  explicit confirmation**. Offer a different slug
+  show a diff (e.g. `diff <(jq -S . monitoring/grafana/<slug>.json) <(jq -S
+  . "$staging"/<slug>.json)`) and ask before overwriting. On confirm, move
+  the staged file over it; the stable uid preserves drill-down links and any
+  dashboard already imported from it.
+- **Existing file WITHOUT that tag** → hand-made: **never overwrite it
+  without explicit confirmation**. Offer a different slug
   (`monitoring/grafana/<other>.json`) or skip it.
 
-Only move a staged file into `monitoring/grafana/` after this check clears it,
-then discard `$staging`. Never run `scaffold.sh`: this is file-by-file
-adaptation, like `/add-collector`.
+Only move a staged file into `monitoring/grafana/` after this check clears
+it, then discard `$staging`. Never run `scaffold.sh`: this is file-by-file
+adaptation, like `/prometheus-exporter:add-collector`.
 
 ## 5. Update the wiring
 
 Append the generated dashboards to `monitoring/README.md`'s import list
 (Grafana UI / HTTP API / file provisioning), **without** claiming they are
 auto-provisioned. Do not touch `docker-compose.yml` (no Grafana service is
-added, since that depends on the user's Grafana topology) and do not touch the
-health dashboard.
+added, since that depends on the user's Grafana topology) and do not touch
+the health dashboard.
 
 ## 6. Verify: show the real output
 
-Verify the dashboards you generated this run (`monitoring/grafana/overview.json`
-plus any per-collector `<slug>.json` you just placed), not the whole directory,
-which also holds the untouched health dashboard. First, confirm each is
-well-formed JSON:
+Verify the dashboards you generated this run
+(`monitoring/grafana/overview.json` plus any per-collector `<slug>.json` you
+just placed), not the whole directory, which also holds the untouched health
+dashboard. First, confirm each is well-formed JSON:
 
 ```sh
 for f in monitoring/grafana/overview.json <any per-collector slugs you generated>; do
@@ -204,15 +211,15 @@ for f in monitoring/grafana/overview.json <any per-collector slugs you generated
 done
 ```
 
-Show it. Then prove the anti-lie property, scoped to panel **expressions** only:
-every namespace-prefixed token in every panel `expr` must be a documented metric
-(a documented Histogram `<h>`'s `<h>_bucket` counting as derived from its parent).
-Scope to `.panels[].targets[].expr` via `jq` (never the whole JSON text)
-because the `$job` template variable legitimately references the
-self-instrumentation metric via
+Show it. Then prove the anti-lie property, scoped to panel **expressions**
+only: every namespace-prefixed token in every panel `expr` must be a
+documented metric (a documented Histogram `<h>`'s `<h>_bucket` counting as
+derived from its parent). Scope to `.panels[].targets[].expr` via `jq`
+(never the whole JSON text) because the `$job` template variable
+legitimately references the self-instrumentation metric via
 `label_values(<ns>_exporter_collector_success, job)` (mirroring the health
-dashboard), which is not a panel expr and not a business metric; a whole-text
-scan would wrongly flag it and the health dashboard's title:
+dashboard), which is not a panel expr and not a business metric; a
+whole-text scan would wrongly flag it and the health dashboard's title:
 
 ```sh
 ns=$(grep -hoE 'const[[:space:]]+namespace[[:space:]]*=[[:space:]]*"[A-Za-z_][A-Za-z0-9_]*"' cmd/*/main.go | head -n1 | sed -E 's/.*"([A-Za-z_][A-Za-z0-9_]*)".*/\1/')
@@ -222,41 +229,42 @@ done | grep -oE "${ns}_[A-Za-z0-9_]+" | sort -u
 ```
 
 Confirm every name printed is documented in `docs/metrics.md` (a Histogram
-`<h>`'s `<h>_bucket` counting as derived from its documented parent). This is the
-dashboard analogue of `make docs-check`'s PromQL bar, and exactly the property
-the golden test asserts on this same backbone.
+`<h>`'s `<h>_bucket` counting as derived from its documented parent). This
+is the dashboard analogue of `make docs-check`'s PromQL bar, and exactly the
+property the golden test asserts on this same backbone.
 
 ## 6b. Record the design in the journal
 
-Only once step 6's `jq empty` and panel-expr anti-lie checks have both printed
-green. Never before: an entry written ahead of its gate records an outcome
-that has not happened yet.
+Only once step 6's `jq empty` and panel-expr anti-lie checks have both
+printed green. Never before: an entry written ahead of its gate records an
+outcome that has not happened yet.
 
 If `docs/exporter-journal.md` is absent, offer to create it now, per
 `project-journal.md`'s degradation rules, writing all eight headers from its
-`## Format` with a placeholder line under every section this step cannot fill
-yet (its `## Section ownership` rule), then continue. `## Collectors` is not
-one of those: its `## Reconciliation` makes that section fillable from disk, so
-write one ticked box per `## <Name>Collector` header in `docs/metrics.md`. A
-placeholder there would be permanent, this command being the last to run, and
-the block at the end of this file would then report zero collectors on a
-repository whose own metrics reference lists them. A file holding only the
-two sections below would be missing headers, which is exactly what
-`## Degradation` calls corrupt, so the next command would open with a
-rebuild-or-leave prompt on a perfectly healthy repository. If the journal is
-already corrupt, ask before writing anything.
+`## Format` with a placeholder line under every section this step cannot
+fill yet (its `## Section ownership` rule), then continue. `## Collectors`
+is not one of those: its `## Reconciliation` makes that section fillable
+from disk, so write one ticked box per `## <Name>Collector` header in
+`docs/metrics.md`. A placeholder there would be permanent, this command
+being the last to run, and the block at the end of this file would then
+report zero collectors on a repository whose own metrics reference lists
+them. A file holding only the two sections below would be missing headers,
+which is exactly what `## Degradation` calls corrupt, so the next command
+would open with a rebuild-or-leave prompt on a perfectly healthy repository.
+If the journal is already corrupt, ask before writing anything.
 
 **Never skip that offer on the grounds that a repository holding business
-metrics must already have run `/add-collector` and been offered a journal
-there.** An exporter scaffolded before the journal shipped has collectors and
-no journal, which is precisely the upgrade path `## Degradation` describes,
-and `## Section ownership` makes this command the only one that ever fills
-`## Dashboards`: everything below is lost for good rather than merely
-postponed. If the offer is declined, say so in one line and skip the rest of
-this step, since the dashboards themselves are already on disk.
+metrics must already have run `/prometheus-exporter:add-collector` and been
+offered a journal there.** An exporter scaffolded before the journal shipped
+has collectors and no journal, which is precisely the upgrade path `##
+Degradation` describes, and `## Section ownership` makes this command the
+only one that ever fills `## Dashboards`: everything below is lost for good
+rather than merely postponed. If the offer is declined, say so in one line
+and skip the rest of this step, since the dashboards themselves are already
+on disk.
 
-Then replace the journal's `## Dashboards` section with one line per dashboard
-produced:
+Then replace the journal's `## Dashboards` section with one line per
+dashboard produced:
 
 ```
 - <audience>, <RED | USE> because <reason>, <decomposition>, files: <paths>
@@ -278,9 +286,11 @@ Append one dated `## Session log` line naming the dashboards written.
 ## 7. What's next
 
 - Import each dashboard in Grafana (UI "Import → Upload JSON file", the HTTP
-  API, or file provisioning) and pick the Prometheus datasource when prompted.
-- Re-running this command after `/add-collector` is safe: it reuses each uid
-  and asks before overwriting a generated file (step 4).
+  API, or file provisioning) and pick the Prometheus datasource when
+  prompted.
+- Re-running this command after `/prometheus-exporter:add-collector` is
+  safe: it reuses each uid and asks before overwriting a generated file
+  (step 4).
 - Commit with `feat(monitoring): add generated business dashboard(s)` (see
   `CONTRIBUTING.md`'s commit-message convention), staging
   `docs/exporter-journal.md` alongside them: the journal is a committed file
@@ -297,7 +307,7 @@ Journal: <N> of <M> collectors built. Next planned: `<next>` (<variant>).
 Safe to /clear now: everything above is in docs/exporter-journal.md.
 Then run:
 
-    /add-collector <next>
+    /prometheus-exporter:add-collector <next>
 ```
 
 When no unticked collector remains, drop the `Next planned:` clause and the

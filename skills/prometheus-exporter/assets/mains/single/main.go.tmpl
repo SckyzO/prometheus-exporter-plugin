@@ -86,7 +86,7 @@ var registry []registryEntry
 
 // register declares a --[no-]collector.<name> kingpin flag (negatable,
 // defaulting to enabledByDefault) and remembers newFn for later invocation.
-// Both the initial scaffold and /add-collector insert one register(...) call
+// Both the initial scaffold and /prometheus-exporter:add-collector insert one register(...) call
 // per collector at the // @@COLLECTOR_REGISTRY@@ marker in main() below.
 //
 // register (like every other kingpin.Flag call) must run before
@@ -136,12 +136,12 @@ func main() {
 
 	// backgroundCollector is the minimal shutdown-wait seam every
 	// background-refresh collector variant satisfies (Start/Done, see
-	// internal/collector's background_collector.go once /add-collector has
+	// internal/collector's background_collector.go once /prometheus-exporter:add-collector has
 	// added one). backgroundCollectors stays empty in a purely synchronous
 	// exporter: the wait loop after web.ListenAndServe below still runs
 	// (over an empty slice, so it is an immediate no-op), which is what
 	// lets this seam ship unconditionally without special-casing "no
-	// background collectors are registered". /add-collector's background
+	// background collectors are registered". /prometheus-exporter:add-collector's background
 	// branch appends to this slice inside its register(...) closure at the
 	// // @@COLLECTOR_REGISTRY@@ marker below; nothing else in main.go changes
 	// when one is added.

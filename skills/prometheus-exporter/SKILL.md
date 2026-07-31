@@ -6,25 +6,25 @@ description: Design, scaffold, build, harden, and audit a production-grade Prome
 This skill is the entry point for building a Go Prometheus exporter with
 this plugin: an opinionated, end-to-end path from an architecture decision
 to a releasable, documented, monitored repository. It is a router: the
-reasoning behind each step lives in the reference files under
-`references/`; open the one a step points to before acting on it, rather
-than trying to hold all twelve in context at once.
+reasoning behind each step lives in the reference files under `references/`;
+open the one a step points to before acting on it, rather than trying to
+hold all twelve in context at once.
 
 **Scope**: Go exporters only. The I/O flavor is `http` (default) or `cli`:
-the only two this plugin ships, ever; database targets are out of scope
-(see `references/exporter-architecture.md`). A design-led
-business-dashboard command (`/generate-dashboard`) complements this workflow
-at step 5, noted below where relevant.
+the only two this plugin ships, ever; database targets are out of scope (see
+`references/exporter-architecture.md`). A design-led business-dashboard
+command (`/prometheus-exporter:generate-dashboard`) complements this
+workflow at step 5, noted below where relevant.
 
 ## When this applies
 
-- Creating a new Prometheus exporter from scratch, whatever it monitors:
-  an HTTP API or a CLI tool. (A database-only target is out of scope; see
+- Creating a new Prometheus exporter from scratch, whatever it monitors: an
+  HTTP API or a CLI tool. (A database-only target is out of scope; see
   `references/exporter-architecture.md`.)
 - Adding a collector (a new resource or metric) to an exporter this skill
   previously scaffolded.
-- Hardening an existing exporter's tooling, CI, or release pipeline before
-  a release.
+- Hardening an existing exporter's tooling, CI, or release pipeline before a
+  release.
 - Auditing an exporter for Prometheus conventions, cardinality risk, or
   general production-readiness.
 
@@ -36,39 +36,37 @@ Before any code: choose the data source in order of preference: REST/API
 first, then gRPC, then CLI only as a last resort when no API exists (a
 database-only target is out of scope for this plugin, see
 `references/exporter-architecture.md`), using context7 to confirm the
-target's actual endpoints and payload shapes rather than guessing.
-Discovery can also be grounded in a local API spec (OpenAPI/Swagger/
-`.proto`) or a docs folder/URL, in
-preference order; `/design-exporter <target>` runs this phase and writes
-an architecture brief `/new-prometheus-exporter` can consume. Decide
-the target model, which is one of three: `single` (the default, one fixed
+target's actual endpoints and payload shapes rather than guessing. Discovery
+can also be grounded in a local API spec (OpenAPI/Swagger/ `.proto`) or a
+docs folder/URL, in preference order; `/prometheus-exporter:design-exporter
+<target>` runs this phase and writes an architecture brief
+`/prometheus-exporter:new-prometheus-exporter` can consume. Decide the
+target model, which is one of three: `single` (the default, one fixed
 target), `multi` (Prometheus picks the target per scrape via
 `/probe?target=`, the Blackbox pattern), or `multi-instance` (a fixed list
-of machines polled in the background and served through one `/metrics`).
-All three are scaffolded, opt-in, via `--target-model`; both multi models
+of machines polled in the background and served through one `/metrics`). All
+three are scaffolded, opt-in, via `--target-model`; both multi models
 require the http flavor, there is no cli multi-target. When a session
-reaches this step without `/design-exporter` (which asks these questions on
-its own), ask them here rather than assuming: which of the three, and, if
-the answer is `multi`, one follow-up, "how do your targets authenticate?",
-with three answers: (a) all the same, or not at all, so one
-`http_client_config:` covers every target; (b) by group, so one module per
-group carries its own credentials and the scrape config names one with
-`&module=`; (c) credentials and collector subsets vary independently, so
-credentials-only modules combine with collector modules in one request. The
-generated code is identical in all three cases; the answer only decides
+reaches this step without `/prometheus-exporter:design-exporter` (which asks
+these questions on its own), ask them here rather than assuming: which of
+the three, and, if the answer is `multi`, one follow-up, "how do your
+targets authenticate?", with three answers: (a) all the same, or not at all,
+so one `http_client_config:` covers every target; (b) by group, so one
+module per group carries its own credentials and the scrape config names one
+with `&module=`; (c) credentials and collector subsets vary independently,
+so credentials-only modules combine with collector modules in one request.
+The generated code is identical in all three cases; the answer only decides
 which commented block of `config.example.yml` the exporter's author should
 uncomment, so record it with the rest of the architecture decisions.
-Decompose the target
-into one collector per resource, and set a cardinality budget (which
-labels, how many series, what flags will cap them) before writing a line
-of code. For any collector whose backend is slow or expensive enough that a
-scrape should never wait on it, flag it now for `/add-collector --variant
-background` later. See `references/exporter-architecture.md`. Output: the
-I/O flavor (`http`, the default, or `cli`) and the ordered collector list
-step 3 works through.
+Decompose the target into one collector per resource, and set a cardinality
+budget (which labels, how many series, what flags will cap them) before
+writing a line of code. For any collector whose backend is slow or expensive
+enough that a scrape should never wait on it, flag it now for
+`/prometheus-exporter:add-collector --variant background` later. See
+`references/exporter-architecture.md`. Output: the I/O flavor (`http`, the
+default, or `cli`) and the ordered collector list step 3 works through.
 
-→ `references/exporter-architecture.md`
-→ `references/discovery-inputs.md`
+→ `references/exporter-architecture.md` → `references/discovery-inputs.md`
 
 ### 1. context7-first for Prometheus conventions
 
@@ -84,29 +82,28 @@ labels, and self-instrumentation (`_exporter_*`).
 ### 2. Scaffold
 
 With the architecture decided, scaffold the repository:
-`/new-prometheus-exporter <name>`, passing the flavor and collector list
-from step 0 and a license choice (Apache-2.0 by default). This produces a
-buildable, tested, git-initialized repository in one shot, never hand-roll
-the layout it would otherwise produce.
+`/prometheus-exporter:new-prometheus-exporter <name>`, passing the flavor
+and collector list from step 0 and a license choice (Apache-2.0 by default).
+This produces a buildable, tested, git-initialized repository in one shot,
+never hand-roll the layout it would otherwise produce.
 
 → `references/project-scaffold.md`
 
 ### 3. Per-collector loop
 
 Add each collector still unticked under the journal's `## Collectors` in
-`docs/exporter-journal.md`, or, in a repository predating it, from the step 0
-list, one at a time with
-`/add-collector <name>`: a `Data`/fetch piece that does I/O and nothing
-else, a pure `Parse` function that does no I/O, and the full test triad
-(parser, `_Collect`, `_Describe`, `_ErrorHandling`) before `Collect` is
-wired into the registry. On error, log and return zero metrics, never a
-partial metric. On a healthy-but-empty scrape, still emit every metric with
-zero *values*, never zero metrics, which reads as a failed scrape to the
-shared `StatusTracker`. Every command in this workflow reads
-`docs/exporter-journal.md` on entry and completes it on exit, so the remaining
-list, the cardinality budget and the shared label vocabulary live on disk
-rather than in the context window: `/clear` between two collectors is the
-recommended move, not a destructive one.
+`docs/exporter-journal.md`, or, in a repository predating it, from the step
+0 list, one at a time with `/prometheus-exporter:add-collector <name>`: a
+`Data`/fetch piece that does I/O and nothing else, a pure `Parse` function
+that does no I/O, and the full test triad (parser, `_Collect`, `_Describe`,
+`_ErrorHandling`) before `Collect` is wired into the registry. On error, log
+and return zero metrics, never a partial metric. On a healthy-but-empty
+scrape, still emit every metric with zero *values*, never zero metrics,
+which reads as a failed scrape to the shared `StatusTracker`. Every command
+in this workflow reads `docs/exporter-journal.md` on entry and completes it
+on exit, so the remaining list, the cardinality budget and the shared label
+vocabulary live on disk rather than in the context window: `/clear` between
+two collectors is the recommended move, not a destructive one.
 
 → `references/collector-pattern.md`, `references/project-journal.md`
 
@@ -114,10 +111,10 @@ recommended move, not a destructive one.
 
 All dev tooling (build, test, lint, vulnerability scanning) runs in a
 container by default, with a documented native fallback for contributors
-without a container engine. Two gates must be green before moving on:
-`make check` (vet, lint, tests, vulnerability scan) and `make docs-check`
-(checks `docs/metrics.md` against the actually-registered descriptors, so
-the docs can't drift from the code).
+without a container engine. Two gates must be green before moving on: `make
+check` (vet, lint, tests, vulnerability scan) and `make docs-check` (checks
+`docs/metrics.md` against the actually-registered descriptors, so the docs
+can't drift from the code).
 
 → `references/makefile-and-tooling.md`, `references/docs-and-governance.md`
 
@@ -126,14 +123,15 @@ the docs can't drift from the code).
 Wire the release and observability layer: GoReleaser drives host-agnostic,
 local-capable releases (SemVer tags, a CHANGELOG, an SBOM, cosign signing),
 with the GitHub Actions layer as an explicit opt-out rather than a
-requirement. Confirm the generated `CONTRIBUTING.md`'s Definition of Done
-is actually met. Ship `monitoring/` with Prometheus health alerts,
-recording rules, and a health Grafana dashboard; generate business
-dashboards from `docs/metrics.md` with `/generate-dashboard` once your
+requirement. Confirm the generated `CONTRIBUTING.md`'s Definition of Done is
+actually met. Ship `monitoring/` with Prometheus health alerts, recording
+rules, and a health Grafana dashboard; generate business dashboards from
+`docs/metrics.md` with `/prometheus-exporter:generate-dashboard` once your
 collectors are in place.
 
 → `references/cicd-and-release.md`, `references/packaging-and-ops.md`,
-`references/dashboards-and-alerts.md`, `references/security-and-hardening.md`
+`references/dashboards-and-alerts.md`,
+`references/security-and-hardening.md`
 
 ### 6. Audit
 
@@ -142,8 +140,8 @@ covers the exporter-specific delta: Definition of Done, Prometheus
 conventions, the collector pattern, cardinality, secrets in metrics, and
 docs/alerts lockstep. If `/code-review` or the `pr-review-toolkit` plugin
 happen to be installed, dispatch them too, in parallel, for generic code
-review. Treat both as an optional enhancement this workflow benefits
-from, never a dependency it requires.
+review. Treat both as an optional enhancement this workflow benefits from,
+never a dependency it requires.
 
 ## Checklist
 
@@ -153,9 +151,11 @@ from, never a dependency it requires.
       budget set.
 - [ ] **1. Conventions**: naming/types/labels/OpenMetrics confirmed
       against `prometheus.io` via context7.
-- [ ] **2. Scaffold**: `/new-prometheus-exporter <name>` run; repository
+- [ ] **2. Scaffold**: `/prometheus-exporter:new-prometheus-exporter <name>`
+  run; repository
       builds and passes its own gate.
-- [ ] **3. Collectors**: `/add-collector <name>` run once per collector left
+- [ ] **3. Collectors**: `/prometheus-exporter:add-collector <name>` run
+  once per collector left
       unticked under the journal's `## Collectors` in
       `docs/exporter-journal.md`, or, in a repository predating it, in the
       step 0 list; test triad green each time, `/clear` safe between two.
@@ -181,18 +181,18 @@ infrastructure, this is the question to ask.
 
 ### context7-first
 
-Anything version-sensitive or spec-defined (a target's actual API
-surface, Prometheus's current naming rules, a tool's current CLI flags)
-gets checked against up-to-date documentation via context7 before code is
-written or a claim is made, never assumed from memory. This applies at
-step 0 (the best available grounding for the target's API: a local spec,
-its docs, or context7) and step 1 (Prometheus's own conventions) every
-time, not just once at project start.
+Anything version-sensitive or spec-defined (a target's actual API surface,
+Prometheus's current naming rules, a tool's current CLI flags) gets checked
+against up-to-date documentation via context7 before code is written or a
+claim is made, never assumed from memory. This applies at step 0 (the best
+available grounding for the target's API: a local spec, its docs, or
+context7) and step 1 (Prometheus's own conventions) every time, not just
+once at project start.
 
 ## Reference index
 
-All twelve reference files live under `references/`, alongside the
-templates they document:
+All twelve reference files live under `references/`, alongside the templates
+they document:
 
 | Reference | Covers |
 |---|---|

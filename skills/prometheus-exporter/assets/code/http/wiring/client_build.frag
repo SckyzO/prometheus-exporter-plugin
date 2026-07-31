@@ -4,7 +4,7 @@
 	// every collector's client_build wiring consults; THIS block only builds
 	// it the first time it runs. That nil check is load-bearing, not
 	// defensive-for-its-own-sake: this exact frag is spliced once per
-	// collector, by scaffold.sh for the first one and by /add-collector for
+	// collector, by scaffold.sh for the first one and by /prometheus-exporter:add-collector for
 	// every one after, so with a second collector this block runs a second
 	// time in the same main(). A plain `limiters := collector.NewLimiterSet(...)`
 	// local declaration would either fail to compile the second time ("no

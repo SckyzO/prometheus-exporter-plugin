@@ -2,8 +2,8 @@
 
 The target model is chosen once, at scaffold time, and decides how a scrape
 reaches whatever is being monitored. It is the first decision
-`/design-exporter` settles, and changing it later is a regeneration rather
-than an edit.
+`/prometheus-exporter:design-exporter` settles, and changing it later is a
+regeneration rather than an edit.
 
 ```mermaid
 flowchart TB
@@ -44,15 +44,15 @@ request builds a registry and collector set scoped to the requested target.
 
 `?module=` names one or more modules from the configuration file; the
 selected modules' collector lists combine, their credentials do not. A
-request that selects two credential-bearing modules gets a `400`, and so does
-one that resolves no credentials against a file that declares some.
+request that selects two credential-bearing modules gets a `400`, and so
+does one that resolves no credentials against a file that declares some.
 
 ## `multi-instance`
 
 Exists for Prometheus's five-minute staleness window, not for slow targets:
-one process watches a fixed list of machines, polls each in the background on
-its own schedule, and serves every scrape from cache. It also suits a fleet
-whose per-machine credentials are known ahead of time.
+one process watches a fixed list of machines, polls each in the background
+on its own schedule, and serves every scrape from cache. It also suits a
+fleet whose per-machine credentials are known ahead of time.
 
 Each machine's series carry one identifying label, named at scaffold time by
 `scaffold.sh --instance-label` (default `target`) rather than by a runtime

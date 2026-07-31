@@ -39,7 +39,7 @@ const collectorSuccessMetric = "@@NAMESPACE@@_exporter_collector_success"
 // Collect(ch) takes no context, so the collector receives it at construction
 // (see the collector template's ctx field). The multi main.go appends one
 // NamedFactory per collector at its // @@PROBE_FACTORIES@@ marker, and
-// /add-collector appends another every time it adds a collector.
+// /prometheus-exporter:add-collector appends another every time it adds a collector.
 //
 // hc is the *http.Client the handler resolved for THIS request, from the
 // module the request selected, or nil for the default transport. It is
