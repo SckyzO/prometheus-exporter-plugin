@@ -6,6 +6,65 @@ The format is based on [Keep a
 Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`@@EXPORTER_NAME@@_build_info`, the exporter's own release, on
+  `/metrics`.** Registered through `client_golang`'s versioncollector, it
+  carries the version, revision and branch the build injects into
+  `prometheus/common/version`, which is the same package `--version` already
+  prints. This is the metric that answers "which build is actually running",
+  and every official Prometheus exporter exposes it. `go_build_info` stays
+  alongside it and is not a substitute: it carries Go module metadata and
+  reports `(devel)` for a plain local `go build`. Neither is affected by
+  `--web.disable-exporter-metrics`.
+- **`promhttp_metric_handler_requests_total` and
+  `..._requests_in_flight`**, from wrapping the `/metrics` handler in
+  `promhttp.InstrumentMetricHandler`. Without them, a Prometheus
+  double-scrape or a scrape that consistently errors is invisible from the
+  exporter's own side. They describe the act of serving `/metrics` rather
+  than anything about the target, which is why they are registered
+  unconditionally.
+- **A startup warning when the exporter runs as root.** An exporter reads a
+  data source and serves numbers and needs privilege for neither; running as
+  root turns any parsing bug, or any command the CLI flavor spawns, into a
+  root-level one. Visible, non-fatal, and it changes no default, the same
+  posture as the existing exposed-and-unauthenticated warning. The packaged
+  systemd unit already runs under a dedicated user, so this exists for the
+  deployments that do not use it.
+
+### Changed
+
+- **`StatusTracker` now owns the log policy for every collector.** It logged
+  panics and nothing else, so an operator seeing `collector_success 0` had no
+  corresponding line to grep, and `--log.level=debug` yielded no per-collector
+  timing. Three outcomes now: silent on the panic path, which the recover
+  already reported with the panic value; `Error` on a collector that emitted
+  nothing; `Debug` with the duration on success.
+- **The security reference forbids passing a credential on a command line.**
+  Rule 1 covered secrets in metric values, labels and help strings, and named
+  the `Execute` call site, but only to forbid *reporting* a credential back
+  through a label, never to forbid *passing* one as an argument. A process's
+  command line is world-readable through `/proc/<pid>/cmdline`, so `ps`
+  exposes it to every account on the host: the same disclosure the metric
+  rules prevent, through a channel they did not cover. Three alternatives are
+  given in order of preference, and the `Execute` doc comment points at them
+  from the call site. The shipped CLI template was and remains safe by
+  construction, with a fixed command and no arguments.
+
+### Fixed
+
+- **Two shipped references contradicted each other about build info.**
+  `project-scaffold.md` promised `@@EXPORTER_NAME@@_build_info`, which nothing
+  emitted, while `dashboards-and-alerts.md` correctly named `go_build_info`.
+  `make docs-check` sees neither file, so nothing could have caught it.
+  Registering the metric makes the first true rather than requiring a
+  retraction, and the dashboard reference now recommends the one that answers
+  the question. Both `metrics.md` templates also claimed build info was
+  disabled by `--web.disable-exporter-metrics`; it is registered outside that
+  guard and always was.
+
 ## [0.8.1] - 2026-08-01
 
 ### Added

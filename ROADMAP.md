@@ -285,6 +285,33 @@ siblings instead of a reload.
   `docs/metrics.md`, this command should read the journal's `Business-alert
   candidates` and `Cardinality budget` sections instead of asking cold.
 
+## Ongoing: widening the reference base to the official exporters
+
+Everything this plugin teaches was originally derived from a single reference
+exporter. That basis is being widened to the ecosystem's official ones, which
+have a decade of production behind them: `node_exporter`, `blackbox_exporter`,
+`snmp_exporter` and `ipmi_exporter`.
+
+This is not a version. It runs alongside the numbered milestones and lands one
+verdict at a time.
+`docs/design/2026-08-01-official-exporter-gap-report.md` holds the comparison:
+25 entries, 10 adopted, 11 rejected, 4 already covered, each sourced to a file
+and a line on both sides. `docs/design/re-sync.md` §1 now distinguishes the
+**origin** reference, whose files were copied, from the **corroborating** ones,
+which are read and compared but never copied, and §8 is the register of
+verdicts.
+
+A rejected verdict is a result, not a gap left open: five became numbered
+deliberate deviations in `re-sync.md` §4, two of which are places where this
+plugin is deliberately stricter than the majority of the references
+(`/-/reload` gated behind `--web.enable-lifecycle`, and no `net/http/pprof` on
+the exporter port).
+
+The largest adopted verdict, replacing `StatusTracker`'s count-based outcome
+inference with an outcome the collector declares, has its own design at
+`docs/design/2026-08-01-collector-outcome-seam-design.md` and falls under the
+two-phase rule.
+
 ## v1.0
 
 - Marketplace polish.
