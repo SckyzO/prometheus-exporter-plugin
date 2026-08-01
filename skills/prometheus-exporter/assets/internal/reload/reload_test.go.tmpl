@@ -16,10 +16,25 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
+	"go.uber.org/goleak"
 
 	"@@MODULE_PATH@@/internal/config"
 	"@@MODULE_PATH@@/internal/logger"
 )
+
+// TestMain runs every test in this package under go.uber.org/goleak, which
+// fails the package if a goroutine outlives the run. This package starts
+// goroutines that must stop on their own: the signal handler that waits on
+// SIGHUP for the process lifetime.
+// A leak here is invisible to an ordinary assertion, because the test that
+// spawned the goroutine has already passed by the time it fails to exit.
+//
+// If this ever fires on a goroutine you know is benign and out of your
+// control, prefer goleak.IgnoreTopFunction for that one function over
+// deleting this hook: the hook is worth more than any single exemption.
+func TestMain(m *testing.M) {
+	goleak.VerifyTestMain(m)
+}
 
 func writeConfig(t *testing.T, dir, body string) string {
 	t.Helper()
