@@ -52,7 +52,7 @@ context7 research, or plugin-specific tooling).
 
 | Reference | Template | Origin | Transform |
 |---|---|---|---|
-| `cmd/slurm_exporter/main.go` (280 l.) | `assets/cmd/@@EXPORTER_NAME@@/main.go.tmpl` | [D] | The hardcoded 15-collector map became the lazy `register()` closure seam + `// @@CLIENT_INIT@@`/`// @@COLLECTOR_REGISTRY@@` markers (§4.2); all Slurm-only flags/collectors stripped; `server.Shutdown()` added for real (§4.7 — the reference's own signal handling never actually drained the HTTP server); `promhttp.ContinueOnError` added (§4.7); the exposed-bind startup warning added (§4.12) |
+| `cmd/slurm_exporter/main.go` (280 l.) | `assets/mains/single/main.go.tmpl` | [D] | The hardcoded 15-collector map became the lazy `register()` closure seam + `// @@CLIENT_INIT@@`/`// @@COLLECTOR_REGISTRY@@` markers (§4.2); all Slurm-only flags/collectors stripped; `server.Shutdown()` added for real (§4.7 — the reference's own signal handling never actually drained the HTTP server); `promhttp.ContinueOnError` added (§4.7); the exposed-bind startup warning added (§4.12). **Path moved after v0.1:** this template sat at `assets/cmd/@@EXPORTER_NAME@@/main.go.tmpl` until 2026-07-10, when `--target-model` turned it into one of three staged entry points under `assets/mains/` (§2.10). `scaffold.sh` still places the selected one at the same *final* path, `cmd/<name>/main.go`, so the generated tree is unchanged |
 | `internal/collector/status.go` (82 l.) | `assets/internal/collector/status_tracker.go.tmpl` | [D] | `slurm_exporter_collector_*` → `@@NAMESPACE@@_exporter_collector_*`; made count-based, not panic-only (§4.6) |
 | `internal/logger/logger.go` (144 l.) | `assets/internal/logger/logger.go.tmpl` | [D] | Logic byte-identical; package doc comment added (lint fix — the file had zero Slurm references to begin with) |
 | `go.mod` / `go.sum` | `assets/go.mod.tmpl` / `assets/go.sum` | [D] | Module path → `@@MODULE_PATH@@`; dependency versions copied verbatim, not re-resolved, to preserve the reference's own `golang.org/x/crypto` CVE bump; `testify` dropped (§4.10) |
@@ -68,6 +68,9 @@ file: `client.go.tmpl`, `collector.go.tmpl`, `collector_test.go.tmpl`,
 `wiring/{client_init,registry}.frag`, `metrics.md.tmpl`,
 `testdata/example.json` — all **[N]**.
 
+That list is the v0.1 set and is no longer exhaustive: `limiter*`, `variants/*`
+and three further `wiring/*.frag` landed later — see §2.10.
+
 ### 2.3 CLI flavor (`code/cli/`, Task 8)
 
 | Reference | Template | Origin | Transform |
@@ -77,13 +80,16 @@ file: `client.go.tmpl`, `collector.go.tmpl`, `collector_test.go.tmpl`,
 | `internal/collector/cpus_test.go` + `cpus_collector_test.go` | `assets/code/cli/{parser_test.go,collector_test.go}.tmpl` | [D] (structural shape only) | Same fixture-driven triad shape; fixture replaced with anonymous `foo 1`/`bar 2` data |
 | — | `assets/code/cli/wiring/{client_init,registry}.frag`, `metrics.md.tmpl` | [N] | No reference equivalent — the wiring-frag mechanism is plugin-specific (§4.4) |
 
+As with the HTTP flavor, this is the v0.1 set: `limiter*`, `variants/*` and
+`wiring/client_build.frag` landed later — see §2.10.
+
 ### 2.4 Container-first tooling (Task 6)
 
 | Reference | Template | Origin | Transform |
 |---|---|---|---|
 | `Makefile` | `assets/Makefile.tmpl` | [D] | **The 4 corrections — §3.** |
 | `.golangci.yml` | `assets/.golangci.yml` | [D] | De-identified; `@@MODULE_PATH@@` substituted into `goimports.local-prefixes`; `gosec.excludes: [G304]` narrowed from global to test-files-only (§4.11) |
-| `scripts/docker/tools/Dockerfile` | `assets/scripts/docker/tools/Dockerfile.tmpl` | [D] | Same `golang:1.26.4-alpine` digest pin; `git config --system --add safe.directory '*'` added (§4 — needed once a scaffolded repo has a real `.git`) |
+| `scripts/docker/tools/Dockerfile` | `assets/scripts/docker/tools/Dockerfile.tmpl` | [D] | Same `golang:1.26.4-alpine` digest pin *as of v0.1* (bumped since — §5); `git config --system --add safe.directory '*'` added (§4 — needed once a scaffolded repo has a real `.git`) |
 | `scripts/docker/tools/{goreport.sh,deps-report.sh}` | same names under `assets/scripts/docker/tools/` | [D] | One string fix each (`slurm_exporter-tools` → `@@EXPORTER_NAME@@-tools`); otherwise byte-identical |
 
 ### 2.5 Operator docs (Task 10)
@@ -155,13 +161,16 @@ templates above:
   from the maintainer's private engineering principles (design spec §7bis's
   ENCODÉ/EXCLU split) — never copied from the reference's own root files, which
   govern a different repository, for different maintainers and audiences.
-- **`commands/new-prometheus-exporter.md`, `commands/add-collector.md`,
-  `agents/exporter-reviewer.md`, `skills/prometheus-exporter/SKILL.md`** — the
-  four executable/routing components. They consume the templates in §2.1–2.8
-  (e.g. `add-collector.md` reads `code/<flavor>/collector.go.tmpl` directly and
-  knows the exact identifiers to rename) but are workflow logic, not derived
-  text.
-- **`skills/prometheus-exporter/references/*.md`** (10 files) — written by
+- **`commands/*.md` and `agents/exporter-reviewer.md`, plus
+  `skills/prometheus-exporter/SKILL.md`** — the executable/routing components.
+  Four at v0.1 (`new-prometheus-exporter`, `add-collector`, the agent, the
+  skill); six today, `commands/design-exporter.md` and
+  `commands/generate-dashboard.md` having landed since (§2.10). They consume
+  the templates in §2.1–2.8 (e.g. `add-collector.md` reads
+  `code/<flavor>/collector.go.tmpl` directly and knows the exact identifiers to
+  rename) but are workflow logic, not derived text.
+- **`skills/prometheus-exporter/references/*.md`** (10 at v0.1, 12 today — see
+  §2.10) — written by
   reading the *already-derived templates* directly (`main.go.tmpl`,
   `Makefile.tmpl`, `.goreleaser.yaml.tmpl`, etc. — confirmed per-file in every
   Task 19–21 report), not by re-reading the reference repository a second
@@ -177,6 +186,39 @@ templates above:
   grep) and **`.github/workflows/plugin-ci.yml`** — this plugin's own
   test/CI harness, never shipped inside a generated exporter.
 
+### 2.10 Added after v0.1 — all [N], none reference-derived
+
+§2.1–2.9 map the **v0.1 derivation** and nothing else. Roughly a third of
+today's asset tree landed after it, from this plugin's own design work rather
+than from any reference file. None of it is [D]: the reference was never
+re-read for any of it.
+
+This subsection exists so that §2 can be read as a map of the *current* tree
+without mistaking silence for absence. That matters directly for any re-sync:
+several of these areas — `internal/probe/`, `internal/config/`,
+`internal/reload/` — are exactly where an official multi-target exporter has
+the most to say, and a re-diff driven by §2.1–2.9 alone would never look at
+them.
+
+Provenance is the commit that introduced each file (`git log --diff-filter=A`),
+and the design document is the authority for *why*, in the same way §2.1–2.9's
+task reports are.
+
+| Date | Capability | Files | Design document |
+|---|---|---|---|
+| 2026-07-06 | Background-refresh collector variant | `code/{http,cli}/variants/background_collector{,_test}.go.tmpl` | `2026-07-06-background-refresh-collector-design.md` |
+| 2026-07-06 | Discovery inputs (design-first intake) | `references/discovery-inputs.md`, `commands/design-exporter.md` | `2026-07-06-discovery-inputs-design.md` |
+| 2026-07-08 | Dashboard generation | `commands/generate-dashboard.md` | `2026-07-07-generate-dashboard-design.md` |
+| 2026-07-10 | Multi-target `/probe` runtime, `--target-model` | `mains/{single,multi}/main.go.tmpl` (the `single` one being §2.1's relocated `main.go.tmpl`), `internal/probe/{probe,probe_test}.go.tmpl`, `cmd/@@EXPORTER_NAME@@/security{,_test}.go.tmpl`, `code/http/wiring/probe_factory.frag` | `2026-07-10-multi-target-design.md`, `2026-07-12-add-collector-multi-target-design.md` |
+| 2026-07-22 | Optional YAML configuration layer | `internal/config/{config,config_test}.go.tmpl`, `config.example.yml.tmpl`, `code/{http,cli}/wiring/client_build.frag`, and `go.yaml.in/yaml/v2` in `go.mod.tmpl` | `2026-07-21-yaml-config-layer-design.md` |
+| 2026-07-23 | `--target-model multi-instance` | `mains/multi-instance/main.go.tmpl`, `internal/instance/{instance,instance_test}.go.tmpl`, `code/http/wiring/instance_factory.frag`, `code/http/variants/{collector_shared_test.go,metrics.md}.tmpl` | `2026-07-23-multi-instance-target-model-design.md`, `2026-07-27-multi-target-module-credentials-design.md` |
+| 2026-07-28 | Config reload + per-target concurrency ceiling | `internal/reload/{reload,reload_test}.go.tmpl`, `code/{http,cli}/limiter{,_test}.go.tmpl` | `2026-07-28-config-reload-and-concurrency-design.md` |
+| 2026-07-30 | Project journal, scaffolded `CLAUDE.md`, `samples/` | `CLAUDE.md.tmpl`, `samples/README.md.tmpl`, `references/project-journal.md` | `2026-07-30-project-journal-design.md` |
+
+Two v0.1-era files are absent from §2.1–2.8 only because they arrived in a fix
+pass rather than a task: `internal/collector/status_tracker_test.go.tmpl` (the
+tests locking §4.6's count-based behavior) and `.gitignore.tmpl`. Both are [N].
+
 ## 3. The four Makefile corrections
 
 `assets/Makefile.tmpl` is not a straight de-identified copy of the reference's
@@ -190,7 +232,7 @@ without naming the reference.
 |---|---|---|---|
 | 1 | **`build` containerized too** | `build` ran `CGO_ENABLED=0 go build` directly on the host, while `test`/`vet`/`lint`/`race`/`vuln` all went through `$(IN_TOOLS)` — silently contradicting the reference's own header comment ("no Go toolchain needed") | `build` now runs through the identical `$(IN_TOOLS)` wrapper as every other tooling target |
 | 2 | **`setup` target deleted** | A `setup` target ran `wget \| tar` to install a host-local Go toolchain under `./go/`, contradicting container-first and carrying an ongoing supply-chain/maintenance cost | Deleted entirely, along with its now-dead `GOPATH`/`GOPATH_ENV`/`GOFILES` variables (confirmed unused by anything else via grep, not assumed) |
-| 3 | **Single Go-version source of truth** | `GO_VERSION ?= $(if $(GO_INSTALLED_VERSION),...,1.22.2)` — a host-side fallback that could silently drift from whatever the tools image actually pins | Removed; the version lives in exactly one place, `scripts/docker/tools/Dockerfile`'s `FROM golang:1.26.4-alpine@sha256:...`, matching `go.mod.tmpl`'s `toolchain go1.26.4` |
+| 3 | **Single Go-version source of truth** | `GO_VERSION ?= $(if $(GO_INSTALLED_VERSION),...,1.22.2)` — a host-side fallback that could silently drift from whatever the tools image actually pins | Removed; the version lives in exactly one place, `scripts/docker/tools/Dockerfile`'s `FROM golang:<ver>-alpine@sha256:...`, matched by `go.mod.tmpl`'s `toolchain` directive. At v0.1 that was `1.26.4`; it is `1.26.5` since the 2026-07-11 CVE bump (§5). The correction is the *single source of truth*, not the number — read it from those two files, never from here |
 | 4 | **`lint`/`report` overlap documented** | No comment; a reader could mistake the overlap (gofmt/vet/ineffassign/misspell covered by both `lint` and `report`) for redundancy | A comment directly above `report` explains the distinct purposes: `lint` (part of `check`) is a pass/fail **gate**; `report` is a goreportcard-style **grade**, tolerant of a few findings as long as the average stays ≥ B |
 
 ## 4. Deliberate deviations
@@ -347,14 +389,23 @@ reports/fix passes. Numbered for cross-reference from §2's tables.
 
 ## 5. Version pins inherited from the reference (re-verify at next re-sync)
 
+**This table records the value *at v0.1*, not the value today.** Several have
+moved since, deliberately (a CVE bump, routine dependency maintenance). It is
+kept historical on purpose: duplicating a current version number here would
+create a second copy that drifts from the real one on the next bump, which is
+the exact failure mode §6.7 warns about. The authoritative current values live
+in `assets/go.mod.tmpl` and
+`assets/scripts/docker/tools/Dockerfile.tmpl` — read them there.
+
 | Pin | Value at v0.1 | Source in the reference | Note for the next re-sync |
 |---|---|---|---|
-| Go toolchain | `1.26.5` (`golang:1.26.5-alpine@sha256:3ad57304ad93bbec8548a0437ad9e06a455660655d9af011d58b993f6f615648`) | `scripts/docker/tools/Dockerfile`, `go.mod`'s `toolchain` directive | Re-verify the digest resolves live (`docker pull`) before reusing; don't copy a digest without pulling it |
+| Go toolchain | `1.26.4` (`golang:1.26.4-alpine@sha256:3ad57304ad93bbec8548a0437ad9e06a455660655d9af011d58b993f6f615648`) | `scripts/docker/tools/Dockerfile`, `go.mod`'s `toolchain` directive | Bumped to `1.26.5` (`sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2`) on 2026-07-11 for GO-2026-5856 (`crypto/tls` ECH). Re-verify the digest resolves live (`docker pull`) before reusing; don't copy a digest without pulling it |
 | `prometheus/client_golang` | v1.23.2 | `go.mod` | — |
 | `prometheus/exporter-toolkit` | v0.16.0 | `go.mod` | Not context7-indexed — re-verify `webflag.AddFlags`/`web.ListenAndServe`/`web.FlagConfig` field names against the tagged source directly if this version changes, not from memory |
 | `prometheus/common` | v0.68.1 | `go.mod` | — |
 | `alecthomas/kingpin/v2` | v2.4.0 | `go.mod` | — |
 | `golang.org/x/crypto` | v0.52.0 | `go.mod` (a deliberate CVE bump in the reference's own history) | Copied verbatim, not re-resolved, specifically to preserve this fix — verify the reference hasn't bumped further since |
+| `go.yaml.in/yaml/v2` | *(absent)* | — | Not inherited: added 2026-07-22 with the YAML configuration layer (§2.10), resolved fresh, never present in the reference |
 | GoReleaser | 2.16.0 (current at authorship, deliberately not the reference's own 2.15.4 pin — see §4.19) | context7 + a live GitHub release check, not the reference | Re-check the current release again; carry neither number forward blindly |
 | GitHub Actions (`checkout`, `setup-go`, `golangci-lint-action`, `goreleaser-action`, `cosign-installer`, `sbom-action`, `setup-qemu-action`, `setup-buildx-action`, `build-push-action`, `trivy-action`, `scorecard-action`, `upload-artifact`, `codeql-action`) | SHA-pinned to specific tags | reference `.github/workflows/*.yml` | Every pin was re-verified live via `git ls-remote --tags <action-repo>` at authorship time (Tasks 14 and 22) — SHA pins go stale; re-verify again, don't trust a carried-forward SHA |
 
@@ -407,8 +458,13 @@ what's taught here to be worth folding in:
 - Root `CLAUDE.md`'s "Re-sync rule" and "Zero-source-mention rule" sections
   both point here by name instead of naming anything themselves — this file
   is the concrete counterpart to those two generically-worded rules.
-- `test/zero-source-grep.sh` excludes `docs/` (hence this file) from its
-  SLURM-GREP scan; it is not exempt from anything else — the mapping and
+- `test/zero-source-grep.sh` exempts `docs/design/` (hence this file) and
+  `docs/plans/` from its SOURCE-GREP scan. The exemption is **not** `docs/`
+  wholesale any more: since the user-facing documentation moved under `docs/`,
+  a blanket exclude would blind the gate to shipped prose, which is what it
+  exists to guard. Read the script's own header for the current exclude set,
+  and note that the two `.github/` directories are told apart there too. This
+  file is exempt from being *found*, and from nothing else — the mapping and
   version pins recorded here are still expected to be *accurate*, just not
   *absent* from a search.
 - Design spec §11 ("Fidélité + correction des templates") and the v0.1 plan's
