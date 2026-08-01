@@ -29,7 +29,8 @@ all of them are complete, tracked below at milestone granularity.
       Docker, compose, systemd, GoReleaser, the opt-out GitHub layer, and
       the license set.
 - [x] **Milestone 7: Executable components** (Tasks 15-17).
-      `/new-prometheus-exporter`, `/add-collector`, and `exporter-reviewer`.
+      `/prometheus-exporter:new-prometheus-exporter`,
+      `/prometheus-exporter:add-collector`, and `exporter-reviewer`.
 - [x] **Milestone 8: The skill** (Tasks 18-21). `SKILL.md` router and the
       10 reference documents.
 - [x] **Milestone 9: Plugin CI, golden gate, dogfooding** (Tasks 22-23).
@@ -39,6 +40,6 @@ all of them are complete, tracked below at milestone granularity.
 
 ## After v0.1
 
-v0.2.0 and v0.3.0 have since shipped — see [`CHANGELOG.md`](CHANGELOG.md) for
-what landed in each and [`ROADMAP.md`](ROADMAP.md) for what's still ahead
-toward v1.0.
+v0.2.0 and v0.3.0 have since shipped — see [`CHANGELOG.md`](CHANGELOG.md)
+for what landed in each and [`ROADMAP.md`](ROADMAP.md) for what's still
+ahead toward v1.0.
