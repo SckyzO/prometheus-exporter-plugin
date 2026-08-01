@@ -39,9 +39,13 @@ as docs-check (or PromQL) is concerned.
 
 Standard Go runtime, process, and build-info metrics (from
 `prometheus/client_golang/prometheus/collectors`, registered in
-`cmd/@@EXPORTER_NAME@@/main.go`, disable with `--web.disable-exporter-metrics`)
-are intentionally not listed here: they are not defined by this package, and
-are already documented by client_golang itself.
+`cmd/@@EXPORTER_NAME@@/main.go`, disable the first two with
+`--web.disable-exporter-metrics`) are intentionally not listed here: they are
+not defined by this package, and are already documented by client_golang
+itself. The same applies to `promhttp_metric_handler_requests_total` and
+`promhttp_metric_handler_requests_in_flight`, which the /metrics handler is
+wrapped in. Listing any of them would make docs-check fail, since it resolves
+documented names from this package's own source.
 -->
 
 ## ExampleCollector

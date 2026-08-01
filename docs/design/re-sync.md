@@ -459,6 +459,29 @@ reports/fix passes. Numbered for cross-reference from §2's tables.
     ENCODÉ/EXCLU split) — never copied from the reference's own root files,
     which govern a different repository, for a different audience of
     contributors. (Task 2)
+21. **No inbound concurrency ceiling on `/metrics`, while the handler *is*
+    instrumented.** These read as one question and are two.
+    `promhttp.InstrumentMetricHandler` is adopted: it is purely additive, moves
+    no default, and without it a Prometheus double-scrape or a consistently
+    erroring scrape is invisible from the exporter's own side. It is registered
+    unconditionally alongside build info, not behind
+    `--web.disable-exporter-metrics`, because it describes the act of serving
+    `/metrics` rather than anything about the target.
+    `promhttp.HandlerOpts.MaxRequestsInFlight` is **rejected**, for now and on
+    the record. node_exporter is the only one of the four references that caps
+    it, at a default of 40 (`--web.max-requests`), and it does so because its
+    scrape traverses roughly ninety kernel collectors; blackbox, snmp and ipmi
+    all serve `/metrics` with a bare handler. A freshly scaffolded exporter
+    ships **one** collector. Matching node's non-zero default would change
+    behaviour for already-deployed exporters, since a scrape past the ceiling
+    gets a 503 instead of queueing, to solve a problem nobody has reported.
+    Defaulting the ceiling to 0 avoids that but ships a lever nothing exercises,
+    which is the "unexercised ceiling" risk
+    `docs/design/2026-07-28-config-reload-and-concurrency-design.md:614-617`
+    already names and which the root `CLAUDE.md`'s no-dead-code rule refuses.
+    Revisit when a scaffolded exporter routinely carries enough collectors for a
+    single scrape to be expensive; that is the evidence this decision is waiting
+    on, not a change of principle. (2026-08-01 gap report §8.3)
 
 ## 5. Version pins inherited from the reference (re-verify at next re-sync)
 
