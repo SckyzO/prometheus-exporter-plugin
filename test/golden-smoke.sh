@@ -2216,6 +2216,117 @@ EOF
   echo "confirmed: add-collector background sub-check PASSED ($flavor/$forge)"
 fi
 
+# The cli half of the mechanical /add-collector sub-check above, closing the
+# follow-up that block's own header opened ("Scoped to the http flavor only,
+# not cli too"). Same deliberately narrow scope: it exercises only the
+# SCRIPTABLE backbone of a real run, never the command's judgment calls.
+#
+# It is a separate block rather than a flavor-parameterised version of the
+# http one because the two splices genuinely differ, and collapsing them
+# would hide the difference this sub-check exists to lock down:
+#
+#   - cli touches TWO markers, not three. commands/add-collector.md is
+#     explicit that // @@CLIENT_BUILD@@ "only matters for the http flavor":
+#     the block already spliced there rejects http_client_config and sets
+#     the single shared CommandLimiter, and references no particular
+#     collector, so a second cli collector adds nothing at that marker. A
+#     sub-check that spliced client_build.frag anyway would duplicate the
+#     HTTPClientConfig refusal and reassign CommandLimiter, still compile,
+#     and quietly stop matching what the command actually prescribes.
+#   - cli has no per-collector Client to build, so client_init.frag declares
+#     a timeout and nothing else.
+#   - the self-instrumentation names to filter out of registry.frag are
+#     command_exec and command_exec_wait, not the http pair. Same kingpin
+#     duplicate-long-flag panic if either is missed: a binary that builds
+#     clean and dies on its first run, which make build cannot catch.
+if [ "$flavor" = cli ] && [ "$forge" = none ] && [ "$target_model" = single ]; then
+  echo "== mechanical /add-collector sub-check ($flavor/$forge): scaffolded templates still support adding a 2nd collector =="
+  addcc_tmpl="$assets/code/cli/collector.go.tmpl"
+  addcc_client_frag="$assets/code/cli/wiring/client_init.frag"
+  addcc_registry_frag="$assets/code/cli/wiring/registry.frag"
+  addcc_main="$work/cmd/demo_exporter/main.go"
+  addcc_metrics_doc="$work/docs/metrics.md"
+  addcc_qclient="$work/internal/collector/.addcc_client_init.frag.tmp"
+  addcc_qregistry="$work/internal/collector/.addcc_registry.frag.tmp"
+
+  # 1. Materialize queue.go. Rename BEFORE substituting @@VAR@@, same
+  # ordering discipline as the http block: @@MODULE_PATH@@'s value
+  # (example.com/demo_exporter) contains "example" too, so substituting
+  # first would rewrite the module path into example.com/demo_exporter's
+  # queue-mangled twin and break the import.
+  #
+  # Unlike http, no separate metric-name rename is needed: this flavor's
+  # descriptors are @@NAMESPACE@@_example_entries and @@NAMESPACE@@_example,
+  # so the identifier rename carries the metric names with it and the
+  # demo_example / demo_queue pair cannot collide.
+  sed \
+    -e 's/example/queue/g' \
+    -e 's/Example/Queue/g' \
+    "$addcc_tmpl" > "$work/internal/collector/queue.go.tmp"
+  sed \
+    -e 's/@@MODULE_PATH@@/example.com\/demo_exporter/g' \
+    -e 's/@@DATA_SOURCE@@/demo_cli/g' \
+    -e 's/@@NAMESPACE@@/demo/g' \
+    "$work/internal/collector/queue.go.tmp" > "$work/internal/collector/queue.go"
+  rm -f "$work/internal/collector/queue.go.tmp"
+
+  # A leftover @@VAR@@ in a string literal compiles fine and only surfaces
+  # as a bogus metric name; assert instead of relying on make build.
+  if grep -q '@@[A-Z_]*@@' "$work/internal/collector/queue.go"; then
+    die "add-collector cli sub-check: unsubstituted @@VAR@@ left in queue.go ($flavor/$forge): $(grep -o '@@[A-Z_]*@@' "$work/internal/collector/queue.go" | sort -u | tr '\n' ' ')"
+  fi
+
+  # 2. Two fragments, two markers. See this block's header for why
+  # client_build.frag is deliberately absent.
+  sed -e 's/example/queue/g' -e 's/Example/Queue/g' "$addcc_client_frag" > "$addcc_qclient"
+  sed -e 's/example/queue/g' -e 's/Example/Queue/g' "$addcc_registry_frag" \
+    | grep -v 'register("command_exec"' \
+    | grep -v 'register("command_exec_wait"' > "$addcc_qregistry"
+
+  # Guard the filter itself: if registry.frag ever renames either
+  # self-instrumentation collector, the greps above would silently stop
+  # filtering and this sub-check would register a duplicate long flag.
+  addcc_selfcount=$(grep -c 'register("command_exec' "$addcc_registry_frag")
+  [ "$addcc_selfcount" -eq 2 ] || die "add-collector cli sub-check: expected 2 command_exec* self-instrumentation registrations in registry.frag, found $addcc_selfcount — the filter below is now wrong ($flavor/$forge)"
+
+  grep -q '^[[:blank:]]*// @@CLIENT_INIT@@[[:blank:]]*$' "$addcc_main" || die "add-collector cli sub-check: no standalone // @@CLIENT_INIT@@ marker in $addcc_main"
+  sed -e '\|^[[:blank:]]*// @@CLIENT_INIT@@[[:blank:]]*$|r '"$addcc_qclient" "$addcc_main" > "$addcc_main.tmp" && mv "$addcc_main.tmp" "$addcc_main"
+  grep -q '^[[:blank:]]*// @@COLLECTOR_REGISTRY@@[[:blank:]]*$' "$addcc_main" || die "add-collector cli sub-check: no standalone // @@COLLECTOR_REGISTRY@@ marker in $addcc_main"
+  sed -e '\|^[[:blank:]]*// @@COLLECTOR_REGISTRY@@[[:blank:]]*$|r '"$addcc_qregistry" "$addcc_main" > "$addcc_main.tmp" && mv "$addcc_main.tmp" "$addcc_main"
+  rm -f "$addcc_qclient" "$addcc_qregistry"
+
+  # Same regression-lock as the http block: an unanchored marker match would
+  # also splice into register()'s own doc-comment mention of the marker.
+  addcc_regcount=$(grep -c 'register("queue"' "$addcc_main")
+  [ "$addcc_regcount" -eq 1 ] || die "add-collector cli sub-check: expected exactly 1 injected register(\"queue\" call, found $addcc_regcount ($flavor/$forge)"
+
+  # 3. docs/metrics.md rows. demo_queue carries a `key` label, unlike either
+  # http metric, so a copy of the http block's rows here would fail
+  # docs-check rather than pass it.
+  cat >> "$addcc_metrics_doc" <<'EOF'
+
+## QueueCollector
+
+Defined in `internal/collector/queue.go`.
+
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `demo_queue_entries` | Gauge | - | Number of key/value entries parsed from the queue data source in the last scrape. |
+| `demo_queue` | Gauge | `key` | Value reported by the queue data source, by key. |
+EOF
+
+  echo "== add-collector cli sub-check: make build ($flavor/$forge) =="
+  if ! ( cd "$work" && make build ); then
+    die "add-collector cli sub-check: make build FAILED after mechanically adding queue — a template/marker change likely broke /add-collector on the cli flavor ($flavor/$forge)"
+  fi
+
+  echo "== add-collector cli sub-check: make docs-check ($flavor/$forge) =="
+  if ! ( cd "$work" && make docs-check ); then
+    die "add-collector cli sub-check: make docs-check FAILED after mechanically adding queue — docs/metrics.md and internal/collector/queue.go disagree ($flavor/$forge)"
+  fi
+  echo "confirmed: add-collector cli sub-check PASSED ($flavor/$forge)"
+fi
+
 # Deterministic dashboard-backbone sub-check (generate-dashboard epic,
 # docs/design/2026-07-07-generate-dashboard-design.md): the /generate-dashboard command
 # is assistant-driven (a metrics.md-anchored RED/USE dialogue, context7
