@@ -233,10 +233,19 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(indexHTML))
 	})
-	http.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{
+	// InstrumentMetricHandler adds promhttp_metric_handler_requests_total
+	// (by response code) and promhttp_metric_handler_requests_in_flight, both
+	// registered on this exporter's own registry. They describe the act of
+	// serving /metrics rather than anything about the target, which is why
+	// they are registered unconditionally alongside build info rather than
+	// behind --web.disable-exporter-metrics: without them, a Prometheus
+	// double-scrape or a scrape that consistently errors is invisible from
+	// the exporter's own side. Registered exactly once per process; calling
+	// this twice against the same registry panics on duplicate registration.
+	http.Handle("/metrics", promhttp.InstrumentMetricHandler(reg, promhttp.HandlerFor(reg, promhttp.HandlerOpts{
 		EnableOpenMetrics: true,
 		ErrorHandling:     promhttp.ContinueOnError,
-	}))
+	})))
 	http.Handle("/probe", probeHandler)
 	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
