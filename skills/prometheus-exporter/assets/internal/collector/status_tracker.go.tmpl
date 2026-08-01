@@ -99,8 +99,19 @@ func (st *StatusTracker) Collect(ch chan<- prometheus.Metric) {
 		<-done
 
 		elapsed := time.Since(start).Seconds()
-		if len(collected) == 0 {
+		// One place owns the log policy for every collector, so an operator
+		// who sees collector_success 0 always has a matching line to grep,
+		// and --log.level=debug yields per-collector timing for free. The
+		// panic branch above already logged with the panic value, so it is
+		// deliberately not logged twice here.
+		switch {
+		case succeeded == 0:
+			// already reported by the recover() above
+		case len(collected) == 0:
+			st.logger.Error("Collector emitted no metrics", "collector", e.name, "duration_seconds", elapsed)
 			succeeded = 0
+		default:
+			st.logger.Debug("Collector succeeded", "collector", e.name, "duration_seconds", elapsed, "metrics", len(collected))
 		}
 		for _, m := range collected {
 			ch <- m
