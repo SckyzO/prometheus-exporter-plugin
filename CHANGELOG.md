@@ -8,6 +8,43 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.8.1] - 2026-08-01
 
+### Added
+
+- **Every generated exporter's test suite now runs under
+  `go.uber.org/goleak`.** A generated exporter starts goroutines that have to
+  stop on their own: one poller per watched instance on multi-instance, a
+  background-variant collector's refresh loop, `StatusTracker`'s reset
+  goroutine, the detached drain a reload starts when an instance is removed,
+  and the SIGHUP handler. Nothing verified that any of them exited.
+
+  The gap is invisible to an ordinary assertion, which is what makes it worth
+  closing: the test that spawned the goroutine has already passed by the time
+  the goroutine fails to exit. The likeliest way to introduce one is
+  `/prometheus-exporter:add-collector` adding a `--variant background`
+  collector whose loop drops `ctx.Done()`, in a repository whose owner never
+  touches this plugin again.
+
+  `go.uber.org/goleak` moves from an indirect dependency already pinned in
+  `go.sum` to a direct one. It is test-only: no new module enters the graph
+  and nothing ships in the binary. What it found, stated plainly: nothing.
+  goleak passes on all three packages as they stand, so the concurrency
+  design holds. The value is the regression lock, not a bug fixed.
+
+- **The golden matrix covers `/prometheus-exporter:add-collector` on the
+  `cli` flavor**, closing a follow-up the `http` block's own header opened
+  and never closed, which left the cli splice exercised by nothing. It is a
+  separate block rather than a flavor-parameterised version of the http one,
+  because the two splices genuinely differ: cli touches two markers, not
+  three.
+
+  It carries two guards the http block does not have, both for failures
+  `make build` cannot see. An assertion on a leftover `@@VAR@@`, which
+  compiles fine inside a string literal and only surfaces later as a nonsense
+  metric name. And a guard on the self-instrumentation filter itself: if
+  `registry.frag` ever renames `command_exec` or `command_exec_wait`, the
+  greps stop filtering in silence and a duplicate kingpin long flag ships, in
+  a binary that builds clean and dies on its first run.
+
 ### Fixed
 
 - **Every command in this plugin's documentation was named without its

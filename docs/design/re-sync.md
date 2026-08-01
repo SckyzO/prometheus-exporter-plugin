@@ -214,6 +214,7 @@ task reports are.
 | 2026-07-23 | `--target-model multi-instance` | `mains/multi-instance/main.go.tmpl`, `internal/instance/{instance,instance_test}.go.tmpl`, `code/http/wiring/instance_factory.frag`, `code/http/variants/{collector_shared_test.go,metrics.md}.tmpl` | `2026-07-23-multi-instance-target-model-design.md`, `2026-07-27-multi-target-module-credentials-design.md` |
 | 2026-07-28 | Config reload + per-target concurrency ceiling | `internal/reload/{reload,reload_test}.go.tmpl`, `code/{http,cli}/limiter{,_test}.go.tmpl` | `2026-07-28-config-reload-and-concurrency-design.md` |
 | 2026-07-30 | Project journal, scaffolded `CLAUDE.md`, `samples/` | `CLAUDE.md.tmpl`, `samples/README.md.tmpl`, `references/project-journal.md` | `2026-07-30-project-journal-design.md` |
+| 2026-08-01 | Goroutine-leak lock on every generated test suite | `go.uber.org/goleak` promoted to a direct require in `go.mod.tmpl`; `TestMain` hooks in `internal/{collector,instance,reload}/*_test.go.tmpl` | none — commit `4898cd3` is the record |
 
 Two v0.1-era files are absent from §2.1–2.8 only because they arrived in a fix
 pass rather than a task: `internal/collector/status_tracker_test.go.tmpl` (the
@@ -406,6 +407,7 @@ in `assets/go.mod.tmpl` and
 | `alecthomas/kingpin/v2` | v2.4.0 | `go.mod` | — |
 | `golang.org/x/crypto` | v0.52.0 | `go.mod` (a deliberate CVE bump in the reference's own history) | Copied verbatim, not re-resolved, specifically to preserve this fix — verify the reference hasn't bumped further since |
 | `go.yaml.in/yaml/v2` | *(absent)* | — | Not inherited: added 2026-07-22 with the YAML configuration layer (§2.10), resolved fresh, never present in the reference |
+| `go.uber.org/goleak` | *(indirect)* | — | Not inherited: already pinned in `go.sum` as an indirect dependency, promoted to a direct, test-only require on 2026-08-01 (§2.10). Nothing ships in the binary |
 | GoReleaser | 2.16.0 (current at authorship, deliberately not the reference's own 2.15.4 pin — see §4.19) | context7 + a live GitHub release check, not the reference | Re-check the current release again; carry neither number forward blindly |
 | GitHub Actions (`checkout`, `setup-go`, `golangci-lint-action`, `goreleaser-action`, `cosign-installer`, `sbom-action`, `setup-qemu-action`, `setup-buildx-action`, `build-push-action`, `trivy-action`, `scorecard-action`, `upload-artifact`, `codeql-action`) | SHA-pinned to specific tags | reference `.github/workflows/*.yml` | Every pin was re-verified live via `git ls-remote --tags <action-repo>` at authorship time (Tasks 14 and 22) — SHA pins go stale; re-verify again, don't trust a carried-forward SHA |
 
