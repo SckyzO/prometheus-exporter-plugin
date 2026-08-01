@@ -13,6 +13,7 @@ import (
 	"github.com/alecthomas/kingpin/v2"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
+	versioncollector "github.com/prometheus/client_golang/prometheus/collectors/version"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/prometheus/common/version"
 	"github.com/prometheus/exporter-toolkit/web"
@@ -186,6 +187,16 @@ func main() {
 
 	// Custom registry (no global state or third-party metric pollution).
 	reg := prometheus.NewRegistry()
+	// Two build-info metrics, deliberately, because they answer different
+	// questions. @@EXPORTER_NAME@@_build_info carries this exporter's own
+	// release: version, revision and branch as injected by the Makefile's
+	// LDFLAGS into prometheus/common/version, which is the same package
+	// --version already prints. That is the metric an operator queries to
+	// answer "which build is actually running", and it is what every official
+	// Prometheus exporter exposes. go_build_info carries Go module metadata
+	// instead, and reports "(devel)" for a plain local `go build`, so it can
+	// never answer that question.
+	reg.MustRegister(versioncollector.NewCollector("@@EXPORTER_NAME@@"))
 	reg.MustRegister(collectors.NewBuildInfoCollector())
 	if !*disableExporterMetrics {
 		reg.MustRegister(
