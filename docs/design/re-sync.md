@@ -11,7 +11,22 @@
 > never name the source: the knowledge they teach stands on `prometheus.io`'s
 > own authority, not on "this was copied from a specific project."
 
-## 1. The reference
+## 1. The references
+
+This plugin has **one origin reference**, whose files the templates were
+copied and generalized from, and **a set of corroborating references**, which
+are read and compared but never copied. The distinction is not cosmetic: it
+decides what a re-sync is allowed to do with each of them.
+
+| Reference | Role | License | Read at | Where |
+|---|---|---|---|---|
+| `slurm_exporter` | **origin** — templates are a generalized copy of its files | GPL-3.0 | the v0.1 build | `~/Dev/work/apps_repo/exporters/slurm_exporter/slurm_exporter/` |
+| `node_exporter` (`prometheus/`) | corroboration | Apache-2.0 | `v1.12.1` | cold clone, §1.3 |
+| `blackbox_exporter` (`prometheus/`) | corroboration | Apache-2.0 | `v0.28.0` | cold clone, §1.3 |
+| `snmp_exporter` (`prometheus/`) | corroboration | Apache-2.0 | `v0.30.1` | cold clone, §1.3 |
+| `ipmi_exporter` (`prometheus-community/`) | corroboration | **MIT** | `v1.10.1` | cold clone, §1.3 |
+
+### 1.1 The origin reference
 
 - **Repository:** `slurm_exporter`, a production Prometheus exporter for the
   Slurm workload manager (module path `github.com/sckyzo/slurm_exporter`),
@@ -34,13 +49,70 @@
   `commands/`, `agents/`, or `assets/` — checked by
   `test/zero-source-grep.sh`'s HANDLE-GREP (blocking: exit 1 on a match) — and
   templates always attribute the *generated* exporter to `@@OWNER@@`, a
-  placeholder for whoever runs `/new-prometheus-exporter`, never to this
-  handle.
+  placeholder for whoever runs
+  `/prometheus-exporter:new-prometheus-exporter`, never to this handle.
 - **Why derive from a real repository at all:** design spec §11 states the
   constraint plainly — templates are derived from the real files, never
   reproduced from memory, so they inherit real, load-bearing decisions (a
   documented CVE dependency bump, an exact `exporter-toolkit` call shape,
   a real container digest) instead of a plausible-looking guess.
+
+### 1.2 The corroborating references
+
+Four official exporters, chosen because between them they cover almost exactly
+this plugin's own matrix, which makes the comparison meaningful rather than
+anecdotal:
+
+| Exporter | Target model | Flavor |
+|---|---|---|
+| `node_exporter` | single | http (local reads) |
+| `blackbox_exporter` | multi (`/probe?target=`) | http |
+| `snmp_exporter` | multi + `modules:` | http |
+| `ipmi_exporter` | closest to a CLI wrapper | cli |
+
+**They produce no `[D]` row, ever.** §2's tables record a derivation by copy;
+these four are compared, and what comes out of the comparison is a **verdict**
+in §8, not a template. That is the whole reason the origin/corroboration split
+exists in the table above.
+
+**Licenses were verified at the source**, per repository `LICENSE` file, not
+assumed. Three are Apache-2.0; `ipmi_exporter` is **MIT**
+(`Copyright (c) 2019-2021 SoundCloud Ltd. and the IPMI exporter developers` /
+`Copyright (c) 2021 The Prometheus Authors`). Both are permissive, and both are
+*less* constraining than the origin reference's GPL-3.0, so nothing about the
+derivation math tightens. What holds regardless of license is the [G]/[S]
+discipline: a **shape** is adopted, never a block of text. Adopting a shape
+triggers no attribution obligation under either license. Should a verdict ever
+copy a substantial block verbatim, that is where the notice clause would apply,
+and it must be recorded explicitly at that point.
+
+**Their names must never enter `SOURCE_TERMS`**, the denylist in
+`test/zero-source-grep.sh`. All four are already cited on purpose as ecosystem
+precedent for conventions this plugin adopts. `node_exporter` alone sits in
+three files of taught content — `references/prometheus-principles.md`,
+`references/project-scaffold.md`, and `assets/mains/single/main.go.tmpl`, the
+last of which puts it in the **source of every generated exporter** — plus the
+root `CLAUDE.md` and the gate's own header. `snmp_exporter`,
+`blackbox_exporter` and `ipmi_exporter` are cited likewise, as are
+`postgres_exporter`, `mysqld_exporter` and `sql_exporter` across the references
+and both scaffold commands. Denylisting any of them would fail the build on a
+correct citation. The script's own header and the root `CLAUDE.md` both say so;
+this table does not create an exception. `SOURCE_TERMS` gains a term only when
+a re-sync derives templates from a **new origin reference** that is private or
+otherwise specific, under the two rules in that script's header.
+
+### 1.3 Reading discipline for a corroborating reference
+
+Same constraint as §6.1, applied to a repository this plugin does not own:
+
+- **Clone cold, at a tag** (`git clone --depth 1 --branch <tag>`), into scratch
+  space, never into a working checkout that may already be dirty or ahead. A
+  reference read at `v0.30.1-55-g8dd45e1` with untracked files is not
+  reproducible, and a gap report nobody can re-derive is an opinion.
+- **Read-only.** Never commit, never modify, `git status` clean at the end.
+- **Record the tag in the table above**, so a later reader knows which version
+  a verdict was formed against. A verdict is only as current as the tag it was
+  read from.
 
 ## 2. Source → template mapping
 
@@ -441,10 +513,11 @@ what's taught here to be worth folding in:
    source directly, it is not safe to assume its API is stable across minor
    versions).
 6. **Re-run the golden matrix and the gates:**
-   `sh test/golden-smoke.sh --all` (all four `{http,cli}×{none,github}` cells
-   green, including the `docs-check` lie-injection round-trip and
-   `promtool check rules`), then `sh test/zero-source-grep.sh` and
-   `claude plugin validate .`.
+   `sh test/golden-smoke.sh --all` (all six cells green — `cli-none`,
+   `cli-github`, `http-none`, `http-github`, `http-multi`,
+   `http-multi-instance` — including the `docs-check` lie-injection
+   round-trip and `promtool check rules`), then `sh test/zero-source-grep.sh`
+   and `claude plugin validate .`.
 7. **Record what changed and why, appended here** — extend §2/§4/§5 rather
    than silently overwriting them; a future maintainer re-deriving a third
    time needs the history of *why* each deviation exists, not only its
@@ -452,6 +525,11 @@ what's taught here to be worth folding in:
 8. **Confirm the reference stays untouched.** `git status` in the reference's
    own working tree must be clean before and after this whole process — this
    plugin only ever reads it.
+
+Steps 1 to 4 describe a re-derivation from the **origin** reference. A
+**corroborating** reference (§1.2) is never re-derived from: it is read, and
+each difference it surfaces becomes a §8 entry carrying a verdict. Steps 5 to 8
+apply either way.
 
 ## 7. Cross-references
 
@@ -470,3 +548,73 @@ what's taught here to be worth folding in:
 - Design spec §11 ("Fidélité + correction des templates") and the v0.1 plan's
   "Global Constraints" section are the original authority for the derivation
   discipline this file exists to satisfy.
+- §8 is where the corroborating references of §1.2 land. §2's tables are for
+  the origin reference only and stay that way.
+
+## 8. Gap register against the corroborating references
+
+*Empty at the time of writing. This section defines the shape; the entries
+land with the gap report.*
+
+### 8.1 Organised by domain, not by exporter
+
+Each entry is **one gap**, carrying **one verdict**, with a `Seen in` column
+naming which corroborating references exhibit it.
+
+The alternative — a section per exporter, recording only that exporter's
+differences — was considered and rejected. A gap belongs to a subject, not to a
+repository: `Update(ch) error` is not a quirk of one exporter but the way the
+ecosystem writes a collector, and three of the four demonstrate it. Per
+exporter, that single gap is written three times and its verdict has to be kept
+consistent across three places forever, or two of the three sections degrade
+into cross-references to the first, which is this layout with a numbering that
+lies. The verdict is unique by construction anyway: a shape cannot be adopted
+for one exporter and rejected for another.
+
+`Seen in` preserves what the per-exporter layout was for, which is knowing who
+demonstrates what, without duplicating the verdict.
+
+If the four ever diverge sharply from **each other** on the same subject,
+`Seen in` becomes a sub-table for that entry. That is a per-entry escalation,
+not a reason to reorganise the section.
+
+### 8.2 Entry shape
+
+| Gap | Official behavior | This plugin | Seen in | Verdict | Why |
+|---|---|---|---|---|---|
+
+- **Gap** — the subject, named so it reads the same from either side.
+- **Official behavior / This plugin** — what each actually does, sourced to a
+  file and a line on both sides, so a third party can re-check it.
+- **Seen in** — which corroborating references exhibit it, with the tag read
+  (§1's table). A verdict is only as current as the tag behind it.
+- **Verdict** — exactly one of:
+  - **adopted** — the official behavior is better; this plugin changes. The
+    change lands in its own commit, with a regression test, and under §4's
+    two-phase rule if it touches the templating engine, the collector seam or
+    the registry contract.
+  - **rejected** — this plugin's behavior is better, or the official one does
+    not generalize beyond its own target. **A rejected gap is not a
+    non-result**: it is promoted to a numbered deliberate deviation in §4,
+    which is what that section is for, so a future re-sync does not
+    re-litigate it from scratch.
+  - **already covered** — this plugin already does the equivalent, possibly
+    under another name. Recorded rather than dropped, so the next reader does
+    not spend the same afternoon rediscovering it.
+- **Why** — the reasoning, in one or two sentences. A verdict without one is
+  an assertion, and this document exists so that the next maintainer inherits
+  reasons rather than conclusions.
+
+### 8.3 Domains in scope
+
+Priority goes to the areas where a decade of production makes a real
+difference, and where this plugin's own answer was reasoned from principles
+rather than observed in the field:
+
+1. Collector shape and scrape-error semantics
+2. Metric naming, label conventions, self-instrumentation
+3. The `/probe` contract, modules, configuration-file structure
+4. The posture of mutating and operational endpoints, and the CLI-wrapper shape
+
+Nothing forbids an entry outside these four; they are the reading order, not a
+fence.
