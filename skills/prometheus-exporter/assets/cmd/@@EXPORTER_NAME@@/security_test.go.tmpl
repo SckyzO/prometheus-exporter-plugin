@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"@@MODULE_PATH@@/internal/logger"
+)
 
 func TestIsLoopbackHost(t *testing.T) {
 	cases := []struct {
@@ -21,4 +25,16 @@ func TestIsLoopbackHost(t *testing.T) {
 			t.Errorf("isLoopbackHost(%q) = %v, want %v", c.host, got, c.want)
 		}
 	}
+}
+
+// TestWarnIfRunningAsRootDoesNotBlock locks the property that actually
+// matters and that a regression could plausibly break: the warning is
+// non-fatal and returns, whichever user the test happens to run as. CI runs
+// as root inside a container and as an unprivileged user on a workstation, so
+// asserting on the branch taken would make this test flaky by environment
+// rather than by defect. The log line itself is not asserted: the logger
+// writes to stderr with no injectable writer, and adding a seam only to
+// observe one Warn would be more machinery than the property is worth.
+func TestWarnIfRunningAsRootDoesNotBlock(t *testing.T) {
+	warnIfRunningAsRoot(logger.NewTextLogger("error"))
 }

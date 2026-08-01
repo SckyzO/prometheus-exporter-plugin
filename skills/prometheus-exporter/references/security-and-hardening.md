@@ -40,6 +40,30 @@ command: a `Client`/`Execute` call site that reads a credential-bearing flag
 to *reach* the target must never turn around and *report* that value back
 through a label.
 
+**A credential must not travel in a command line either.** On the CLI flavor,
+the shipped `Execute` call takes a fixed command with no arguments, so nothing
+sensitive can reach it. That changes the first time a real tool is wrapped and
+it needs to authenticate. Do not pass the credential as an argument: a
+process's full command line is world-readable on Linux through
+`/proc/<pid>/cmdline`, so `ps` shows it to every account on the host, not just
+to the one running the exporter. That is the same disclosure the metric rules
+above exist to prevent, through a channel those rules do not cover.
+
+Established ways out, in rough order of preference:
+
+- **An environment variable** on the child process, set through
+  `exec.Cmd.Env`. Visible in `/proc/<pid>/environ`, which unlike `cmdline` is
+  readable only by the process owner and root.
+- **A file the tool reads**, referenced by path on the command line
+  (`--config-file /path`, `--password-file /path`). The path is not a secret;
+  create the file `0600` and prefer one the exporter controls.
+- **The tool's own stdin**, if it accepts one.
+
+Public exporters that wrap a CLI solve this deliberately rather than by
+accident, which is a good sign it is worth the effort: at least one writes its
+credentials into a `0600` FIFO with a randomly-generated name and passes only
+that path as an argument, so nothing sensitive is ever in `argv`.
+
 ### Why this needs a dedicated audit pass, not just a linter
 
 `make lint`'s `gosec` pass (`.golangci.yml`) catches unsafe *code shapes*

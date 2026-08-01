@@ -2,6 +2,7 @@ package main
 
 import (
 	"net"
+	"os"
 
 	"@@MODULE_PATH@@/internal/logger"
 )
@@ -44,4 +45,24 @@ func warnIfExposedAndUnauthenticated(log *logger.Logger, listenAddresses []strin
 			return // one warning is enough even if more than one address is exposed
 		}
 	}
+}
+
+// warnIfRunningAsRoot implements the same Rule 3 posture as
+// warnIfExposedAndUnauthenticated, applied to privilege: one visible,
+// non-fatal warning at startup, no default changed, no startup blocked.
+//
+// An exporter reads a data source and serves numbers; it needs no privilege
+// to do either. Running as root turns any parsing bug or any command this
+// exporter spawns into a root-level one. That matters most on the CLI flavor,
+// where wrapping a real tool routinely tempts an operator into sudo.
+//
+// The packaged systemd unit already runs under a dedicated user, so this
+// warning exists for every deployment that does not use it: a container run
+// without --user, a hand-written init script, a binary started from a shell.
+func warnIfRunningAsRoot(log *logger.Logger) {
+	if os.Geteuid() != 0 {
+		return
+	}
+	log.Warn("running as root, which this exporter does not require; " +
+		"run it as an unprivileged user (the packaged systemd unit already does)")
 }

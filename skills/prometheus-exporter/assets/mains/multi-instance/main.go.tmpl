@@ -159,6 +159,7 @@ func main() {
 	}
 
 	warnIfExposedAndUnauthenticated(log, *toolkitFlags.WebListenAddresses, *toolkitFlags.WebConfigFile)
+	warnIfRunningAsRoot(log)
 
 	// Validate and resolve the instance list, fail-fast: at least one instance,
 	// unique names, http/https addresses, resolvable module references, no

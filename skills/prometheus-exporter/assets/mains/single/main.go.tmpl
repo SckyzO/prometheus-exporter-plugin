@@ -195,6 +195,7 @@ func main() {
 	// sure the operator knows /metrics is unauthenticated on a reachable
 	// address, since ":@@DEFAULT_PORT@@" already binds every interface.
 	warnIfExposedAndUnauthenticated(log, *toolkitFlags.WebListenAddresses, *toolkitFlags.WebConfigFile)
+	warnIfRunningAsRoot(log)
 
 	// Create a custom registry to avoid global state and third-party metric pollution.
 	reg := prometheus.NewRegistry()

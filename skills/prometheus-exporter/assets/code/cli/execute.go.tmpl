@@ -84,6 +84,11 @@ var CommandLimiter *Limiter
 // failed and returned before CombinedOutput ever ran, making a starved
 // collector invisible on CommandDuration (though still visible via logging
 // and StatusTracker).
+//
+// Never pass a credential in args. A process's command line is world-readable
+// through /proc/<pid>/cmdline, so ps exposes it to every account on the host.
+// Pass it through cmd.Env, or through a 0600 file whose path is the argument.
+// See references/security-and-hardening.md, Rule 1.
 var Execute = func(ctx context.Context, name string, args ...string) (out []byte, err error) {
 	start := time.Now()
 	defer func() {

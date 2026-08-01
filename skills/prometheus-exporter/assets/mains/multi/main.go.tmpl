@@ -146,6 +146,7 @@ func main() {
 	}
 
 	warnIfExposedAndUnauthenticated(log, *toolkitFlags.WebListenAddresses, *toolkitFlags.WebConfigFile)
+	warnIfRunningAsRoot(log)
 	warnIfProbeUnrestricted(log, *probeTargetAllowlist, cfg)
 
 	// factories holds one entry per probed collector, in declaration order.
