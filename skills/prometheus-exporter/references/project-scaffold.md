@@ -335,9 +335,14 @@ reg.MustRegister(tracker)
 things at once: global mutable state shared with anything else the process
 happens to link in, and a third-party dependency that calls `promauto` at
 its own package-init time silently adding metrics this exporter never asked
-to expose. Build info is always registered (cheap, and universally useful:
-`@@EXPORTER_NAME@@_build_info` gives Prometheus itself a way to query the
-running version); Go runtime and process metrics are gated behind
+to expose. Build info is always registered, as two distinct metrics that
+answer two different questions: `@@EXPORTER_NAME@@_build_info`, from
+client_golang's versioncollector, carries the release the Makefile's LDFLAGS
+injected into `prometheus/common/version`, which is what `--version` prints
+and what every official Prometheus exporter exposes, so it is the one that
+answers "which build is actually running"; `go_build_info` carries Go module
+metadata and reports `(devel)` for a plain local `go build`, so it cannot.
+Neither is gated. Go runtime and process metrics are gated behind
 `--web.disable-exporter-metrics` (off by default), for deployments where
 something else already scrapes a dedicated Go-runtime exporter and duplicate
 `go_*`/`process_*` series would just be noise.

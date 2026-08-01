@@ -253,9 +253,11 @@ identical across every flavor this plugin scaffolds: only the namespace and
   description calls this out as "useful for spotting a slow degradation
   before it trips `ExporterCollectorDurationHigh`," tying the dashboard
   directly back to the alert tier above.
-- **Build Info**: `go_build_info`, client_golang's standard build-info
-  collector; explicitly *not* the same thing as this exporter's own release
-  tag (a local `go build` typically reports `(devel)`).
+- **Build Info**: `@@EXPORTER_NAME@@_build_info`, carrying the release the
+  build injected into `prometheus/common/version`. This is the one to put on
+  a dashboard, since it answers "which build is running". `go_build_info` is
+  also exposed but reports Go module metadata, and a local `go build`
+  typically shows `(devel)` there, so it cannot answer that question.
 
 Two template variables: `datasource` (pick your Prometheus data source) and
 `job` (the scrape `job` label(s) to show, **multi-select**, `includeAll`

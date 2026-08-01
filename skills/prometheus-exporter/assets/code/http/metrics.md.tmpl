@@ -42,9 +42,12 @@ Standard Go runtime, process, and build-info metrics (from
 `cmd/@@EXPORTER_NAME@@/main.go`, disable the first two with
 `--web.disable-exporter-metrics`) are intentionally not listed here: they are
 not defined by this package, and are already documented by client_golang
-itself. The same applies to `promhttp_metric_handler_requests_total` and
+itself. The same applies to `@@EXPORTER_NAME@@_build_info`, which comes from
+client_golang's versioncollector and carries this exporter's own release
+(version, revision, branch, goversion), and to
+`promhttp_metric_handler_requests_total` and
 `promhttp_metric_handler_requests_in_flight`, which the /metrics handler is
-wrapped in. Listing any of them would make docs-check fail, since it resolves
+wrapped in. None of those are disabled by `--web.disable-exporter-metrics`. Listing any of them would make docs-check fail, since it resolves
 documented names from this package's own source.
 -->
 
