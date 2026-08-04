@@ -206,6 +206,13 @@ completed, which at startup is normal for a few seconds and at any other time is
 this step exists to catch. Compare against the alert of the same shape in
 [../monitoring/prometheus/alerts.yml](../monitoring/prometheus/alerts.yml).
 
+**A current freshness gauge is not proof the data is current.** It records when this
+exporter last fetched, not when the source last produced. If any collector reads something
+the source timestamps itself (a published window, a report, a `lastModified`), check that
+second gauge too: a source that stops producing while still answering leaves every fetch
+successful and this gauge perfectly fresh. That failure is invisible here and was found in
+the field, not in a test.
+
 ### If it fails
 
 - Any `... 0` value: that collector failed. Find its error in `/tmp/exporter.log` and fix it

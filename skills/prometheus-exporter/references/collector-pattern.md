@@ -351,6 +351,28 @@ today, and one is still planned.
   (`project-scaffold.md`) becomes relevant to a single collector's own
   goroutine, not just the HTTP server's: the collector's `Done()` plugs into
   `main.go`'s `backgroundCollectors` wait seam.
+
+  **Two gauges, never one, when the source timestamps its own data.** The
+  freshness gauge above is stamped when *this exporter* completes a refresh.
+  It answers "did I fetch?", and it is the only question it answers. If the
+  source stops producing while continuing to serve, every fetch succeeds, the
+  gauge stays perfectly current, and the staleness alert built on it never
+  fires: the collector is healthy, the data is frozen, and nothing says so.
+  **A refresh succeeding and the data advancing are different claims.**
+
+  So whenever a collector reads something the source itself timestamps (a
+  published window, a generated report, a `lastModified` field), expose that
+  instant as a second gauge beside the freshness one and alert on both. The
+  first catches a broken exporter, the second catches a broken source. Neither
+  substitutes for the other, and the one people ship is usually the first.
+
+  **The staleness threshold on that second gauge is arithmetic, not a
+  constant.** It is N missed publications *plus this collector's own refresh
+  interval*, because the interval is spent before the data is even fetched.
+  Two collectors reading the same source on different intervals therefore
+  carry different thresholds that mean the same thing, which looks like
+  inconsistency until the intervals are read beside them. Put the arithmetic
+  in the alert's annotation so nobody harmonises them into being wrong.
 - **Cache (v0.2 fast-follow, not shipped today).** A shared, TTL-guarded
   cache sitting in front of `<name>Data` (RWMutex-protected, a `time.Time`
   freshness stamp), so several scrapes inside one TTL window reuse a single

@@ -198,8 +198,21 @@ groups:
       # long dead. ExporterCollectorFailing above will never fire for it.
       # A whole fleet can read green on data that stopped moving.
       #
-      # The freshness gauge is the only signal that catches this, so the
-      # alert has to be on the gauge's VALUE, not on collector_success.
+      # The freshness gauge is what catches this, so the alert has to be on
+      # the gauge's VALUE, not on collector_success.
+      #
+      # It catches a refresh that stopped. It does NOT catch data that
+      # stopped, and those are different claims. The gauge is stamped when
+      # THIS EXPORTER completes a refresh, so if the source keeps answering
+      # normally while the data behind it freezes, the refresh succeeds, the
+      # gauge stays perfectly current, and nothing here fires. Observed in the
+      # field, not hypothesised.
+      #
+      # If a collector reads something the source itself timestamps (a
+      # published window, a report, a last-modified field), expose that as a
+      # SECOND gauge and alert on it too. Two gauges, never one: one says
+      # "I fetched", the other says "there was something new to fetch".
+      # See the two-gauge rule in the collector reference.
       #
       # Commented for the same reason as the business alert above: the metric
       # name carries the collector's own name, so there is no generic form,
@@ -207,6 +220,14 @@ groups:
       # background collector never emits. Uncomment and rename per collector.
       # Set `for:` and the threshold from that collector's own refresh
       # interval: a threshold below the interval alerts on every cycle.
+      #
+      # For the second gauge, the threshold is not a constant to copy between
+      # collectors: it is N missed publications PLUS that collector's own
+      # refresh interval, because the exporter's interval is spent before the
+      # data is even fetched. Two collectors watching the same source with
+      # different intervals therefore carry different numbers meaning the
+      # same thing, and writing the arithmetic in the annotation is what stops
+      # the next person "harmonising" them.
       #
       #   - alert: ExporterCollectorStale
       #     expr: time() - @@NAMESPACE@@_<collector>_last_refresh_timestamp_seconds > 900

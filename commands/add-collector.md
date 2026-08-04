@@ -915,6 +915,16 @@ note on why this metric name is not user-chosen):
 | `<namespace>_<name>_last_refresh_timestamp_seconds` | Gauge | - | Unix time of the last successful <name> refresh. Alert if time() - this > 2 x the collector's configured interval. |
 ```
 
+**If this collector reads something the source timestamps itself** (a
+published window, a generated report, a `lastModified` field), add a second
+gauge for that instant and a row for it here. The freshness gauge above says
+"I fetched"; only this one says "there was something new to fetch", and a
+source that freezes while still answering leaves the first perfectly current
+(`collector-pattern.md`'s two-gauge rule). Its staleness threshold is N missed
+publications **plus this collector's own refresh interval**, computed rather
+than copied from a sibling collector, and the arithmetic belongs in the
+alert's annotation.
+
 The names/labels here **must exactly match** what step 3's code emits: this
 is what `make docs-check` verifies (fails the build on a documented metric
 the code can't produce; only warns on the reverse). Every row's Type should
