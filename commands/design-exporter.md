@@ -174,8 +174,8 @@ Whatever the ladder grounded, and whatever gaps it left, run
    `Concurrency ceiling: unlimited` or `Concurrency ceiling: <N>`.
 5. **Cardinality budget** per collector: labels, worst-case series count,
    any reduction flag. 5b. **Naming conventions**, asked once and binding on
-   every collector. Three
-    parts, all recorded under `## Architecture decisions`:
+   every collector. Three parts, all recorded under
+   `## Architecture decisions`:
 
     - **Metric name shape**: confirm
       `<namespace>_<subsystem>_<name>_<unit>` or the variant this exporter

@@ -155,9 +155,12 @@ For every metric defined in `internal/collector/*.go` (the same call sites
   recorded as separate names showing up as a label value, or the reverse.
   Flag the same dimension resolved both ways across two collectors even when
   the journal is silent, since that is the drift the line exists to prevent.
-  Two cases are settled by official guidance regardless of what any journal
-  says, so flag them on sight: read/write and send/receive belong in separate
-  metric names, not in a `direction` label.
+  Read/write and send/receive in a `direction` label are worth raising on
+  sight, since official guidance makes separate names the default there, but
+  raise it as a question rather than a verdict: the journal is authoritative,
+  and a recorded arbitration with a reason attached answers it. What is
+  always a finding is an arbitration made and then contradicted, or the same
+  dimension going both ways in one exporter.
 - **Type sanity.** A monotonically increasing count (errors seen, requests
   made, bytes sent) should be a Counter, not a Gauge that a collector merely
   never decreases: a "const-Gauge for everything" habit loses

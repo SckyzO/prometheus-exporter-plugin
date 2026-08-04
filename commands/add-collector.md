@@ -326,12 +326,13 @@ Only when this collector introduces a dimension that line does not cover do
 you decide anything: apply `prometheus-principles.md`'s "Deciding between a
 separate name and a label value", all three steps in order, then append the
 outcome and its reason to that same line so the next collector inherits it.
-Two traps that procedure exists to prevent, both of which produce a
-confident wrong answer: reading the `sum()`/`avg()` rule of thumb as a
-two-way test when it only forces separation and never forbids it, and
-re-deriving a case the official guidance has already settled outright, such
-as read/write or send/receive, which are separate metric names rather than a
-`direction` label.
+The trap that procedure exists to prevent is treating the `sum()`/`avg()`
+rule of thumb as a decision procedure. It is a hedged heuristic that the same
+documentation carves an exception into, and it gets both directions wrong on
+its own: read/write has a perfectly meaningful sum and is still two names,
+while tabular readings of one unit (per sensor, per slot, per device) stay
+one metric with a label even though summing across them is nonsense. Step 2
+is what settles both.
 
 **Check the planned budget.** If the journal's `## Cardinality budget`
 carries a line for this collector, read it back: labels, worst-case series,

@@ -50,8 +50,10 @@ What has no home on disk, and therefore belongs here:
   ceiling**, both decided at design time and otherwise abandoned at scaffold
   time;
 - which planned collectors need the **background** variant;
-- the **naming convention**: the metric-name shape, and the shared label
-  vocabulary every collector must reuse;
+- the **naming convention**: the metric-name shape, the shared label
+  vocabulary every collector must reuse, and the name-vs-label arbitrations,
+  which are the least recoverable of the three since a dimension resolved
+  into separate names leaves no label behind to observe;
 - the **provenance** of the design, and the open questions discovery left;
 - **why** any of the above was decided.
 
