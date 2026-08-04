@@ -205,21 +205,36 @@ Then check `Describe`/`Collect` themselves:
 - **`Describe` sends every descriptor unconditionally**, and its count
   matches the struct's `*prometheus.Desc` field count exactly (also what the
   `_Describe` test in Step 6 pins down).
-- **`Collect`'s error path** logs and returns with **zero** metrics sent:
-  never a partial set, never a panic swallowed into a fallback value. This
-  is what lets the shared `StatusTracker`
-  (`internal/collector/status_tracker.go`) mark
-  `..._exporter_collector_success{collector="<name>"}` as `0`; a
-  collector-local `recover()` that swallows the error and emits *anything*
-  defeats that signal and is a finding.
-- **The same rule in reverse**: on a **successful** scrape that legitimately
-  has nothing to report (an empty list, an idle target), the collector must
-  still emit its metrics with zero *values*: never a bare return. A
-  `Collect` that can return normally while sending nothing reads as a failed
-  scrape (`collector_success=0`) to anyone alerting on it, indistinguishable
-  from a real outage. Look for a fixed-shape, always-emitted gauge (the
-  shipped `..._items`/`..._example_entries` play this role) alongside any
+- **How the collector reports its outcome.** Two shapes are valid, and which
+  one applies depends on the repository, so establish that first:
+
+  ```sh
+  grep -q 'OutcomeCollector' internal/collector/status_tracker.go && echo current || echo outdated
+  ```
+
+  **`current`**: the collector should implement
+  `CollectWithOutcome(ch) error`, with `Collect` delegating to it, and carry
+  `var _ OutcomeCollector = (*<Name>Collector)(nil)`. A missing assertion is
+  a finding: without it a signature typo compiles and the tracker silently
+  falls back to counting metrics, so the collector looks converted and is
+  not. Returning `nil` with zero metrics is **correct** here, not a defect:
+  it is how a legitimately empty scrape is distinguished from a broken one.
+  Returning an error after emitting part of the series is also correct, and
+  the emitted metrics are still forwarded. A collector-local `recover()`
+  that swallows an error and returns `nil` **is** a finding.
+
+  **`outdated`**: this repository predates the seam and its tracker infers
+  the outcome from the metric count. There, the older rule holds and its
+  violation is a finding: on error, log and bare-return with zero metrics;
+  on a successful scrape that legitimately has nothing to report, still emit
+  every metric with zero *values*, never zero metrics, since a bare return
+  would read as a failed scrape indistinguishable from a real outage. Look
+  for a fixed-shape, always-emitted gauge (the shipped
+  `..._items`/`..._example_entries` play this role) alongside any
   variable-label metric that can legitimately have zero entries.
+
+  **Do not report the shape of one as a defect of the other.** Running the
+  `outdated` rule against a `current` repository flags correct collectors.
 - **No duplicate label sets on one descriptor.** If the parser can produce
   two entries sharing identical label values on the same `Desc`,
   `Registry.Gather()` treats the second as a collision and drops/errors it

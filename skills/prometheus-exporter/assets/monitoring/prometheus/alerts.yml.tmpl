@@ -183,3 +183,41 @@ groups:
       # the pair your flavor actually ships. `/prometheus-exporter:add-collector` (if you have
       # the scaffolding plugin available) proposes a real, uncommented
       # alert here for every collector's own metrics as you add them.
+
+      # --- Staleness, for background-variant collectors only ---
+      #
+      # Read this one even if you never use the background variant, because
+      # the failure it catches is silent and the health alerts above cannot
+      # see it.
+      #
+      # A background collector refreshes on its own schedule and serves the
+      # last good result from a cache. Its Collect always emits at least the
+      # freshness gauge below, so it always reports
+      # @@NAMESPACE@@_exporter_collector_success 1, by construction, even
+      # when its refresh has been failing for hours and the data it serves is
+      # long dead. ExporterCollectorFailing above will never fire for it.
+      # A whole fleet can read green on data that stopped moving.
+      #
+      # The freshness gauge is the only signal that catches this, so the
+      # alert has to be on the gauge's VALUE, not on collector_success.
+      #
+      # Commented for the same reason as the business alert above: the metric
+      # name carries the collector's own name, so there is no generic form,
+      # and an uncommented rule would name a metric an exporter with no
+      # background collector never emits. Uncomment and rename per collector.
+      # Set `for:` and the threshold from that collector's own refresh
+      # interval: a threshold below the interval alerts on every cycle.
+      #
+      #   - alert: ExporterCollectorStale
+      #     expr: time() - @@NAMESPACE@@_<collector>_last_refresh_timestamp_seconds > 900
+      #     for: 10m
+      #     labels:
+      #       severity: warning
+      #       component: exporter
+      #     annotations:
+      #       summary: '@@EXPORTER_NAME@@ collector <collector> serving stale data'
+      #       description: 'The <collector> collector on {{ $labels.@@COLLECTOR_LOCATION@@ }} has not refreshed for {{ printf "%.0f" $value }}s. It is still reporting collector_success 1 because it serves a cache; the data it serves is stale.'
+      #
+      # The gauge reads 0, not a large negative, before the first refresh
+      # ever completes. `time() - 0` is therefore enormous at startup, which
+      # is what `for:` absorbs. Do not drop it.

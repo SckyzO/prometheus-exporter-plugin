@@ -258,7 +258,7 @@
       "type": "stat",
       "id": 10,
       "title": "Collector Status (OK / FAIL)",
-      "description": "Current pass/fail status of each collector. Green=OK, Red=FAIL: any red means that collector's last Collect() call errored, panicked, or emitted zero metrics.",
+      "description": "Current pass/fail status of each collector. Green=OK, Red=FAIL: any red means that collector's last scrape reported a failure or panicked. A background-variant collector reads green by construction: alert on its freshness gauge instead.",
       "gridPos": { "h": 6, "w": 24, "x": 0, "y": 6 },
       "options": {
         "colorMode": "background",

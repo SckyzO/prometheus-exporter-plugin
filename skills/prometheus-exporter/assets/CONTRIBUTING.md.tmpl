@@ -134,11 +134,16 @@ Plus:
   `// @@COLLECTOR_REGISTRY@@` marker, with its own `--[no-]collector.<name>` flag (see
   `register()` in that file).
 
-**Collector-authoring rule:** on a successful scrape, always emit your metrics, with zero
-*values* when there's nothing to report, never zero metrics. Emitting nothing is exactly what
-the shared `StatusTracker` (`internal/collector/status_tracker.go`) treats as a *failed*
-scrape. A collector that wants to report "no data this scrape" as a normal outcome must still
-send a metric (a gauge set to `0`, for example), not a bare `return`.
+**Outcome rule:** a collector states its own scrape outcome. Implement
+`CollectWithOutcome(ch chan<- prometheus.Metric) error` from
+`internal/collector/status_tracker.go`, have `Collect` delegate to it, and assert the
+interface at compile time with `var _ OutcomeCollector = (*YourCollector)(nil)` so a
+signature typo fails the build instead of silently reverting to the older behaviour.
+
+Return the error on a genuine failure, and `nil` on success. **Returning `nil` with zero
+metrics is a success**: a scrape that legitimately found nothing to report is no longer
+indistinguishable from a broken one. **Returning an error after emitting part of your series
+is a failure**, and those metrics are still forwarded, so partial data is not lost.
 
 ### Commit messages
 
@@ -185,12 +190,17 @@ Before adding a new collector, or a new request/command inside an existing one, 
 
 ## Common Pitfalls
 
-### Zero metrics is not the same as zero-valued metrics
+### Forgetting the compile-time assertion
 
-A collector that returns from `Collect` without sending anything (even on a legitimate "no
-data this scrape" outcome) is indistinguishable, to the shared `StatusTracker`, from one that
-just failed. Always send your metrics, with `0`/empty values when there's genuinely nothing to
-report. See the collector-authoring rule above.
+`var _ OutcomeCollector = (*YourCollector)(nil)` is not decoration. Without it, a typo in
+`CollectWithOutcome`'s signature compiles fine, `StatusTracker` falls back to judging the
+collector by how many metrics it emitted, and the collector looks converted without being it.
+The fallback is deliberate, so that collectors written before this interface existed keep
+working, which is exactly why nothing else will tell you.
+
+A fixed-shape metric alongside any variable-label one is still worth having, for a different
+reason than it used to be: a series reading `0` is easier to query and alert on than one that
+vanishes from `/metrics` entirely.
 
 ### Two metrics with the same label set on one descriptor break the whole collector's scrape
 

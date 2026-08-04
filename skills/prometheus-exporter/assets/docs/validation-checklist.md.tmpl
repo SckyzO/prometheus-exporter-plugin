@@ -188,14 +188,32 @@ One line per enabled collector, all ending with ` 1`. For a fresh scaffold, exac
 (the second line reads `collector="command_exec"` on the CLI flavor). Add one line here for
 every collector you've added since.
 
+**A `1` here does not mean a background-variant collector is healthy.** If any of your
+collectors was added with `--variant background`, this step cannot judge it and you must run
+the staleness check below as well. A background collector serves a cache and always emits at
+least its freshness gauge, so it reports `1` by construction even when its refresh has been
+failing for hours. A whole fleet can read green on data that stopped moving. This is a real
+failure mode, not a theoretical one.
+
+```bash
+# One line per background-variant collector. Skip if you have none.
+grep -E "^@@NAMESPACE@@_.*_last_refresh_timestamp_seconds" /tmp/scrape.txt
+```
+
+Each value must be a recent Unix timestamp: `time() - <value>` should be below that
+collector's refresh interval, not far above it. A value of `0` means no refresh has ever
+completed, which at startup is normal for a few seconds and at any other time is a failure
+this step exists to catch. Compare against the alert of the same shape in
+[../monitoring/prometheus/alerts.yml](../monitoring/prometheus/alerts.yml).
+
 ### If it fails
 
 - Any `... 0` value: that collector failed. Find its error in `/tmp/exporter.log` and fix it
-  before tagging. Remember: a collector that emits zero metrics on a technically-successful
-  call is *still* reported as `0` here (see the collector-authoring rule in
-  [../CONTRIBUTING.md](../CONTRIBUTING.md)) - check whether the underlying call actually
-  failed, or whether the collector just has nothing to report and should emit a zero-valued
-  metric instead of nothing.
+  before tagging. A collector that states its own outcome (see the outcome rule in
+  [../CONTRIBUTING.md](../CONTRIBUTING.md)) reports `0` only when it returned an error, so
+  the log line is the answer. A collector predating that interface is judged by its metric
+  count instead, and there a `0` can also mean "nothing to report this scrape": check whether
+  the underlying call actually failed before assuming an outage.
 - Missing line for a collector: the flag wasn't picked up. Re-check the command in Step 3.
 
 ---

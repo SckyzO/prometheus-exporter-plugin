@@ -163,39 +163,41 @@ func (c *ExampleCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.value
 }
 
-// Collect fetches and emits this collector's metrics. On any error it logs
-// and returns without sending anything: the StatusTracker wrapping every
-// collector counts how many metrics each Collect call actually emits, and
-// zero from one scrape is what makes it set
-// @@NAMESPACE@@_exporter_collector_success{collector="example"} to 0 for
-// this collector, instead of silently publishing stale or zero-value data as
-// if it were current (see status_tracker.go's Collect for the counting
-// logic this relies on).
+// Compile-time proof that this collector states its own outcome. Without it a
+// typo in CollectWithOutcome's signature would compile, and StatusTracker
+// would silently fall back to counting metrics.
+var _ OutcomeCollector = (*ExampleCollector)(nil)
+
+// CollectWithOutcome fetches and emits this collector's metrics, and reports
+// whether the scrape succeeded. It is the method StatusTracker calls.
 //
-// Collector-authoring rule: on a successful scrape always emit your
-// metrics (with zero VALUES when there is no data), never zero metrics.
-// Emitting nothing is what StatusTracker treats as a failed scrape, so a
-// collector that wants to report "no data" as a normal outcome must still
-// send a metric, not bare-return like the error path below. entries exists
-// precisely to satisfy that rule here: it is a fixed-shape gauge (no
-// labels), always emitted below, valued 0 when metrics is empty, so a
-// successful-but-empty parse still reports success. value's per-key gauges,
-// by contrast, legitimately emit nothing when there is nothing to report.
-// That's fine, because entries has already satisfied the rule for this
-// scrape regardless.
-func (c *ExampleCollector) Collect(ch chan<- prometheus.Metric) {
+// Return the error on a genuine failure. Return nil on success, including a
+// success that legitimately produced no series at all: StatusTracker believes
+// what this returns rather than counting what was emitted, so "nothing to
+// report right now" is no longer indistinguishable from "broken".
+//
+// entries is still worth emitting on every successful scrape, for a different
+// reason than it used to be. It is no longer needed to prove the scrape
+// happened; it is a real signal, the number of keys the command returned, and
+// a value of 0 is meaningful rather than a placeholder. value's per-key gauges
+// legitimately emit nothing when there is nothing to report.
+func (c *ExampleCollector) CollectWithOutcome(ch chan<- prometheus.Metric) error {
 	metrics, err := c.exampleGetMetrics(c.ctx)
 	if err != nil {
-		// Error path: log and return with zero metrics sent: see the
-		// collector-authoring rule above for why that bare return is only
-		// correct here, on a genuine failure, and not as a stand-in for "no
-		// data this scrape".
 		c.log.Error("Failed to get example metrics", "err", err)
-		return
+		return err
 	}
 
 	ch <- prometheus.MustNewConstMetric(c.entries, prometheus.GaugeValue, float64(len(metrics)))
 	for _, m := range metrics {
 		ch <- prometheus.MustNewConstMetric(c.value, prometheus.GaugeValue, m.Value, m.Key)
 	}
+	return nil
+}
+
+// Collect satisfies prometheus.Collector, which the registry and anything that
+// does not know about OutcomeCollector still expect. It delegates so there is
+// exactly one implementation to keep correct.
+func (c *ExampleCollector) Collect(ch chan<- prometheus.Metric) {
+	_ = c.CollectWithOutcome(ch)
 }

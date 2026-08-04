@@ -44,6 +44,35 @@ func NewStatusTracker(log *logger.Logger) *StatusTracker {
 	}
 }
 
+// OutcomeCollector is a collector that reports its own scrape outcome instead
+// of leaving StatusTracker to infer one from how many metrics it emitted.
+//
+// Implement it whenever a scrape can legitimately produce nothing, or can fail
+// after emitting part of its series. The count rule cannot express either: it
+// reads a legitimately empty scrape as a failure, and a partial-then-failed one
+// as a success. Returning nil is a success even with zero metrics emitted;
+// returning an error is a failure even with metrics already on the channel,
+// and those metrics are still forwarded.
+//
+// Collect must remain implemented, because prometheus.Collector is what the
+// registry and every other caller expects. Delegate it:
+//
+//	func (c *YourCollector) CollectWithOutcome(ch chan<- prometheus.Metric) error { ... }
+//	func (c *YourCollector) Collect(ch chan<- prometheus.Metric)                   { _ = c.CollectWithOutcome(ch) }
+//
+// And assert the interface at compile time in the collector's own file, so a
+// signature typo fails the build instead of silently falling back to the count
+// rule:
+//
+//	var _ OutcomeCollector = (*YourCollector)(nil)
+//
+// A plain prometheus.Collector keeps working unchanged: StatusTracker falls
+// back to the count rule for anything that does not implement this interface.
+type OutcomeCollector interface {
+	prometheus.Collector
+	CollectWithOutcome(ch chan<- prometheus.Metric) error
+}
+
 // Add registers an inner collector under the given name.
 func (st *StatusTracker) Add(name string, c prometheus.Collector) {
 	st.entries = append(st.entries, statusEntry{name: name, collector: c})
@@ -59,14 +88,22 @@ func (st *StatusTracker) Describe(ch chan<- *prometheus.Desc) {
 }
 
 // Collect runs each inner collector, measures its duration, and emits status
-// metrics. Success is count-based, not just panic-based: each inner
-// collector's output is buffered on a private per-entry channel (instead of
-// writing directly into ch) so this method can count how many metrics it
-// produced before forwarding them. A collector that returns normally but
-// emits zero metrics, the documented "log the error, then bare return"
-// shape every collector in this exporter follows (see collector.go's Collect
-// doc comment), is exactly as much a failed scrape as one that panics, so
-// both are reported as collector_success=0 here. Panics are still caught via
+// metrics. How the outcome is decided depends on what the collector is:
+//
+//   - An OutcomeCollector states its own result. Zero metrics with a nil error
+//     is a success; an error is a failure even when metrics were already
+//     emitted, and those metrics are still forwarded. This is the shape every
+//     collector in this exporter should use.
+//   - Anything else falls back to the count rule: a collector that returns
+//     normally but emits zero metrics is reported as a failure, exactly like
+//     one that panics. The rule is a proxy for an outcome the collector never
+//     got to state, and it is wrong in both directions, which is why
+//     OutcomeCollector exists. It is kept so that a collector written against
+//     an earlier version of this template goes on working with no edit.
+//
+// Either way, each inner collector's output is buffered on a private per-entry
+// channel instead of writing directly into ch, so this method can count what
+// it produced before forwarding. Panics are still caught via
 // defer/recover in the same goroutine that calls Collect; deferring the
 // channel close ahead of the recover (LIFO: recover runs first) guarantees
 // the buffering goroutine below always sees its channel closed and returns,
@@ -74,7 +111,12 @@ func (st *StatusTracker) Describe(ch chan<- *prometheus.Desc) {
 func (st *StatusTracker) Collect(ch chan<- prometheus.Metric) {
 	for _, e := range st.entries {
 		start := time.Now()
-		succeeded := 1.0
+
+		var (
+			panicked bool
+			reported bool  // the collector implements OutcomeCollector
+			outcome  error // what it reported, when it does
+		)
 
 		sub := make(chan prometheus.Metric)
 		var collected []prometheus.Metric
@@ -91,22 +133,39 @@ func (st *StatusTracker) Collect(ch chan<- prometheus.Metric) {
 			defer func() {
 				if r := recover(); r != nil {
 					st.logger.Error("Collector panicked", "collector", e.name, "panic", r)
-					succeeded = 0
+					panicked = true
 				}
 			}()
-			e.collector.Collect(sub)
+			// An OutcomeCollector states its own result; anything else keeps
+			// the count rule, unchanged, which is what lets a collector
+			// written against an earlier version of this template go on
+			// working with no edit.
+			if oc, ok := e.collector.(OutcomeCollector); ok {
+				reported = true
+				outcome = oc.CollectWithOutcome(sub)
+			} else {
+				e.collector.Collect(sub)
+			}
 		}()
 		<-done
 
 		elapsed := time.Since(start).Seconds()
+		succeeded := 1.0
 		// One place owns the log policy for every collector, so an operator
 		// who sees collector_success 0 always has a matching line to grep,
 		// and --log.level=debug yields per-collector timing for free. The
 		// panic branch above already logged with the panic value, so it is
 		// deliberately not logged twice here.
 		switch {
-		case succeeded == 0:
-			// already reported by the recover() above
+		case panicked:
+			succeeded = 0 // already reported by the recover() above
+		case reported && outcome != nil:
+			st.logger.Error("Collector reported a failed scrape", "collector", e.name, "duration_seconds", elapsed, "err", outcome)
+			succeeded = 0
+		case reported:
+			// Zero metrics is a success here, and that is the point: the
+			// collector said so.
+			st.logger.Debug("Collector succeeded", "collector", e.name, "duration_seconds", elapsed, "metrics", len(collected))
 		case len(collected) == 0:
 			st.logger.Error("Collector emitted no metrics", "collector", e.name, "duration_seconds", elapsed)
 			succeeded = 0

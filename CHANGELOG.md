@@ -10,6 +10,47 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A collector states its own scrape outcome.** `OutcomeCollector`, in
+  `internal/collector/status_tracker.go`, adds
+  `CollectWithOutcome(ch) error` beside `prometheus.Collector`. Returning
+  `nil` is a success even with zero metrics emitted; returning an error is a
+  failure even when metrics are already on the channel, and those metrics are
+  still forwarded.
+
+  `StatusTracker` used to infer the outcome from how many metrics a collector
+  emitted. That proxy was wrong in both directions. A scrape that legitimately
+  found nothing to report was reported as failed and paged on a healthy
+  exporter. Worse, a collector that emitted part of its series and then failed
+  was reported as healthy, because the count was non-zero, which is the
+  direction that hides breakage; the always-emit-at-least-one rule this
+  project taught made that case more likely rather than less.
+
+  **Nothing already scaffolded changes.** A collector that does not implement
+  the interface keeps the count rule, unchanged, with no edit. That fallback
+  is covered by its own regression test, because it is the whole promise of
+  this first phase. Removing it is a later, separate release.
+
+  Two collectors are deliberately left on the fallback: `RequestDuration` and
+  `CommandDuration` are `*prometheus.HistogramVec` values from
+  `client_golang`, which cannot implement a new interface. They keep the count
+  rule.
+
+  The shipped example collectors and both background variants move to the new
+  shape and carry `var _ OutcomeCollector = (*ExampleCollector)(nil)`. That
+  assertion is load-bearing: without it a typo in the method signature
+  compiles and the collector silently falls back to the count rule, looking
+  converted without being it.
+
+- **A staleness alert example, for background-variant collectors.** A
+  background collector serves a cache and always emits at least its freshness
+  gauge, so it reports `collector_success 1` by construction, even when its
+  refresh has been failing for hours. `ExporterCollectorFailing` can never fire
+  for it, and a whole fleet can read green on data that stopped moving. The
+  new commented rule alerts on the freshness gauge's value instead, which is
+  the only signal that catches this. Commented for the same reason as the
+  business alert beside it: the metric name carries the collector's own name,
+  so there is no generic form.
+
 - **`@@EXPORTER_NAME@@_build_info`, the exporter's own release, on
   `/metrics`.** Registered through `client_golang`'s versioncollector, it
   carries the version, revision and branch the build injects into
@@ -36,6 +77,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **The validation checklist no longer accepts `collector_success 1` as proof
+  that a background-variant collector is healthy.** It cannot be: such a
+  collector is healthy at zero data by construction. The step now sends the
+  reader to the freshness gauge's value, and says plainly that this is a real
+  failure mode rather than a theoretical one.
 - **`StatusTracker` now owns the log policy for every collector.** It logged
   panics and nothing else, so an operator seeing `collector_success 0` had no
   corresponding line to grep, and `--log.level=debug` yielded no per-collector
