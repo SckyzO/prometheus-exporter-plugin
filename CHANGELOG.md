@@ -8,6 +8,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-04
+
 ### Added
 
 - **A collector states its own scrape outcome.** `OutcomeCollector`, in
@@ -75,6 +77,48 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   systemd unit already runs under a dedicated user, so this exists for the
   deployments that do not use it.
 
+- **`make check` validates the alert rules a generated exporter ships.** A new
+  `promtool-rules` target loads every `monitoring/prometheus/*.yml` the way
+  Prometheus does (`rulefmt.ParseFile`), so annotation templates are checked
+  too, not only expressions: a file whose rules all parse individually can
+  still be rejected whole, leaving every alert in it dead. It resolves
+  promtool itself, preferring a digest-pinned `prom/prometheus` image and
+  falling back to a host binary, because promtool cannot be added to the tools
+  image (`prometheus/prometheus` declares `replace` directives, which
+  `go install pkg@version` refuses). It fails rather than skipping when
+  neither is available, so **`make check` now needs a container engine with
+  registry access, or promtool on `PATH`**.
+
+- **A procedure for deciding a separate metric name against a label value.**
+  `/prometheus-exporter:add-collector` kept re-asking whether a dimension
+  becomes `<metric>_read` or `<metric>{stat="read"}`. Three steps now: the
+  official `sum()`/`avg()` rule of thumb, kept as the hedged heuristic it is;
+  the cases the guidance settles outright (read/write and send/receive to
+  separate names, tabular data to one label, mixed units always split); and,
+  for anything left, what an official exporter in the same domain does.
+  `/prometheus-exporter:design-exporter` runs it once per exporter and records
+  the outcome on a new `Name-vs-label arbitrations:` line in the journal, so
+  later collectors inherit the answer instead of re-litigating it differently.
+
+- **Status tags for the journal's `## Open questions / assumptions`.** That
+  section is mutable, appended to by all four commands, and had nothing ever
+  taken out of it, so it accumulated resolved questions and session notes
+  alongside live ones and started asserting blockers that no longer existed.
+  Entries now carry `[OPEN]`, `[RESOLVED]` or `[ACCEPTED]` with an index line,
+  so `grep "\[OPEN\]"` answers "what is left". No second file, no ninth
+  section header, and an untagged journal is not corrupt: entries are tagged
+  as they are touched.
+
+- **Where a generated exporter's version starts, and what the number
+  promises.** The scaffold taught SemVer and `v*` tags without ever answering
+  `v0.1.0` or `v1.0.0`. Start at `v0.1.0`. What breaks an operator is a metric
+  name, type or label key changing, since that is what their dashboards select
+  on; the protection is a marked entry plus a deprecation period, not the
+  major number. The ecosystem's own practice is taught rather than a stricter
+  rule invented on top of it: `node_exporter` has been past 1.0 since 2020,
+  has never cut a 2.0.0, and still removes metrics in minor releases behind a
+  deprecation cycle.
+
 ### Changed
 
 - **The validation checklist no longer accepts `collector_success 1` as proof
@@ -98,6 +142,22 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   given in order of preference, and the `Execute` doc comment points at them
   from the call site. The shipped CLI template was and remains safe by
   construction, with a fixed command and no arguments.
+
+- **`insecure_skip_verify` is documented as an accepted risk, and `proxy_url`
+  is no longer invisible.** A target certificate with no `subjectAltName`
+  cannot be verified by any Go client since Go 1.15 dropped the Common Name
+  fallback, and neither `ca_file` nor `server_name` addresses it: the trust
+  chain was never the problem, the missing name is. Verified rather than
+  asserted, against a generated SAN-less certificate: `curl` with `--cacert`
+  and **no** `-k` returns 200 where Go fails, so the operator running the
+  rigorous curl test is misled too. The real fix is on the target, by
+  reissuing with a SAN. `http_client_config:` is a `prometheus/common`
+  `HTTPClientConfig`, so `proxy_url` already worked and was merely undocumented.
+  **Worth knowing even if you use no proxy**: with no `http_client_config:`
+  section an exporter uses Go's default transport and honours
+  `HTTP_PROXY`/`HTTPS_PROXY`; declaring that section for any reason, including
+  `basic_auth` alone, replaces the transport and those variables stop being
+  read, with no error.
 
 ### Fixed
 

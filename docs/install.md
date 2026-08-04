@@ -33,7 +33,7 @@ instead of whatever the marketplace currently points to, add the marketplace
 via its full git URL with the tag appended as a `#` ref:
 
 ```
-/plugin marketplace add https://github.com/SckyzO/prometheus-exporter-plugin.git#v0.8.1
+/plugin marketplace add https://github.com/SckyzO/prometheus-exporter-plugin.git#v0.9.0
 ```
 
 ### Getting back off a pin

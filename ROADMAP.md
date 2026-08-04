@@ -262,7 +262,76 @@ siblings instead of a reload.
   `Gatherers` tolerates differing label sets across children for one metric
   name. Refusing was the honest interim answer, not the intended end state.
 
-## v0.9
+## v0.9 (released 2026-08-04)
+
+Four defect groups found by using the plugin to build a real exporter against
+real hardware, plus the versioning question that use exposed.
+
+- **The TLS/proxy gaps.** `insecure_skip_verify` documented as an accepted
+  risk rather than a bare commented default, the SAN-less certificate trap
+  named with the two reflexes that do not fix it (`ca_file`, `server_name`),
+  and `proxy_url` made visible along with the fact that declaring an
+  `http_client_config:` section silently stops `HTTP_PROXY` being honoured.
+- **The name-vs-label procedure**, replacing an exception clause that had no
+  test, plus a journal line so the arbitration is made once per exporter.
+- **Status tags in the journal's open questions**, so the section stops
+  asserting blockers that are already resolved.
+- **`promtool-rules` in `make check`**, so a generated exporter can validate
+  the alert rules it is told to uncomment and adapt.
+- **Where a generated exporter's version starts**, and what the number does
+  and does not promise.
+
+## v0.10: what the first real deployment found
+
+Everything below came from running a scaffolded exporter against real
+hardware, and none of it is visible from the templates alone. The bugs and the
+missing knowledge are tracked together because the first item is both.
+
+**Bugs, verified against the current templates:**
+
+- **A refresh succeeding and the data advancing are different claims.** The
+  staleness alert v0.8 shipped reads the collector's own freshness gauge,
+  which stays perfectly current while the source stops publishing and the data
+  behind it freezes. A collector exposing a source-side timestamp needs two
+  gauges, never one, and the staleness threshold is N missed publications
+  **plus that collector's own interval**, not a constant copied between
+  collectors. This is the next layer of the defect v0.8 fixed, and it gives
+  false assurance on exactly the case it claims to cover.
+- **`--version` and `--help` exit non-zero on a multi-instance build.**
+  `config.Load` runs before `kingpin.Parse`, so a binary asked to describe
+  itself refuses for want of a configuration file. Packaging, CI and container
+  healthchecks all call `--version` on a binary they have no configuration
+  for. The gate missed it because `golden-smoke.sh` always passes
+  `--config.file`; closing the test hole is part of the fix.
+- **The concurrency ceiling is unusable at 1**, which is the value the plugin
+  itself recommends for a target that serializes internally. One deadline
+  covers the queue wait and the request together, so a collector queued behind
+  its siblings burns its whole budget waiting. Measured in the field: 14 of 19
+  collectors starved on every sweep, permanently, because same-interval
+  tickers fire together and the alignment never breaks up. Needs a separate
+  queue budget, under the two-phase rule.
+- **The shipped systemd unit does not start a multi-instance build**: its
+  `ExecStart` carries no `--config.file`, which that model requires.
+- **The boot storm, and the lifecycle that blocks the obvious fix.** Every
+  background collector fires its first refresh at once. Delaying `Start` is
+  unsafe as the variant is written: `done` is created in the constructor and
+  closed by `Start`'s goroutine, so a `Start` that never runs leaves `Done()`
+  open and hangs shutdown.
+
+**Knowledge the templates never taught, each found by meeting it:**
+
+- A documented state table is a floor, not a ceiling: emit an observed state
+  that is not in the list as its own series, with a warning naming the field,
+  rather than leaving every documented series at `0` and making the device
+  look stateless.
+- Derive a cardinality budget from the unit the source's own counter counts,
+  not from the one the endpoint appears to return.
+- Summing a device counter across a population that can shrink reads as a
+  counter reset when it does; say so in the help text.
+- A source counter that saturates (a value at its type's ceiling, repeatedly)
+  is a floor, not a measurement, and it changes what an averaging rule means.
+
+## v0.11
 
 - **A Prometheus alerting command, the counterpart to
   `/prometheus-exporter:generate-dashboard`.**
@@ -284,6 +353,8 @@ siblings instead of a reload.
   before: like `/prometheus-exporter:generate-dashboard` reading
   `docs/metrics.md`, this command should read the journal's `Business-alert
   candidates` and `Cardinality budget` sections instead of asking cold.
+  Moved from v0.9 to make room for what the first real deployment found; the
+  reasoning is unchanged.
 
 ## Ongoing: widening the reference base to the official exporters
 
