@@ -36,6 +36,71 @@ None of this depends on GitHub, GitLab, or any other forge existing at all.
 It's what makes a `--forge none` repository still versioned and changelogged,
 not just buildable.
 
+### Where to start, and what the version number does and does not promise
+
+**Start at `v0.1.0`.** Not `v1.0.0`, and not `v0.0.1`. [SemVer's
+spec](https://semver.org/spec/v2.0.0.html) item 4 reads: "Major version zero
+(0.y.z) is for initial development. Anything MAY change at any time. The
+public API SHOULD NOT be considered stable." That is the state a new exporter
+is in.
+
+What matters more is **what an operator actually consumes**, because it is
+mostly not the Go code. Most people run a `*_exporter` as a binary, so what
+breaks them is the **metric names, their types, and their label keys**: that
+is what somebody else's dashboards, recording rules and alerts select on,
+written by people who will never read this repository's `CHANGELOG.md`. (Some
+exporters *are* imported as libraries, `node_exporter/collector` most
+visibly, so this is where the damage usually lands, not an absolute.)
+
+**The version number is not what protects that operator, and this is the part
+worth getting right.** The Prometheus project says so plainly in its own
+[FAQ](https://prometheus.io/docs/introduction/faq/): repositories past 1.0.0
+"broadly follow semantic versioning", and "In any case, breaking changes will
+be pointed out in release notes (marked by `[CHANGE]`) or communicated
+clearly". The protection is the marked release note plus a deprecation
+period. The major number is a coarse signal layered on top of that, not a
+substitute for it.
+
+The ecosystem's actual practice bears this out, including in the exporter
+this document holds up as an exemplar. `node_exporter` has been past 1.0
+since 2020 and has never cut a 2.0.0, yet it has shipped, in **minor**
+releases:
+
+- `1.6.0`: `[CHANGE] Remove bcache cache_readaheads_totals metrics`
+- `1.3.0`: `[CHANGE] Add path label to rapl collector`
+- `1.2.0`: flags renamed, with the old names kept working and a note that
+  "The old flags will be removed in 2.x"
+
+So the discipline to copy is **deprecate in a minor, keep both working, mark
+it `[CHANGE]`, remove in the next major**, not "any rename forces a major".
+Trying to be stricter than the ecosystem here produces a version number
+nobody else's tooling expects.
+
+**When to move to `1.0.0`.** Not when the metric set feels frozen. The
+Prometheus FAQ frames it as an aim for every repository: "We aim for a proper
+release process and an eventual 1.0.0 release for each repository." Tag it
+when you have a release process you can hold to, including that deprecation
+cycle. And note the FAQ's other half, which is the correction to a common
+misreading: "Even repositories that have not yet reached version 1.0.0 are,
+in general, quite stable."
+
+**So do not read a `0.x` exporter as unfinished.** These four were all read
+at these tags for this plugin's reference base, and all four are years old
+and heavily used in production:
+
+| Exporter | Version (as of 2026-08) | |
+|---|---|---|
+| `node_exporter` | `v1.12.1` | past 1.0 |
+| `ipmi_exporter` | `v1.10.1` | past 1.0 |
+| `blackbox_exporter` | `v0.28.0` | still 0.x |
+| `snmp_exporter` | `v0.30.1` | still 0.x |
+
+One thing `0.x` does **not** buy: silence. A `0.x` release that renames a
+metric still breaks somebody's dashboard at 3am. The `CHANGELOG.md`
+before/after table and the deprecation period are owed either way; the
+version number changes only what you *promised*, never what you *owe* the
+operator.
+
 ## `.goreleaser.yaml`: always emitted, runs locally
 
 `.goreleaser.yaml` and `.goreleaser.dev.yaml` sit at the repository root

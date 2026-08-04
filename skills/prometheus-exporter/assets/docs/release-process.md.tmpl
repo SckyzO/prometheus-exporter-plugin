@@ -35,6 +35,22 @@ Naming convention:
 | `feat/vX.Y` | Minor release: features and non-breaking improvements |
 | `release/vX` | Major release: breaking changes |
 
+What makes a change breaking is that it moves the ground under a deployment
+that did not change. Most often that is a **metric name, type or label key**,
+since that is what somebody's alerts and panels select on, but it also covers
+a flag whose default changed and a collector now enabled or disabled by
+default (`SECURITY.md` treats a security-relevant default change as breaking
+for exactly this reason). A first release starts at `v0.1.0`.
+
+Renaming or removing one of those does not have to mean `release/vX`
+immediately. The ecosystem convention, and the one to follow here, is to
+**deprecate in a minor**: ship the new name alongside the old, keep both
+working, record it under `### Deprecated` in `CHANGELOG.md` with a
+before/after table, and drop the old one in the next major. `release/vX` is
+for the release that actually removes it. That holds on `0.x` and after
+`1.0.0` alike; what `1.0.0` adds is the commitment to run that cycle rather
+than a promise never to rename anything.
+
 ---
 
 ## 2. Triage the backlog

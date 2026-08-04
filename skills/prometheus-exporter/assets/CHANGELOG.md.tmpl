@@ -23,6 +23,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ### Removed      - removed collectors, metrics, flags
   ### Fixed        - bug fixes (say which metric/label was affected and how)
   ### Security     - vulnerability fixes
+
+  Which version number: start at v0.1.0. What breaks an operator is a metric
+  name, type or label key changing, since that is what their dashboards and
+  alerts select on and they will never read this file in time.
+
+  The version number is not what protects them. A marked entry here plus a
+  deprecation period is. The Prometheus ecosystem's own practice, which is
+  worth copying: deprecate in a minor release, keep the old and new working
+  side by side, say so under ### Deprecated, and remove only in the next
+  major. node_exporter has been past 1.0 since 2020, has never cut a 2.0, and
+  still removes metrics and adds label keys in minor releases that way.
+
+  So do not treat 1.0.0 as a promise never to rename anything; treat it as a
+  commitment to that deprecation cycle. And do not read 0.x as unfinished:
+  several long-standing official exporters are still on 0.x by house
+  convention.
 -->
 
 ## [Unreleased]
