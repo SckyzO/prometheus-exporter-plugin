@@ -292,19 +292,11 @@ identifiers.
 | http | The endpoint **path** this collector fetches (the base URL is shared, see step 1) | `/api/queue` |
 | cli | The **command and its arguments**, as separate tokens (not one shell string: `exec.CommandContext` never goes through a shell) | command `queue-cli`, args `stats` |
 
-**Ask the target metrics**: name(s), labels (if any), and help text for
-each. Remind the user (and yourself, when writing step 3's code):
-
-- Metric names and label **keys** must be **static** (a plain string
-  literal, or `prometheus.BuildFQName(ns, sub, name)` with string-literal
-  arguments), never computed. `make docs-check`
-  (`internal/collector/docs_check_test.go`) statically extracts metrics at
-  exactly this precision; anything else is invisible to it or, worse,
-  flagged as an unresolvable warning.
-- Ask what a **healthy-but-empty** scrape looks like for this data (e.g.
-  "the queue can legitimately be empty"). This decides whether you need an
-  always-emitted summary gauge alongside a per-item one. See step 3's
-  collector-authoring rule.
+**Read the journal's naming lines before proposing anything.** The two blocks
+below are inputs to the conversation that follows, not a review of it
+afterwards: a name proposed and then corrected has already been said out loud,
+and the user has to un-decide it. Read them first, then propose metrics that
+already comply.
 
 **Apply the shared label vocabulary.** If the journal's `## Architecture
 decisions` carries a `Shared label vocabulary:` line, the label keys chosen
@@ -333,6 +325,20 @@ its own: read/write has a perfectly meaningful sum and is still two names,
 while tabular readings of one unit (per sensor, per slot, per device) stay
 one metric with a label even though summing across them is nonsense. Step 2
 is what settles both.
+
+**Ask the target metrics**: name(s), labels (if any), and help text for
+each. Remind the user (and yourself, when writing step 3's code):
+
+- Metric names and label **keys** must be **static** (a plain string
+  literal, or `prometheus.BuildFQName(ns, sub, name)` with string-literal
+  arguments), never computed. `make docs-check`
+  (`internal/collector/docs_check_test.go`) statically extracts metrics at
+  exactly this precision; anything else is invisible to it or, worse,
+  flagged as an unresolvable warning.
+- Ask what a **healthy-but-empty** scrape looks like for this data (e.g.
+  "the queue can legitimately be empty"). This decides whether you need an
+  always-emitted summary gauge alongside a per-item one. See step 3's
+  collector-authoring rule.
 
 **Check the planned budget.** If the journal's `## Cardinality budget`
 carries a line for this collector, read it back: labels, worst-case series,
