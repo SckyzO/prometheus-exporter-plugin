@@ -96,18 +96,24 @@ flags:
 #     username: monitoring
 #     password_file: /etc/@@EXPORTER_NAME@@/basic_auth_password
 #
-#   # Route outbound requests through a proxy. This key sits here, next to
+#   # Route outbound requests through a proxy. These keys sit here, next to
 #   # tls_config rather than inside it.
 #   #
-#   # Read this even if you do not think you need a proxy: with neither
-#   # proxy_url nor proxy_from_environment set, this exporter uses NO proxy
-#   # at all, and HTTP_PROXY/HTTPS_PROXY in the environment are ignored. That
-#   # is not how a bare Go program behaves, so the usual ways of forcing a
-#   # binary through a proxy fail here without saying so. Set one of these two
-#   # keys instead; they are mutually exclusive and the config is refused if
-#   # both are given.
-#   proxy_url: http://proxy.example.internal:3128
-#   # proxy_from_environment: true   # honour HTTP_PROXY/HTTPS_PROXY/NO_PROXY
+#   # Read this even if you need no proxy, because declaring this section at
+#   # all is what changes the behaviour. With NO http_client_config section,
+#   # the exporter builds its client on Go's default transport and therefore
+#   # DOES honour HTTP_PROXY/HTTPS_PROXY/NO_PROXY from the environment. The
+#   # moment this section exists, for any reason whatsoever, including
+#   # basic_auth on its own, the transport is rebuilt from what is written
+#   # here, and the only proxy it can use is the one these two keys name. An
+#   # environment proxy that was working simply stops being read, with no
+#   # error and no log line.
+#   #
+#   # So if you add this section and your traffic has to cross a proxy,
+#   # uncomment exactly one of the two below. They are mutually exclusive and
+#   # the file is refused outright if both are set.
+#   # proxy_url: http://proxy.example.internal:3128
+#   # proxy_from_environment: true   # re-read HTTP_PROXY/HTTPS_PROXY/NO_PROXY
 #
 #   tls_config:
 #     ca_file: /etc/@@EXPORTER_NAME@@/ca.crt
@@ -123,11 +129,12 @@ flags:
 #     #
 #     # The usual reason for reaching for it is a target certificate with no
 #     # subjectAltName, which no Go client can verify by name since Go 1.15
-#     # removed the fallback to the Common Name. Adding ca_file does not
-#     # help: the trust chain was never the problem, the missing name is.
-#     # The fix that actually closes it is on the target, by reissuing the
-#     # certificate with a SAN. See the security reference for the full
-#     # reasoning.
+#     # removed the fallback to the Common Name. Neither ca_file nor
+#     # server_name helps there: the trust chain was never the problem and
+#     # there is no name to match, so both leave the same error. The fix that
+#     # actually closes it is on the target, by reissuing the certificate
+#     # with a SAN. docs/validation-checklist.md carries the diagnosis steps,
+#     # including why a successful curl does not predict a working Go client.
 #     insecure_skip_verify: false
 
 # modules: named credential/TLS bundles this exporter can select. What reads

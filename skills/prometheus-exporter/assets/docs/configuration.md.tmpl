@@ -138,14 +138,19 @@ Two are worth calling out because nothing else here would reveal them:
   under `http_client_config:`, alongside `tls_config:` rather than inside it.
   `proxy_from_environment: true` is the alternative form; the two are
   mutually exclusive and setting both is refused.
-- **Neither one defaults to on, and that has a consequence worth knowing**:
-  with both unset, this exporter's outbound requests use no proxy at all, and
-  `HTTP_PROXY`/`HTTPS_PROXY` in the environment are ignored. A bare Go program
-  honours those variables by default; this client does not, because its
-  transport takes its proxy from the configuration rather than from the
-  environment. The precedence list above governs `flags:`, and never applied
-  to these variables in the first place. If outbound traffic has to traverse
-  a proxy, one of the two keys is how it happens.
+- **Declaring this section at all changes how proxies are resolved**, which
+  is worth knowing even for a deployment that wants no proxy. With **no**
+  `http_client_config:` section, the exporter builds its client on Go's
+  default transport, so `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` from the
+  environment **are** honoured, exactly as in any other Go program. Once the
+  section exists, for any reason at all including `basic_auth` on its own,
+  the transport is rebuilt from the section's contents and the only proxy it
+  can use is the one `proxy_url` or `proxy_from_environment` names. An
+  environment proxy that was working stops being read at that point, with no
+  error and no log line. So a deployment that adds this section for
+  credentials, and needs a proxy, has to name it here as well. (The
+  precedence list above governs `flags:`; it never applied to these
+  variables.)
 
 **Precedence, highest wins:**
 
