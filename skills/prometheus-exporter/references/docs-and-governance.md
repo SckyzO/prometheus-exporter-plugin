@@ -214,7 +214,10 @@ its own HTML-comment header is explicit about *who* an entry is for: write
 every entry for the **operator** running this exporter, not for a code
 reviewer: a metric renamed or retyped, a flag whose default changed, a
 collector now enabled or disabled by default, a label newly added to an
-existing metric. A breaking change gets a before/after migration table:
+existing metric. The same header also carries the version-number guidance
+(`cicd-and-release.md` has the reasoning): start at `v0.1.0`, and deprecate
+in a minor rather than treating every rename as a major. A breaking change
+gets a before/after migration table:
 
 ```markdown
 | Old | New |
