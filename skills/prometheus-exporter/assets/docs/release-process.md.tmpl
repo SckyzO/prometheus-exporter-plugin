@@ -35,6 +35,15 @@ Naming convention:
 | `feat/vX.Y` | Minor release: features and non-breaking improvements |
 | `release/vX` | Major release: breaking changes |
 
+Which of the three a change is depends on what this exporter's version number
+promises, and that depends on whether you are still on `0.x`. The public API
+of an exporter is its **metric names, types and label keys**, not its Go
+code: that is what other people's dashboards and alerts select on. On `0.x`,
+renaming or retyping a metric is a minor release with a migration table in
+`CHANGELOG.md`. Once `v1.0.0` is tagged, the same change is a **major**
+release. A first release starts at `v0.1.0`; see `CHANGELOG.md`'s own header
+for when moving to `1.0.0` is worth it.
+
 ---
 
 ## 2. Triage the backlog

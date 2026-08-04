@@ -36,6 +36,48 @@ None of this depends on GitHub, GitLab, or any other forge existing at all.
 It's what makes a `--forge none` repository still versioned and changelogged,
 not just buildable.
 
+### Where to start, and what `1.0.0` actually commits you to
+
+**Start at `v0.1.0`.** Not `v1.0.0`, and not `v0.0.1`. SemVer reserves major
+version zero for initial development and says the public API "should not be
+considered stable" there, which is exactly the state a new exporter is in.
+
+The part that decides everything else is **what "public API" means for an
+exporter**, because it is not the Go code. Almost nobody imports a
+`*_exporter` as a library. The public API is the **metric names, their types,
+and their label keys**: that is what somebody else's dashboards, recording
+rules and alerts are written against, by people who will never read this
+repository's `CHANGELOG.md`.
+
+So `1.0.0` is a promise about those three things. After it, renaming a
+metric, changing a Counter to a Gauge, removing a label key, or switching a
+unit is a **breaking change that requires `2.0.0`**. Before it, the same
+change is a minor bump with a migration table.
+
+Stay in `0.x` while the metric set is still moving. Reaching for `1.0.0`
+early signals nothing about quality; it only leaves two bad options later,
+breaking the promise or living with a name you regret. Move to `1.0.0` when
+you would genuinely rather cut a major release than rename a metric.
+
+**Ecosystem precedent, read at the tags this plugin's reference base uses.**
+The split is the useful part, because it is not about maturity:
+
+| Exporter | Version | |
+|---|---|---|
+| `node_exporter` | `v1.12.1` | past 1.0 |
+| `ipmi_exporter` | `v1.10.1` | past 1.0 |
+| `blackbox_exporter` | `v0.28.0` | still 0.x |
+| `snmp_exporter` | `v0.30.1` | still 0.x |
+
+All four are heavily used in production and years old. Two committed to a
+stable metric surface and two deliberately did not, because theirs still
+evolves. Being in `0.x` at v0.30 is a considered position, not a backlog item.
+
+One thing `0.x` does **not** buy: silence. A `0.x` release that renames a
+metric still breaks somebody's dashboard at 3am. The `CHANGELOG.md`
+before/after table is required either way; the version number changes only
+what you *promised*, never what you *owe* the operator.
+
 ## `.goreleaser.yaml`: always emitted, runs locally
 
 `.goreleaser.yaml` and `.goreleaser.dev.yaml` sit at the repository root

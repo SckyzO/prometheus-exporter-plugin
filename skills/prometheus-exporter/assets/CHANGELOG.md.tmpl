@@ -23,6 +23,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ### Removed      - removed collectors, metrics, flags
   ### Fixed        - bug fixes (say which metric/label was affected and how)
   ### Security     - vulnerability fixes
+
+  Which version number: start at v0.1.0 and stay on 0.x while the metric set
+  can still move. For an exporter the public API is the metric names, their
+  types and their label keys, not the Go code, because that is what other
+  people's dashboards and alerts are written against. Tagging v1.0.0 promises
+  those three are stable, so that after it a rename or a retype needs v2.0.0.
+  Two of the four exporters this scaffold's conventions were checked against
+  are past 1.0 and two are deliberately still on 0.x after years in
+  production, so 0.x is a position, not a backlog item. Either way this file
+  still owes the operator a before/after table for anything that breaks.
 -->
 
 ## [Unreleased]
