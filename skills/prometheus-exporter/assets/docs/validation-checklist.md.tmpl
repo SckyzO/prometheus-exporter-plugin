@@ -241,6 +241,27 @@ At least one `outcome="success"` observation for every collector that talks to
 - Unexpected `outcome="error"` counts: a regression in the release branch. Check the matching
   `*Data` method in `internal/collector/`.
 
+Two traps below waste an afternoon each, on the HTTP flavor. Both make a broken outbound call
+look like a working one, so neither shows up as a wrong answer, only as a missing result.
+
+- **A successful `curl` does not mean a Go client will connect.** If the log says
+  `x509: certificate relies on legacy Common Name field, use SANs instead`, the target's
+  certificate has no `subjectAltName`, and this is not a case where curl proves anything:
+  curl with `--cacert` and **no** `-k` still returns 200 against that same certificate,
+  because OpenSSL still falls back to the Common Name and Go has not since 1.15. Testing
+  harder with curl confirms the wrong thing. Do not reach for `ca_file` or `server_name`
+  either; neither one addresses a name that is absent. Reissue the certificate on the target
+  with a SAN, or accept the risk explicitly via `insecure_skip_verify` (see the security
+  reference for what that concedes). `curl -k` proves less still: it skips verification
+  altogether, so a success there says nothing about the certificate at all.
+- **The environment cannot force this exporter through a proxy.** With neither `proxy_url`
+  nor `proxy_from_environment` set in `http_client_config:`, the outbound client uses no
+  proxy, and `HTTP_PROXY`/`HTTPS_PROXY` are ignored - unlike a bare Go program, where they
+  are honoured by default. `proxychains` does not work on this binary either, and fails
+  silently: no error, the connection just goes direct. Set the key in `config.example.yml`'s
+  `http_client_config:` section instead, and confirm it took effect by watching for the
+  connection at the proxy rather than by the absence of an error.
+
 ---
 
 ## Step 7 - Generate a realistic workload

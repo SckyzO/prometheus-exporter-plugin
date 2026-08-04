@@ -130,6 +130,23 @@ command rather than issuing HTTP requests, so it has nothing to authenticate.
 Given that section it exits with an error instead of starting, because a
 setting that looks applied but does nothing is worse than a refusal.
 
+That section is a `prometheus/common` `HTTPClientConfig`, so it accepts that
+type's whole key set, not only the keys `config.example.yml` happens to show.
+Two are worth calling out because nothing else here would reveal them:
+
+- **`proxy_url:`** routes outbound requests through a proxy. It sits directly
+  under `http_client_config:`, alongside `tls_config:` rather than inside it.
+  `proxy_from_environment: true` is the alternative form; the two are
+  mutually exclusive and setting both is refused.
+- **Neither one defaults to on, and that has a consequence worth knowing**:
+  with both unset, this exporter's outbound requests use no proxy at all, and
+  `HTTP_PROXY`/`HTTPS_PROXY` in the environment are ignored. A bare Go program
+  honours those variables by default; this client does not, because its
+  transport takes its proxy from the configuration rather than from the
+  environment. The precedence list above governs `flags:`, and never applied
+  to these variables in the first place. If outbound traffic has to traverse
+  a proxy, one of the two keys is how it happens.
+
 **Precedence, highest wins:**
 
 1. Command line

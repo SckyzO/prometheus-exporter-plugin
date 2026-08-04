@@ -183,6 +183,60 @@ posture it already applies to every other malformed instance. Single-target
 builds have nothing to resolve here: a `modules:` section is refused at boot
 as meaningless for one fixed target.
 
+## Rule 6: `insecure_skip_verify` is an accepted risk, not a setting
+
+Rules 4 and 5 cover the connection Prometheus makes *to* this exporter, and
+the credentials it presents *outward*. This rule covers the remaining half of
+an outbound request on the HTTP flavor: whether the target's certificate is
+believed. (A CLI-flavor exporter runs a local command and has no outbound TLS
+to verify.)
+
+The default is verification, and it comes from the library rather than from
+any code this exporter writes: `http_client_config:` is a
+`prometheus/common` `HTTPClientConfig`, and `NewClientFromConfig` builds a
+client that checks the target's certificate chain and name like any other Go
+client. Nothing has to be turned on for that.
+
+`insecure_skip_verify: true` turns all of it off at once. It does not relax
+the name check while keeping the chain check: it accepts **any** certificate
+from **anyone**, which makes an intercepted connection indistinguishable from
+a good one. That is a risk an operator accepts with a reason and a removal
+plan, recorded where their team records such things, and it is worth saying
+so in the same breath as the flag, because the name suggests a tunable.
+
+### The trap that sends operators there, and why the obvious fixes miss
+
+Most of the time the flag gets flipped because of one specific failure: **the
+target's certificate has no `subjectAltName`.** Go 1.15 removed the fallback
+to the Common Name, so since then no Go client can verify such a certificate
+by name. It announces itself precisely, which is worth knowing because the
+rest of the message reads like a trust problem and is not one:
+
+```
+x509: certificate relies on legacy Common Name field, use SANs instead
+```
+
+Two reflexes follow, and neither works:
+
+- **Adding `ca_file`** does not help. The trust chain was never the problem.
+  The certificate can be signed by a CA the client fully trusts and still be
+  unusable, because the name being verified is not in it.
+- **Setting `server_name`** does not help either. It changes *which* name is
+  checked, which does solve the different case of a certificate whose SAN is
+  correct but does not match the address being connected to. Against a
+  certificate with no SAN at all there is no name to match, whatever is asked
+  for.
+
+So on the client side `insecure_skip_verify: true` genuinely is the only way
+through, which is exactly why it needs to be named as a concession rather
+than presented as the fix. **The fix is on the target**: reissue the
+certificate with a SAN. That turns an accepted risk back into a verified
+connection, and it is usually a short job on the equipment rather than a
+change to this exporter at all.
+
+`config.example.yml` carries the short form of this next to the key itself,
+so it is in front of whoever is about to flip it.
+
 ## What `make lint`'s `gosec` pass covers here, concretely
 
 Two gosec-caught patterns are worth knowing by name, because they're the
@@ -239,6 +293,10 @@ documents this one doesn't duplicate:
 - [ ] On a target model that supports per-target credentials (`multi`,
       `multi-instance`), an unresolved module reference refuses the probe or
       the boot rather than falling back to an unauthenticated request.
+- [ ] `insecure_skip_verify` is `false` wherever it is set, or the one place
+      it is `true` carries a written reason and a plan to remove it, having
+      first checked that the target certificate could not simply be reissued
+      with a `subjectAltName`.
 - [ ] Anything that could carry a secret gets a dedicated read-the-match
       audit pass (`exporter-reviewer`'s Step 8): gosec's static rules are
       not expected to catch this class of finding on their own.
