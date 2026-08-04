@@ -117,7 +117,23 @@ so nobody mistakes a host run for a reproducible one.
 `secrets` and `osv` are deliberately **not** part of `check`: both need
 network access (gitleaks' own ruleset, the live OSV database), so folding
 them into the gate every contributor runs on every commit would make `check`
-flaky on a disconnected machine. They're prevention tools to run before
+flaky on a disconnected machine.
+
+`promtool-rules` is in `check` despite also reaching the network, and the
+distinction is worth stating rather than glossing, because it is the line to
+apply to the next candidate. What `secrets` and `osv` fetch is *fresh data*,
+by design: a cached ruleset or a stale vulnerability database defeats the
+point of running them, so they need the network on **every** invocation, and
+their result legitimately changes without the repository changing.
+`promtool-rules` fetches a **pinned image, once**; after that first pull the
+digest is in the local cache and the check is fully offline and
+deterministic. The cost is therefore a first-run cost, not a per-run
+dependency, and the verdict depends only on the repository. A machine that
+has never pulled the image and has no registry reachability will fail the
+gate, which is a real trade and the reason the image is pinned by digest
+rather than floating: an unpinned tag would have reintroduced exactly the
+"result changes with no repository change" property that keeps `secrets` and
+`osv` out. They're prevention tools to run before
 committing or on a schedule, not a build gate: same reasoning as keeping
 `race` a separate target rather than adding it to `check` (it's slower and
 answers a different question than the rest of the gate).
@@ -163,12 +179,20 @@ tarball puts a second, separately-pinned version into the file that exists to
 be the single source of the Go version, and building promtool from source
 adds a full Prometheus compile to every image rebuild.
 
-So the target resolves promtool itself instead, preferring one on `PATH` and
-otherwise borrowing the official `prom/prometheus` image's copy. When neither
-is available it **fails** rather than skipping. That is the same contract
-every other tool here has on the native path, where `lint` does not excuse
-itself when `golangci-lint` is missing, and it is the point of a gate: a step
-that quietly declines to run reports the same thing as a step that passed.
+So the target resolves promtool itself instead, and keeps this Makefile's
+container-first order while doing it: a pinned `prom/prometheus` image first,
+a host `promtool` as the fallback, exactly as `IN_TOOLS` behaves. Preferring
+the host binary would have made this the one member of `check` whose verdict
+came from an unpinned tool without saying so. The image is pinned by tag and
+digest for the same reason everything else in the scaffold is.
+
+When neither is available it **fails** rather than skipping. That is the same
+contract every other tool here has on the native path, where `lint` does not
+excuse itself when `golangci-lint` is missing, and it is the point of a gate:
+a step that quietly declines to run reports the same thing as a step that
+passed. This plugin's own harness makes the opposite call for its copy of the
+check and SKIPs, because it is testing templates on whatever machine happens
+to run it rather than gating a repository.
 
 The check has to be `promtool check rules` on whole files, not a per-
 expression parse. It loads each file the way Prometheus does
@@ -176,9 +200,13 @@ expression parse. It loads each file the way Prometheus does
 `{{ $labels.__name__ }}` and `humanizeTimestamp`. A file whose expressions
 all parse one at a time can still be rejected whole, which would leave every
 alert in it silently dead. This matters more here than in most repositories,
-because a scaffolded exporter ships `monitoring/prometheus/*.yml` with rules
-commented out and instructions to uncomment and adapt them: everything the
-author writes there is invisible to every other target in this file.
+because of what happens to `monitoring/prometheus/*.yml` after scaffolding.
+The shipped files are valid and stay valid on their own; the repository then
+invites the author to uncomment its business examples, add rules per
+collector, and split the set across more files as it grows, and none of that
+is visible to any other target here. `RULE_FILES` is a `$(wildcard ...)` for
+that last reason: a gate that checked two fixed filenames would go green over
+a third file nobody validated.
 
 ## Version metadata: one set of ldflags, three build paths
 

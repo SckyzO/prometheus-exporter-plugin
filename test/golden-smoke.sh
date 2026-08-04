@@ -4,7 +4,8 @@
 # Scaffolds a throwaway exporter via scaffold.sh, then runs it through the
 # exact same gate a real maintainer would run right after
 # /new-prometheus-exporter: `make build` then `make check` (vet, lint, test,
-# vuln, actionlint, zizmor, deadcode, docs-check — see Makefile.tmpl). Both
+# vuln, actionlint, zizmor, deadcode, docs-check, promtool-rules — see
+# Makefile.tmpl). Both
 # must succeed, the generated tree must never mention the source project
 # this plugin's knowledge is derived from, and no @@VAR@@ sentinel may
 # survive. `promtool check rules` then validates monitoring/prometheus/
@@ -658,13 +659,23 @@ fi
 # promtool check rules (Task 12): monitoring/prometheus/{alerts,rules}.yml must
 # be valid Prometheus rule files — the same anti-lie bar as docs-check, just
 # for PromQL instead of Go source. promtool itself is not in the tools image
-# (scripts/docker/tools/Dockerfile has no use for it outside this one check),
-# so this step degrades through three tiers instead of hard-failing when
-# nothing is available: native promtool, then docker, then podman, each
-# running the official `prom/prometheus` image's own promtool. If none of
-# the three exist, log an explicit SKIP and move on — silently saying nothing
-# here would be indistinguishable from "checked and clean", exactly the kind
-# of false confidence this whole script exists to prevent.
+# (it cannot be `go install`ed: prometheus/prometheus declares replace
+# directives — see Makefile.tmpl's promtool-rules comment), so this step
+# resolves it through three tiers: native promtool, then docker, then podman,
+# each running the official `prom/prometheus` image's own promtool.
+#
+# The scaffolded `make check` now covers the same ground through its own
+# promtool-rules target, and ran a few hundred lines above. This step is kept
+# deliberately rather than deleted: it asserts the shipped rule files directly,
+# with promtool invoked by this harness, so it still catches a regression that
+# unwired promtool-rules from `check` or broke the target's own resolution.
+#
+# Where the two differ on purpose: this one SKIPs when nothing is available
+# and the scaffolded target FAILS. This script tests templates on whatever
+# machine happens to run it; the target gates a repository. Both say so out
+# loud — silently saying nothing here would be indistinguishable from
+# "checked and clean", exactly the kind of false confidence this whole script
+# exists to prevent.
 echo "== promtool check rules ($flavor/$forge) =="
 if command -v promtool >/dev/null 2>&1; then
   echo "using native promtool"
@@ -1584,7 +1595,7 @@ EOF
   gofmt -w "$mainfile" "$work/internal/collector/collector_second.go"
 
   # `make check` alone does NOT rebuild bin/@@EXPORTER_NAME@@ (check's own
-  # prerequisites are vet/lint/test/vuln/actionlint/zizmor/deadcode/docs-check —
+  # prerequisites are vet/lint/test/vuln/actionlint/zizmor/deadcode/docs-check/promtool-rules —
   # no `build` — see Makefile.tmpl's own check target); confirmed empirically
   # while writing this section. Without an explicit rebuild here, the live
   # probe below would start the STALE single-collector binary from the

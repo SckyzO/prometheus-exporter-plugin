@@ -216,13 +216,18 @@ docker run --rm -v "$(pwd):/rules" --entrypoint promtool prom/prometheus:latest 
   check rules /rules/monitoring/prometheus/rules.yml /rules/monitoring/prometheus/alerts.yml
 ```
 
-Both should report `SUCCESS`. Note what this validation does *not* cover,
-though: `promtool check rules` is not part of the generated repository's own
-`make check` (and isn't wired into `ci.yml.tmpl`). It's documented in
-`monitoring/README.md` as a step to run yourself (or add to your own CI)
-each time you touch these files, independently re-verified against the
-shipped templates by this plugin's golden test rather than by the generated
-repository's automation.
+Both should report `SUCCESS`. This is not a step to remember, though:
+`make promtool-rules` runs the same check over every
+`monitoring/prometheus/*.yml`, and it is part of the generated repository's
+own `make check`, so `ci.yml.tmpl` gets it on every pull request without
+naming it separately. Run it by hand while iterating on a rule; the gate is
+what stops a broken one reaching a tag.
+
+That matters most for the parts of these files you are invited to change. A
+scaffolded repository ships a working recording rule and a set of working
+alerts, so the gate is green on a fresh scaffold and stays that way on its
+own. What it exists to catch is the next edit: an uncommented business
+example, a new alert, a second file split out as the set grows.
 
 **Match your real `job_name`.** `ExporterDown` hardcodes
 `up{job="@@EXPORTER_NAME@@"}`, matching `docs/configuration.md`'s example
@@ -337,9 +342,9 @@ here, site-specific by nature: see the Alertmanager docs and
       `/ (denominator > 0)` whenever "every input is simultaneously zero"
       is a real, reachable state, not just when it looks stylistically
       safer.
-- [ ] `promtool check rules monitoring/prometheus/rules.yml
-      monitoring/prometheus/alerts.yml` reports `SUCCESS` before you wire a
-      changed rule file into a real Prometheus.
+- [ ] `make promtool-rules` reports `SUCCESS` for every file before a changed
+      rule file is wired into a real Prometheus. `make check` runs it too, so
+      this is a fast re-check while iterating rather than a step to remember.
 - [ ] The health dashboard's `job` variable stays multi-select with
       `includeAll`; any new panel aggregates `by (job, instance)`, not a
       bare instant value that breaks the moment a second instance exists.

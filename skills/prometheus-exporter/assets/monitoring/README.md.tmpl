@@ -113,15 +113,17 @@ that no series will ever have.
 ### Validating the rule files
 
 ```bash
-# Locally, if you have promtool:
-promtool check rules monitoring/prometheus/rules.yml monitoring/prometheus/alerts.yml
-
-# Via Docker, no local install:
-docker run --rm -v "$(pwd):/rules" --entrypoint promtool prom/prometheus:latest \
-  check rules /rules/monitoring/prometheus/rules.yml /rules/monitoring/prometheus/alerts.yml
+make promtool-rules
 ```
 
-Both should report `SUCCESS`.
+That checks every `monitoring/prometheus/*.yml`, and needs nothing installed:
+it borrows promtool from a pinned `prom/prometheus` image when there is no
+promtool on your PATH. It is also part of `make check`, so CI runs it on every
+pull request and you do not have to remember it.
+
+Every file should report `SUCCESS`. A whole-file check is the point: it loads
+each file the way Prometheus does, so it also validates annotation templates
+such as `{{ $labels.__name__ }}`, which a per-expression check would pass.
 
 ## Business dashboards
 

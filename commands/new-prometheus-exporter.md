@@ -402,8 +402,8 @@ make check
 
 Run both and show the real output. Don't claim success without it. `make
 check` already runs vet, lint, the full test suite, govulncheck, actionlint/
-zizmor (skipped gracefully when `--forge none`), deadcode, and the
-metrics-docs check. If either target fails, stop and show the failure as-is:
+zizmor (skipped gracefully when `--forge none`), deadcode, the metrics-docs
+check, and `promtool-rules` over `monitoring/prometheus/*.yml`. If either target fails, stop and show the failure as-is:
 that means a real defect in the generated templates, not something to paper
 over or silently retry past.
 

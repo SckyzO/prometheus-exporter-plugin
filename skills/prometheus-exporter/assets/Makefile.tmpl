@@ -232,10 +232,11 @@ docs-check: native-warning tools-image
 	@$(IN_TOOLS) -c 'go test -run TestDocsCheck -v -count=1 ./internal/collector/...'
 
 # promtool-rules - monitoring/prometheus/*.yml must be loadable by Prometheus
-# itself. Same anti-lie bar as docs-check, for PromQL instead of Go source,
-# and it matters here because this repository ships those files with rules
-# COMMENTED OUT and tells you to uncomment and adapt them: everything you
-# write there is unverified by every other target in this file.
+# itself. Same anti-lie bar as docs-check, for PromQL instead of Go source.
+# The shipped files are already valid and stay that way on their own; what
+# needs a gate is what happens next, since this repository invites you to
+# uncomment its business examples and add rules of your own, and nothing else
+# in this file would look at any of it.
 #
 # `promtool check rules` is the right check, and a per-expression check is
 # not a substitute. It loads each file the way Prometheus loads it
@@ -247,33 +248,46 @@ docs-check: native-warning tools-image
 # Unlike every target above, this one does NOT go through IN_TOOLS. promtool
 # is not in the tools image: it cannot be `go install`ed, because
 # prometheus/prometheus declares replace directives in its go.mod and
-# `go install pkg@version` refuses those, and vendoring the release binary
+# `go install pkg@version` refuses those, and unpacking the release binary
 # would add a second, independently-pinned version to an image whose whole
 # point is to be the single source of the Go version. So it resolves its own
-# way, preferring a native promtool and otherwise borrowing the official
-# image's copy - the same three-tier resolution this plugin's own harness
-# uses, for the same reason.
+# way instead, and keeps this file's container-first order while doing it:
+# the pinned image is preferred, a host promtool is the fallback, exactly as
+# IN_TOOLS behaves. Preferring a host binary would have made this the one
+# member of `check` whose result depends on an unpinned, unannounced tool.
 #
-# It fails rather than skipping when nothing is available. That matches every
+# It fails rather than skipping when neither is available. That matches every
 # other tool here on the native path: `lint` does not skip when golangci-lint
 # is missing, it fails, and a gate that quietly excuses itself is
-# indistinguishable from one that passed.
-PROMTOOL_IMG ?= prom/prometheus:latest
-RULE_FILES := monitoring/prometheus/rules.yml monitoring/prometheus/alerts.yml
+# indistinguishable from one that passed. (This plugin's own harness makes
+# the opposite call and SKIPs, because it is testing the templates on
+# whatever machine happens to run it, not gating a repository.)
+#
+# Pinned by tag AND digest, like every other image this scaffold names: a
+# gate whose verdict can change with an upstream release is not a gate. Bump
+# both halves together.
+PROMTOOL_IMG ?= prom/prometheus:v3.13.2@sha256:508729e0e2d18e11fd742a5a5ca70e557b940a93948c3c95fd0123a6fd538b69
+# A glob, not a fixed pair: splitting alerts across more files as they grow is
+# the obvious thing to do, and a gate that silently ignored the new ones would
+# be worse than no gate.
+RULE_FILES := $(wildcard monitoring/prometheus/*.yml)
 
 .PHONY: promtool-rules
-promtool-rules:
-	@echo "Running promtool check rules ($(RULE_FILES))"
-	@if command -v promtool >/dev/null 2>&1; then \
-	  promtool check rules $(RULE_FILES); \
+promtool-rules: native-warning
+	@if [ -z "$(RULE_FILES)" ]; then \
+	  echo "no rule files under monitoring/prometheus/ - nothing to check"; \
 	elif [ "$(RUN_NATIVE)" = "0" ]; then \
-	  echo "no native promtool; using $(CONTAINER_ENGINE) run $(PROMTOOL_IMG)"; \
+	  echo "Running promtool check rules via $(CONTAINER_ENGINE) ($(RULE_FILES))"; \
 	  $(CONTAINER_ENGINE) run --rm -v "$(CURDIR):/repo" -w /repo \
 	    --entrypoint promtool $(PROMTOOL_IMG) check rules $(RULE_FILES); \
+	elif command -v promtool >/dev/null 2>&1; then \
+	  echo "Running promtool check rules with host promtool ($(RULE_FILES))"; \
+	  promtool check rules $(RULE_FILES); \
 	else \
-	  echo "promtool not found, and no container engine to borrow it from." >&2; \
-	  echo "Install Prometheus (https://prometheus.io/download/) for promtool," >&2; \
-	  echo "or install docker/podman so $(PROMTOOL_IMG) can supply it." >&2; \
+	  echo "promtool-rules needs promtool, and this run is on the host path." >&2; \
+	  echo "Either install Prometheus (https://prometheus.io/download/) so" >&2; \
+	  echo "promtool is on PATH, or drop NATIVE=1 / install docker or podman" >&2; \
+	  echo "so $(PROMTOOL_IMG) can supply it." >&2; \
 	  exit 1; \
 	fi
 

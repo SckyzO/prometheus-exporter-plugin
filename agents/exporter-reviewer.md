@@ -87,7 +87,7 @@ you didn't see:
 
 ```sh
 make build       # binary compiles, not part of `check` below, run it separately
-make check       # vet + lint + test + vuln + actionlint + zizmor + deadcode + docs-check
+make check       # vet + lint + test + vuln + actionlint + zizmor + deadcode + docs-check + promtool-rules
 make docs-check  # isolated re-run if you want its output on its own
 ```
 
@@ -101,23 +101,21 @@ make docs-check  # isolated re-run if you want its output on its own
   finding for the "Docs and alerts in lockstep" area below, not a build
   failure by itself.
 
-Then validate the alerting rules the same way this plugin's own tests do.
-This is not part of `make check`, so run it yourself, degrading gracefully
-instead of silently skipping:
+The alerting rules are covered by that same `make check`, through its
+`promtool-rules` member, which loads every `monitoring/prometheus/*.yml` the
+way Prometheus itself would. Re-run it on its own if you want its output
+isolated:
 
 ```sh
-promtool check rules monitoring/prometheus/rules.yml monitoring/prometheus/alerts.yml
-# no native promtool? try:
-docker run --rm -v "$PWD:/rules" -w /rules --entrypoint promtool prom/prometheus:latest \
-  check rules monitoring/prometheus/rules.yml monitoring/prometheus/alerts.yml
-# no docker either? try podman the same way (add :Z to the -v mount for SELinux hosts):
-podman run --rm -v "$PWD:/rules:Z" -w /rules --entrypoint promtool prom/prometheus:latest \
-  check rules monitoring/prometheus/rules.yml monitoring/prometheus/alerts.yml
+make promtool-rules
 ```
 
-If none of `promtool`, `docker`, or `podman` is available, say so explicitly
-as a skipped check in your report, never report this area clean without
-having actually run it.
+If it FAILED for want of a container engine and a host `promtool`, that is a
+finding about the environment you are auditing in, not about the repository:
+say so plainly, and do not report the alerting area clean, because nothing
+validated it. On an SELinux-enforcing host, note that neither this target nor
+`IN_TOOLS` adds `:Z` to its mount, so a permission error there is a known
+gap in the scaffold rather than a defect in the rules.
 
 ## Step 2: Definition of Done
 
