@@ -314,6 +314,26 @@ spelling that differs from an existing one by an underscore or a suffix:
 `pool` and `pool_name` cannot be joined in any query, and nothing on disk
 states which one is the rule.
 
+**Do not re-open a settled name-vs-label question.** If the journal's `##
+Architecture decisions` carries a `Name-vs-label arbitrations:` line, it is
+binding: apply it and move on, without re-deriving it and without asking the
+user again. That line is written once per exporter by
+`/prometheus-exporter:design-exporter`, and re-litigating it per collector is
+how one exporter ends up with `<metric>_read` in one place and
+`<metric>{stat="read"}` in another.
+
+Only when this collector introduces a dimension that line does not cover do
+you decide anything: apply `prometheus-principles.md`'s "Deciding between a
+separate name and a label value", all three steps in order, then append the
+outcome and its reason to that same line so the next collector inherits it.
+The trap that procedure exists to prevent is treating the `sum()`/`avg()`
+rule of thumb as a decision procedure. It is a hedged heuristic that the same
+documentation carves an exception into, and it gets both directions wrong on
+its own: read/write has a perfectly meaningful sum and is still two names,
+while tabular readings of one unit (per sensor, per slot, per device) stay
+one metric with a label even though summing across them is nonsense. Step 2
+is what settles both.
+
 **Check the planned budget.** If the journal's `## Cardinality budget`
 carries a line for this collector, read it back: labels, worst-case series,
 any planned reduction flag. Ask whether the metrics just described still

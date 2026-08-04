@@ -174,24 +174,35 @@ Whatever the ladder grounded, and whatever gaps it left, run
    `Concurrency ceiling: unlimited` or `Concurrency ceiling: <N>`.
 5. **Cardinality budget** per collector: labels, worst-case series count,
    any reduction flag. 5b. **Naming conventions**, asked once and binding on
-   every collector. Two
-    parts, both recorded under `## Architecture decisions`:
+   every collector. Three parts, all recorded under
+   `## Architecture decisions`:
 
     - **Metric name shape**: confirm
       `<namespace>_<subsystem>_<name>_<unit>` or the variant this exporter
       will actually use, following `prometheus-principles.md`.
     - **Shared label vocabulary**: the label names that will recur across
       collectors. Ask for the exact spelling of each, and write it down.
+    - **Name-vs-label arbitrations**: for each dimension this exporter will
+      report along (read/write, per-state, per-sensor, and so on), decide
+      whether it becomes separate metric names or one label, and record the
+      reason. Apply `prometheus-principles.md`'s "Deciding between a separate
+      name and a label value" procedure, all three steps in order. Its Step 3
+      may cost a lookup against an official exporter in the same domain;
+      spend it here, once, rather than in every
+      `/prometheus-exporter:add-collector` run afterwards.
 
     This is the cheapest decision to make now and the most expensive to
     discover late. If the first collector emits `pool` and the seventh emits
     `pool_name`, no dashboard can join them, and nothing on disk states which
     one is the rule: existing names can be observed, a convention cannot be
-    derived. Record as:
+    derived. The arbitrations line exists for the same reason and covers what
+    the vocabulary line structurally cannot: a dimension resolved into
+    separate names leaves behind no label to list. Record as:
 
     ```
     - Metric name shape: <namespace>_<subsystem>_<name>_<unit>
     - Shared label vocabulary: <label>, <label>, <label>
+    - Name-vs-label arbitrations: <dimension>: <separate names | one label>, <why>
     ```
 6. **Business-alert candidates** per collector, one line each.
 

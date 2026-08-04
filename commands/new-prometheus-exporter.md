@@ -302,8 +302,9 @@ If any line was overruled while confirming, correct it here **and** record
 the change in `## Session log`, for the same reason as point 4 below.
 Nothing repairs this later: `## Reconciliation` recovers the I/O flavor, the
 target model and the namespace from the generated tree, but the credential
-convention, the concurrency ceiling, the metric-name shape and the shared
-label vocabulary are exactly the half no file on disk can state. A wrong
+convention, the concurrency ceiling, the metric-name shape, the shared
+label vocabulary and the name-vs-label arbitrations are the part no file on
+disk can state. A wrong
 value there is wrong for the life of the repository, and it is trusted,
 which is what makes a journal asserting a false state worse than no journal
 at all.
