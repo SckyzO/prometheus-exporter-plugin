@@ -17,6 +17,7 @@ than once.
 | File | Status | What it is |
 |---|---|---|
 | `2026-08-03-friction-log-tapelibrary.md` | **active** | Defects found by using the plugin to build a real exporter, recorded live rather than reconstructed. Six plugin defects so far, plus a correction on metric naming. **Fill it during the session, not after.** |
+| `NEXT-PROMPT-field-defects.md` | **pending** | The four groups of defects the friction log produced, ordered by value over cost: the TLS/proxy gaps, the naming questions `/add-collector` keeps re-asking, the journal section that rots, and `promtool` in `make check` (cost it before writing anything). |
 | `NEXT-PROMPT-session-exit-summary.md` | **pending** | Two volets: a per-command exit summary with four status markers, and the defect where a command prints "Safe to /clear" while an arbitration is still open. Implement them together; the exclusion rule between them is what makes either trustworthy. |
 | `2026-08-01-session-handoff-2.md` | **current** | State of the repository, open chantiers (`test/action-pins-check.sh`, the GoReleaser 2.16.0 pin whose justification may have expired). |
 | `NEXT-PROMPT-collector-outcome-seam.md` | **done** (PR #29) | Superseded by `docs/design/2026-08-01-collector-outcome-seam-design.md`, whose phase 2 is still open. Kept for the reasoning, not as a task. |
