@@ -3,7 +3,9 @@
 #
 # One job, one command: `make check` already bundles vet + lint + test + vuln
 # + actionlint + zizmor + deadcode + docs-check inside the pinned tools image
-# (see Makefile, scripts/docker/tools/) - running it here instead of
+# (see Makefile, scripts/docker/tools/), plus promtool-rules, which resolves
+# promtool on the runner itself because it is not in that image (the Makefile
+# says why) - running it here instead of
 # reimplementing an equivalent set of steps means CI can never drift from
 # what a contributor already ran locally before opening the PR (see
 # CONTRIBUTING.md's Definition of Done). `make race` runs alongside as its
@@ -13,7 +15,11 @@
 # Neither job needs anything but Docker - it is already preinstalled on every
 # ubuntu-latest runner, and `make check`/`make race` build (or reuse) the
 # pinned tools image themselves, so no `actions/setup-go` step is needed here
-# at all.
+# at all. Note that `check`'s promtool-rules member additionally pulls a
+# digest-pinned `prom/prometheus` (the Makefile explains why it cannot live in
+# the tools image), so these jobs need Docker Hub reachable, not just a
+# daemon. If anonymous pull limits ever bite, the usual fix is a registry
+# login step or a mirror, not dropping the gate.
 
 name: CI
 

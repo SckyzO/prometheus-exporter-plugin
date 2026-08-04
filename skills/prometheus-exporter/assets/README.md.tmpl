@@ -172,7 +172,7 @@ scrape_configs:
 | Quality | `make vet` | `go vet` |
 | | `make lint` | `golangci-lint run ./...` |
 | | `make vuln` | `govulncheck` (reachable-vulnerability scan) |
-| | `make check` | `vet` + `lint` + `test` + `vuln` + `actionlint` + `zizmor` + `deadcode` + `docs-check` (the pre-merge gate) |
+| | `make check` | `vet` + `lint` + `test` + `vuln` + `actionlint` + `zizmor` + `deadcode` + `docs-check` + `promtool-rules` (the pre-merge gate) |
 | | `make report` | Offline goreportcard-equivalent grade; fails below `B` |
 | | `make report-deps` | Tabular dependency status (direct + indirect, patch/minor/major) |
 | Security | `make actionlint` | Lints `.github/workflows/` (skips gracefully if there is no GitHub layer) |
@@ -181,6 +181,7 @@ scrape_configs:
 | | `make osv` | Dependency vulnerability scan against the OSV database |
 | | `make deadcode` | Fails if any unreachable Go code is found |
 | | `make docs-check` | `docs/metrics.md` documents no metric/label the code doesn't emit (warns on the reverse gap) |
+| | `make promtool-rules` | `monitoring/prometheus/*.yml` load as real Prometheus rule files, annotation templates included |
 | Docker | `make docker-build` | Builds a local image tagged `@@EXPORTER_NAME@@:dev` |
 | | `make docker-run` | Starts the compose stack (override `DOCKER_IMAGE=`/`DOCKER_TAG=`) |
 | | `make docker-build-minimal` | Builds the minimal, distroless image tagged `@@EXPORTER_NAME@@:dev-minimal` |
@@ -254,8 +255,8 @@ with verifiable supply-chain provenance:
 
 PRs and issues welcome. Before sending a contribution, read [CONTRIBUTING.md](CONTRIBUTING.md)
 for the Definition of Done, the collector-authoring pattern, and how to add fixtures without
-leaking real data. Run `make check` (containerized vet + lint + test + vuln + deadcode) and
-`make docs-check` before opening a PR.
+leaking real data. Run `make check` (vet + lint + test + vuln + actionlint + zizmor + deadcode +
+docs-check + promtool-rules) before opening a PR.
 
 ## License
 

@@ -1097,7 +1097,7 @@ check.
 
 For extra confidence before handing this back, `make lint`/`make vet` (fast)
 and the full `make check` (vet + lint + test + vuln + actionlint + zizmor +
-`deadcode` + docs-check) are worth running too: `deadcode` in particular
+`deadcode` + docs-check + `promtool-rules`) are worth running too: `deadcode` in particular
 would catch a new collector file that never made it into step 5's registry.
 
 ## 8b. Complete the journal

@@ -101,7 +101,7 @@ so nobody mistakes a host run for a reproducible one.
 | Quality | `vet` | `go vet ./...` |
 | | `lint` | `golangci-lint run ./...`: same tool and config as CI |
 | | `vuln` | `govulncheck ./...`: reachable-vulnerability, call-graph based |
-| | `check` | `vet` + `lint` + `test` + `vuln` + `actionlint` + `zizmor` + `deadcode` + `docs-check`: the pre-merge/pre-release gate, mirrors CI exactly |
+| | `check` | `vet` + `lint` + `test` + `vuln` + `actionlint` + `zizmor` + `deadcode` + `docs-check` + `promtool-rules`: the pre-merge/pre-release gate, mirrors CI exactly |
 | | `report` | Offline goreportcard-equivalent grade; fails below `B` |
 | | `report-deps` | Tabular dependency status (direct/indirect, patch/minor/major); read-only, never runs `go get` |
 | Security | `actionlint` | Lints `.github/workflows/`; skips gracefully if there is none |
@@ -110,13 +110,30 @@ so nobody mistakes a host run for a reproducible one.
 | | `osv` | Dependency scan against the OSV database |
 | | `deadcode` | Fails if any unreachable Go function is found |
 | | `docs-check` | `docs/metrics.md` documents no metric/label the code doesn't emit |
+| | `promtool-rules` | `monitoring/prometheus/*.yml` load as real rule files (`promtool check rules`), annotation templates included. The only `check` member that does not run in the tools image |
 | Docker | `docker-build[-minimal]` | Builds a local debug image (standard / distroless) |
 | | `docker-run[-minimal]` | Starts the matching compose stack |
 
 `secrets` and `osv` are deliberately **not** part of `check`: both need
 network access (gitleaks' own ruleset, the live OSV database), so folding
 them into the gate every contributor runs on every commit would make `check`
-flaky on a disconnected machine. They're prevention tools to run before
+flaky on a disconnected machine.
+
+`promtool-rules` is in `check` despite also reaching the network, and the
+distinction is worth stating rather than glossing, because it is the line to
+apply to the next candidate. What `secrets` and `osv` fetch is *fresh data*,
+by design: a cached ruleset or a stale vulnerability database defeats the
+point of running them, so they need the network on **every** invocation, and
+their result legitimately changes without the repository changing.
+`promtool-rules` fetches a **pinned image, once**; after that first pull the
+digest is in the local cache and the check is fully offline and
+deterministic. The cost is therefore a first-run cost, not a per-run
+dependency, and the verdict depends only on the repository. A machine that
+has never pulled the image and has no registry reachability will fail the
+gate, which is a real trade and the reason the image is pinned by digest
+rather than floating: an unpinned tag would have reintroduced exactly the
+"result changes with no repository change" property that keeps `secrets` and
+`osv` out. They're prevention tools to run before
 committing or on a schedule, not a build gate: same reasoning as keeping
 `race` a separate target rather than adding it to `check` (it's slower and
 answers a different question than the rest of the gate).
@@ -150,6 +167,46 @@ Its real input, `docs/metrics.md`, is a plain file the Go toolchain has no
 reason to track as a build dependency: without `-count=1`, a second run
 could serve a stale cached PASS after only that file changed, exactly the
 failure mode a doc/code drift-detector must never have.
+
+`promtool-rules` is the one member of `check` that does not run in the tools
+image, and the reason is worth writing down so nobody "fixes" it by adding a
+tenth `go install` line to the Dockerfile. That line does not work:
+`prometheus/prometheus` declares `replace` directives in its `go.mod`, and
+`go install <pkg>@<version>` refuses a module that does, so `go install
+github.com/prometheus/prometheus/cmd/promtool@latest` fails outright. The
+alternatives all cost more than the check is worth: unpacking the release
+tarball puts a second, separately-pinned version into the file that exists to
+be the single source of the Go version, and building promtool from source
+adds a full Prometheus compile to every image rebuild.
+
+So the target resolves promtool itself instead, and keeps this Makefile's
+container-first order while doing it: a pinned `prom/prometheus` image first,
+a host `promtool` as the fallback, exactly as `IN_TOOLS` behaves. Preferring
+the host binary would have made this the one member of `check` whose verdict
+came from an unpinned tool without saying so. The image is pinned by tag and
+digest for the same reason everything else in the scaffold is.
+
+When neither is available it **fails** rather than skipping. That is the same
+contract every other tool here has on the native path, where `lint` does not
+excuse itself when `golangci-lint` is missing, and it is the point of a gate:
+a step that quietly declines to run reports the same thing as a step that
+passed. This plugin's own harness makes the opposite call for its copy of the
+check and SKIPs, because it is testing templates on whatever machine happens
+to run it rather than gating a repository.
+
+The check has to be `promtool check rules` on whole files, not a per-
+expression parse. It loads each file the way Prometheus does
+(`rulefmt.ParseFile`), so it also validates annotation templates such as
+`{{ $labels.__name__ }}` and `humanizeTimestamp`. A file whose expressions
+all parse one at a time can still be rejected whole, which would leave every
+alert in it silently dead. This matters more here than in most repositories,
+because of what happens to `monitoring/prometheus/*.yml` after scaffolding.
+The shipped files are valid and stay valid on their own; the repository then
+invites the author to uncomment its business examples, add rules per
+collector, and split the set across more files as it grows, and none of that
+is visible to any other target here. `RULE_FILES` is a `$(wildcard ...)` for
+that last reason: a gate that checked two fixed filenames would go green over
+a third file nobody validated.
 
 ## Version metadata: one set of ldflags, three build paths
 
