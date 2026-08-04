@@ -359,8 +359,13 @@ interactively:
   `Selectors actually passed:` line from point 4.
 - `## Collectors`: whatever collectors the user named at step 0, one per
   line, every box unticked.
-- `## Cardinality budget`, `## Dashboards`, `## Open questions /
-  assumptions`: opened with a placeholder line each.
+- `## Cardinality budget`, `## Dashboards`: opened with a placeholder line
+  each.
+- `## Open questions / assumptions`: opened with its own index line,
+  `- Index: 0 open, 0 resolved, 0 accepted`, which is this one section's
+  placeholder form (`project-journal.md`'s status-tag convention). Anything
+  step 0 left unresolved goes below it, each entry tagged `[OPEN]`, and the
+  count updated to match.
 - `## Session log`: this scaffold's own dated entry.
 
 **Either way**, brief or no brief, `## Collectors` also gets a ticked box

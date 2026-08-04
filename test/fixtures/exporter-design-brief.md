@@ -27,4 +27,5 @@
 - DEFAULT_PORT: 9100
 
 ## Open questions / assumptions
-- Assumed `/api/v1/queues` is unpaginated; confirm against a live instance before building the `queue` collector if a deployment can exceed ~1000 queues.
+- Index: 1 open, 0 resolved, 0 accepted
+- [OPEN] Assumed `/api/v1/queues` is unpaginated; confirm against a live instance before building the `queue` collector if a deployment can exceed ~1000 queues.
