@@ -137,6 +137,37 @@ image, et ça touche `scripts/docker/tools/Dockerfile.tmpl` qui est la **source
 unique de la version Go** dans tout le projet. Présente-moi le coût avant
 d'écrire quoi que ce soit. Si c'est cher, dis-le et propose l'alternative.
 
+### PR E — un exporter échafaudé ne sait pas quelle version se donner
+
+**Vérifié : aucune consigne nulle part.** Zéro occurrence de `v0.1.0` ou de la
+moindre indication de version de départ dans
+`assets/docs/release-process.md.tmpl`, `assets/CHANGELOG.md.tmpl` ou
+`commands/new-prometheus-exporter.md`. Le CHANGELOG échafaudé cite SemVer et ne
+dit jamais où commencer, alors qu'il déroule ensuite une procédure de release
+complète.
+
+**Ce qu'il faut écrire : démarrer à `v0.1.0`, jamais à `1.0.0`.** Et la raison
+compte plus que la règle, parce qu'elle est spécifique aux exporters.
+
+En SemVer, `1.0.0` est une promesse de stabilité d'API. Pour un exporter,
+**l'API ce sont les noms de métriques et les labels** — précisément ce qui bouge
+pendant qu'on ajoute des collecteurs et qu'on découvre la cible. Partir en 1.0
+avant d'avoir observé la vraie cardinalité et confronté les noms au réel, c'est
+se verrouiller sur des noms qu'on voudra changer, et chaque changement devient
+alors un breaking change qui casse les dashboards et les alertes des opérateurs.
+
+Le cas qui a soulevé la question est net : dix-huit collecteurs, **aucune
+métrique encore observée sur une vraie machine**, budget de cardinalité dérivé
+des fixtures. Un `1.0.0` là serait une promesse intenable.
+
+La 1.0 se pose quand la surface de métriques a cessé de bouger et qu'elle a
+tourné assez longtemps contre du réel pour qu'on fasse confiance aux noms. Dis
+ce critère, pas seulement le numéro de départ.
+
+Place naturelle : `assets/docs/release-process.md.tmpl`, qui possède déjà la
+procédure, avec un renvoi depuis `assets/CHANGELOG.md.tmpl`. Vérifie qu'aucun
+autre artefact ne contredit déjà la règle avant d'écrire.
+
 ## Contraintes dures
 
 - **Anglais** pour tout artefact livré. `docs/design/` et `docs/plans/` sont mon
