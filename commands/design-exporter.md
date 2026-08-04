@@ -67,7 +67,8 @@ where the lower adds detail the higher left silent, never replaced by it:
    secrets before returning. Interpret the redacted output as candidate
    collectors/ metrics, **supplementing** the higher rungs: confirming what
    they stated, filling gaps they left, and recording any contradiction as
-   an `## Open questions / assumptions` entry rather than overriding them.
+   an entry under `## Open questions / assumptions`, tagged `[OPEN]`,
+   rather than overriding them.
    Skip silently in a non-interactive run (no consent possible).
 5. **Dialogue** (rung 5): if nothing above grounded the design, fall back to
    the question flow in `exporter-architecture.md`. Always available, so the

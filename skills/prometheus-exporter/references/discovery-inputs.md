@@ -50,8 +50,9 @@ confidence is high (it is the real instance) but its position stays low
 because it is conditional on that instance existing and on explicit consent,
 so it **supplements** the walk rather than leading it: it confirms what a
 higher rung already stated and fills gaps a higher rung left silent. Where a
-live probe *contradicts* a higher rung, that discrepancy is recorded as an
-`[OPEN]` `## Open questions / assumptions` entry, never silently resolved. A running
+live probe *contradicts* a higher rung, that discrepancy is recorded under
+`## Open questions / assumptions`, tagged `[OPEN]`, never silently
+resolved. A running
 instance can be mis-configured or an old build, so the design phase flags
 the conflict for the user instead of picking a winner. The probe never runs
 silently: `/prometheus-exporter:design-exporter` shows the exact URL or

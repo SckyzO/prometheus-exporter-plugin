@@ -196,9 +196,23 @@ line first:
   "settled, on purpose" in a way that no amount of prose in the entry does.
 
 `grep "\[OPEN\]" docs/exporter-journal.md` then answers "what is actually
-left" without reading the section, which is the whole point: the index line is
-a convenience and the tags are the source of truth, so a stale count is a
-cosmetic defect rather than a misleading one.
+left" without reading the section, which is the whole point. The tags are the
+source of truth; the index is a summary of them for a human reading from the
+top.
+
+**The index has an owner, and it is whoever last touched a tag.** A count
+nobody is responsible for is a derived value free to drift, which is the
+failure this whole section is about, so it is not left to a later tidying
+pass: any command that adds an entry or retags one updates the count in the
+same edit. That is the entire maintenance rule, and it is why the index is
+one line of three numbers rather than anything richer. If it is ever found
+disagreeing with the tags, the tags win and the count is corrected on the
+spot.
+
+This section is also the one place where the journal's usual
+`- (none yet)` placeholder does not apply: an empty section carries
+`- Index: 0 open, 0 resolved, 0 accepted` instead, which says the same thing
+and is already in the shape later entries need.
 
 **Retagging is part of doing the work, not a separate tidying pass.** Any of
 the four commands that settles a question while doing its own job retags that
@@ -244,6 +258,12 @@ section still empty. Only `## Dashboards` is routinely in that state on the
 main path, since `/prometheus-exporter:generate-dashboard` runs late or not
 at all, but the rule is the same for all eight and does not depend on which
 one happens to be empty.
+
+One section spells its placeholder differently, and only that: `## Open
+questions / assumptions` opens with `- Index: 0 open, 0 resolved, 0 accepted`
+instead of `- (none yet)`, per the status-tag convention above. The rule it
+is obeying is identical, a header is never emitted bare, and only the wording
+of the line differs.
 
 This is not a formatting preference. An empty section and a missing header
 are two different states, and only one of them is a defect: `## Degradation`
