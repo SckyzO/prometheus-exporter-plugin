@@ -97,30 +97,27 @@ func (c *ExampleCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.healthy
 }
 
-// Collect fetches and emits this collector's metrics. On any error it logs
-// and returns without sending anything: the StatusTracker wrapping every
-// collector counts how many metrics each Collect call actually emits, and
-// zero from one scrape is what makes it set
-// @@NAMESPACE@@_exporter_collector_success{collector="example"} to 0 for
-// this collector, instead of silently publishing stale or zero-value data as
-// if it were current (see status_tracker.go's Collect for the counting
-// logic this relies on).
+// Compile-time proof that this collector states its own outcome. Without it a
+// typo in CollectWithOutcome's signature would compile, and StatusTracker
+// would silently fall back to counting metrics.
+var _ OutcomeCollector = (*ExampleCollector)(nil)
+
+// CollectWithOutcome fetches and emits this collector's metrics, and reports
+// whether the scrape succeeded. It is the method StatusTracker calls.
 //
-// Collector-authoring rule: on a successful scrape always emit your
-// metrics (with zero VALUES when there is no data), never zero metrics.
-// Emitting nothing is what StatusTracker treats as a failed scrape, so a
-// collector that wants to report "no data" as a normal outcome must still
-// send a metric (for example a gauge set to 0), not bare-return like the
-// error path below.
-func (c *ExampleCollector) Collect(ch chan<- prometheus.Metric) {
+// Return the error on a genuine failure. Return nil on success, including a
+// success that legitimately produced no series at all: StatusTracker believes
+// what this returns rather than counting what was emitted, so "nothing to
+// report right now" is no longer indistinguishable from "broken".
+//
+// Metrics already sent before a failure are still forwarded, so partial data
+// is not lost; the scrape is simply reported as failed, which is the honest
+// answer and one a metric count cannot give.
+func (c *ExampleCollector) CollectWithOutcome(ch chan<- prometheus.Metric) error {
 	stats, err := c.exampleGetMetrics(c.ctx)
 	if err != nil {
-		// Error path: log and return with zero metrics sent. See the
-		// collector-authoring rule above for why that bare return is only
-		// correct here, on a genuine failure, and not as a stand-in for "no
-		// data this scrape".
 		c.log.Error("Failed to get example metrics", "err", err)
-		return
+		return err
 	}
 
 	ch <- prometheus.MustNewConstMetric(c.items, prometheus.GaugeValue, float64(stats.Items))
@@ -130,4 +127,12 @@ func (c *ExampleCollector) Collect(ch chan<- prometheus.Metric) {
 		healthy = 1.0
 	}
 	ch <- prometheus.MustNewConstMetric(c.healthy, prometheus.GaugeValue, healthy)
+	return nil
+}
+
+// Collect satisfies prometheus.Collector, which the registry and anything that
+// does not know about OutcomeCollector still expect. It delegates so there is
+// exactly one implementation to keep correct.
+func (c *ExampleCollector) Collect(ch chan<- prometheus.Metric) {
+	_ = c.CollectWithOutcome(ch)
 }

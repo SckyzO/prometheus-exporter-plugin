@@ -96,10 +96,11 @@ Add each collector still unticked under the journal's `## Collectors` in
 0 list, one at a time with `/prometheus-exporter:add-collector <name>`: a
 `Data`/fetch piece that does I/O and nothing else, a pure `Parse` function
 that does no I/O, and the full test triad (parser, `_Collect`, `_Describe`,
-`_ErrorHandling`) before `Collect` is wired into the registry. On error, log
-and return zero metrics, never a partial metric. On a healthy-but-empty
-scrape, still emit every metric with zero *values*, never zero metrics,
-which reads as a failed scrape to the shared `StatusTracker`. Every command
+`_ErrorHandling`) before `Collect` is wired into the registry. A collector
+states its own outcome through `CollectWithOutcome(ch) error`, so a scrape
+that legitimately found nothing to report returns `nil` and is a success, and
+one that fails after emitting part of its series returns the error and is a
+failure with those metrics still forwarded. Every command
 in this workflow reads `docs/exporter-journal.md` on entry and completes it
 on exit, so the remaining list, the cardinality budget and the shared label
 vocabulary live on disk rather than in the context window: `/clear` between

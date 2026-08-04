@@ -234,20 +234,31 @@ func (c *ExampleCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.lastRefreshDesc
 }
 
-// Collect replays the cached metrics from the last successful refresh:
-// O(cached size), never runs the command, never blocks on it. It then
-// ALWAYS sends the freshness gauge, even before any refresh has ever
+// Compile-time proof that this collector states its own outcome. Without it a
+// typo in CollectWithOutcome's signature would compile, and StatusTracker
+// would silently fall back to counting metrics.
+var _ OutcomeCollector = (*ExampleCollector)(nil)
+
+// CollectWithOutcome replays the cached metrics from the last successful
+// refresh and reports success. It never touches the target and never blocks
+// on it: the work is O(cached size), done under a read lock.
+//
+// It ALWAYS sends the freshness gauge, even before any refresh has ever
 // completed (value 0 in that case, since a zero time.Time's Unix() is a
-// large negative, not a meaningful "ancient" epoch marker): see the
-// collector-authoring rule in collector.go.tmpl's Collect for why a
-// collector must never emit zero metrics on what it considers a healthy
-// outcome: StatusTracker counts emitted metrics per scrape, and an empty
-// cache before the first refresh completes is a normal startup window, not
-// a failure. The freshness gauge alone guarantees at least one metric every
-// scrape, so StatusTracker reports this collector as alive; the gauge's own
-// value (0 until the first refresh lands) is the separate, correct signal
-// for staleness: see NewExampleCollector's lastRefreshDesc help text.
-func (c *ExampleCollector) Collect(ch chan<- prometheus.Metric) {
+// large negative, not a meaningful "ancient" epoch marker).
+//
+// The unconditional nil is deliberate, and it is the one place in these
+// templates where a nil return is a judgement rather than a formality. This
+// collector's outcome answers "did I serve what I have", not "did my last
+// refresh succeed". A refresh failing for an hour still serves valid, if
+// ageing, data; reporting a failure here would page on a collector doing
+// exactly what it was designed to do.
+//
+// So collector_success is NOT the signal for this collector, and cannot be:
+// it reads 1 by construction. The freshness gauge's value is. The refresh
+// goroutine logs its own errors, and the ExporterCollectorStale example in
+// monitoring/prometheus/alerts.yml is the rule to uncomment for it.
+func (c *ExampleCollector) CollectWithOutcome(ch chan<- prometheus.Metric) error {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -260,4 +271,11 @@ func (c *ExampleCollector) Collect(ch chan<- prometheus.Metric) {
 		refreshUnix = float64(c.lastRefresh.Unix())
 	}
 	ch <- prometheus.MustNewConstMetric(c.lastRefreshDesc, prometheus.GaugeValue, refreshUnix)
+	return nil
+}
+
+// Collect satisfies prometheus.Collector; it delegates so there is exactly
+// one implementation to keep correct.
+func (c *ExampleCollector) Collect(ch chan<- prometheus.Metric) {
+	_ = c.CollectWithOutcome(ch)
 }

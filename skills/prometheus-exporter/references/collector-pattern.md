@@ -128,32 +128,55 @@ comment puts it. `DescribeByCollect` exists in `client_golang` for a
 collector whose metric *set* genuinely varies by scrape outcome; this
 pattern's descriptor set never does, so it doesn't need it.
 
-`Collect` calls `<name>GetMetrics`, then either logs and returns (error
-path) or emits one `prometheus.MustNewConstMetric` per value (success path).
-See `prometheus-principles.md`'s note on why `MustNewConstMetric` and not
-direct instrumentation. That is the entire contract, and it is worth stating
-precisely because both branches have a rule attached.
+`CollectWithOutcome` calls `<name>GetMetrics`, then either logs and returns
+the error, or emits one `prometheus.MustNewConstMetric` per value and returns
+`nil`. `Collect` delegates to it. See `prometheus-principles.md`'s note on why
+`MustNewConstMetric` and not direct instrumentation. That is the entire
+contract, and it is worth stating precisely because both branches have a rule
+attached.
 
 ### The error contract
 
-On error, log and return: nothing is sent on the channel:
+State the outcome, do not leave it to be inferred. Implement
+`OutcomeCollector` (`internal/collector/status_tracker.go`) and return the
+error:
 
 ```go
-stats, err := c.exampleGetMetrics(context.Background())
-if err != nil {
-	c.log.Error("Failed to get example metrics", "err", err)
-	return
+// Compile-time proof, so a signature typo fails the build instead of
+// silently falling back to the count rule described below.
+var _ OutcomeCollector = (*ExampleCollector)(nil)
+
+func (c *ExampleCollector) CollectWithOutcome(ch chan<- prometheus.Metric) error {
+	stats, err := c.exampleGetMetrics(c.ctx)
+	if err != nil {
+		c.log.Error("Failed to get example metrics", "err", err)
+		return err
+	}
+	// ... emit ...
+	return nil
+}
+
+// Collect still satisfies prometheus.Collector, which the registry expects.
+func (c *ExampleCollector) Collect(ch chan<- prometheus.Metric) {
+	_ = c.CollectWithOutcome(ch)
 }
 ```
 
-Zero metrics sent from one `Collect` call is not a neutral outcome: it is
-exactly what the shared `StatusTracker`
-(`internal/collector/status_tracker.go`) treats as a failed scrape.
-`StatusTracker` wraps every collector registered in `main.go`'s registry (so
-a panic or a broken descriptor in one collector can't take a whole scrape
-down, and so every collector's health is exposed uniformly) and its
-`Collect` method buffers each wrapped collector's output on a private
-channel, counts what came out, and only then forwards it:
+Two consequences worth stating explicitly, because they are the whole reason
+this shape exists:
+
+- **Returning `nil` with zero metrics is a success.** A scrape that
+  legitimately found nothing to report is no longer indistinguishable from a
+  broken one.
+- **Returning an error after emitting some metrics is a failure**, and the
+  already-emitted metrics are still forwarded. Partial data is not lost; the
+  scrape is simply reported honestly.
+
+### The fallback, and why it is wrong in both directions
+
+A collector that does not implement `OutcomeCollector` is judged by how many
+metrics it emitted. `StatusTracker` buffers each wrapped collector's output on
+a private channel, counts what came out, and only then forwards it:
 
 ```go
 if len(collected) == 0 {
@@ -161,25 +184,37 @@ if len(collected) == 0 {
 }
 ```
 
-A panic is still caught separately via `defer`/`recover` in the same pass,
-but the count check is what makes an *ordinary, non-panicking* "log the
-error and return" collector register as a failure too. Before this became
-count-based, `StatusTracker` only flipped `success` to `0` on a recovered
-panic, so a collector that simply logged and returned on error was reported
-`success=1` with zero metrics published, silently indistinguishable from a
-healthy, empty scrape.
+This is a proxy for an outcome the collector never got to state, and it is
+wrong in both directions: a legitimately empty scrape reads as failed, and a
+collector that emits half its series and then fails reads as healthy. The
+second is the dangerous one, because it hides breakage.
+
+The fallback is kept so that a collector written before `OutcomeCollector`
+existed goes on working with no edit. Do not write new collectors against it.
+
+`StatusTracker` wraps every collector registered in `main.go`'s registry, so
+a panic or a broken descriptor in one collector cannot take a whole scrape
+down and every collector's health is exposed uniformly. It buffers each
+wrapped collector's output on a private channel and forwards it either way;
+the count is only consulted when the collector did not state an outcome.
+
+A panic is caught separately via `defer`/`recover` in the same pass, and is a
+failure whichever shape the collector uses.
 `<namespace>_exporter_collector_success{collector="example"}` is the metric
-this produces; both directions of the contract
-(`_StatusTrackerSuccess`/`_StatusTrackerFailure` in the HTTP flavor's test
-file) are pinned down as regression tests specifically because this bug
-existed once.
+all of this produces, and both directions are pinned down as regression tests
+in the flavor's own test file.
 
-### The flip side: never zero metrics on success
+### Emitting a fixed-shape metric anyway, for a different reason
 
-A successful scrape that happens to have nothing to report is a different
-outcome from a failed one, and the two must not look the same to
-`StatusTracker`. **Always emit your metrics on a successful scrape, with
-zero *values* when there's nothing to report, never zero metrics.** The CLI
+Under the fallback, an always-emitted metric was mandatory: it was the only way
+to prove the scrape had happened. Under `OutcomeCollector` it is no longer
+load-bearing, since a `nil` return already says so.
+
+It is still worth having, for a reason that outlives the mechanism: a
+fixed-shape gauge such as a count of what the target returned is a **real
+signal**, and a value of `0` is meaningful information rather than a
+placeholder. A series that disappears entirely is harder to query and to alert
+on than one that reads zero. The CLI
 flavor's `entries` gauge exists precisely to satisfy this: it is
 unconditionally emitted, valued at `len(metrics)`, even when that's `0`:
 
@@ -191,12 +226,11 @@ for _, m := range metrics {
 ```
 
 The per-key `value` gauge legitimately emits nothing when `metrics` is
-empty. That's fine, because `entries` already satisfied the rule for this
-scrape regardless. A collector whose only metric is a per-item one (nothing
-shaped like `entries`) needs a fixed-shape, always-emitted metric of its
-own, or a genuinely empty successful scrape becomes indistinguishable from a
-failed one. This is a case worth designing for explicitly, not an edge case
-to notice after the fact.
+empty, and that is fine: the outcome is stated, so nothing has to stand in
+for it. A collector whose only metric is a per-item one is still worth giving
+a fixed-shape companion, not to prove the scrape happened but because a
+series reading 0 is easier to query and alert on than one that vanishes.
+Design for it explicitly rather than noticing it after the fact.
 
 ### Two metrics, one label set, breaks the whole scrape
 
@@ -359,11 +393,12 @@ that count instead of bounding it once.
       the network, a subprocess, or a database directly.
 - [ ] `parse<Name>` is pure: no I/O, no logging, deterministic on its input
       alone.
-- [ ] `Describe` sends a fixed descriptor set; `Collect` emits
-      `MustNewConstMetric` values or, on error, logs and returns zero
-      metrics.
-- [ ] A successful-but-empty scrape still emits every metric, with zero
-      values, never zero metrics.
+- [ ] `Describe` sends a fixed descriptor set.
+- [ ] The collector implements `OutcomeCollector`, `Collect` delegates to
+      `CollectWithOutcome`, and `var _ OutcomeCollector = (*X)(nil)` is
+      present so a signature typo fails the build.
+- [ ] `CollectWithOutcome` returns the error on a genuine failure and `nil`
+      on success, including a success with nothing to report.
 - [ ] No two `MustNewConstMetric` calls in one `Collect` can share both a
       descriptor and an identical label set; a parser that could produce
       that must reject or deduplicate first.

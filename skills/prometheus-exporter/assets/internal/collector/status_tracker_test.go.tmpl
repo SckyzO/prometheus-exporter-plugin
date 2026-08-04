@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -122,12 +123,93 @@ func TestStatusTracker_PanicMarksFailed(t *testing.T) {
 	}
 }
 
-// TestStatusTracker_ZeroMetricsMarksFailed wraps a collector that returns
-// normally from Collect but emits nothing: the same "log the error, then
-// bare return" shape every collector in this exporter follows on its own
-// error path. Nothing here panics or returns an error value, so this pins
-// down that StatusTracker detects the failure purely by counting emitted
-// metrics.
+// outcomeStub reports its own scrape outcome instead of leaving StatusTracker
+// to infer one. emit controls how many metrics it sends before returning err,
+// which is what lets one stub cover both directions the count rule gets wrong.
+type outcomeStub struct {
+	desc *prometheus.Desc
+	emit int
+	err  error
+}
+
+var _ OutcomeCollector = (*outcomeStub)(nil)
+
+func (s *outcomeStub) Describe(ch chan<- *prometheus.Desc) { ch <- s.desc }
+
+func (s *outcomeStub) CollectWithOutcome(ch chan<- prometheus.Metric) error {
+	for i := 0; i < s.emit; i++ {
+		ch <- prometheus.MustNewConstMetric(s.desc, prometheus.GaugeValue, float64(i))
+	}
+	return s.err
+}
+
+func (s *outcomeStub) Collect(ch chan<- prometheus.Metric) { _ = s.CollectWithOutcome(ch) }
+
+// TestStatusTracker_EmptyButSuccessfulIsSuccess is the false positive the
+// count rule produced: a collector whose scrape legitimately found nothing to
+// report emits zero metrics and used to be reported as failed, which pages on
+// a healthy exporter. Stating the outcome fixes it. Fails before the
+// OutcomeCollector seam exists, passes after.
+func TestStatusTracker_EmptyButSuccessfulIsSuccess(t *testing.T) {
+	log := logger.NewTextLogger("error")
+	stub := &outcomeStub{
+		desc: prometheus.NewDesc("statustrackertest_outcome_empty", "stub metric for StatusTracker tests", nil, nil),
+		emit: 0,
+		err:  nil,
+	}
+
+	tracker := NewStatusTracker(log)
+	tracker.Add("empty", stub)
+
+	expected := `
+# HELP ` + statusTrackerSuccessMetricName + ` Whether the last scrape of the collector succeeded (1=success, 0=failure)
+# TYPE ` + statusTrackerSuccessMetricName + ` gauge
+` + statusTrackerSuccessMetricName + `{collector="empty"} 1
+`
+	if err := testutil.CollectAndCompare(tracker, strings.NewReader(expected), statusTrackerSuccessMetricName); err != nil {
+		t.Fatalf("unexpected collecting result:\n%s", err)
+	}
+}
+
+// TestStatusTracker_PartialThenFailedIsFailure is the false negative, and the
+// more dangerous of the two: a collector that emits part of its series and
+// then fails used to be reported as healthy, because the count was non-zero.
+// The already-emitted metric must still be forwarded, so this asserts both
+// halves at once. Fails before the seam exists, passes after.
+func TestStatusTracker_PartialThenFailedIsFailure(t *testing.T) {
+	const stubMetricName = "statustrackertest_outcome_partial"
+
+	log := logger.NewTextLogger("error")
+	stub := &outcomeStub{
+		desc: prometheus.NewDesc(stubMetricName, "stub metric for StatusTracker tests", nil, nil),
+		emit: 1,
+		err:  errors.New("second half of the scrape failed"),
+	}
+
+	tracker := NewStatusTracker(log)
+	tracker.Add("partial", stub)
+
+	expected := `
+# HELP ` + stubMetricName + ` stub metric for StatusTracker tests
+# TYPE ` + stubMetricName + ` gauge
+` + stubMetricName + ` 0
+# HELP ` + statusTrackerSuccessMetricName + ` Whether the last scrape of the collector succeeded (1=success, 0=failure)
+# TYPE ` + statusTrackerSuccessMetricName + ` gauge
+` + statusTrackerSuccessMetricName + `{collector="partial"} 0
+`
+	if err := testutil.CollectAndCompare(tracker, strings.NewReader(expected), stubMetricName, statusTrackerSuccessMetricName); err != nil {
+		t.Fatalf("unexpected collecting result:\n%s", err)
+	}
+}
+
+// TestStatusTracker_ZeroMetricsMarksFailed is the phase-1 regression lock, and
+// the only test that proves the promise this change rests on: a collector that
+// knows nothing about OutcomeCollector, exactly like every one already written
+// in an exporter scaffolded before this template changed, must go on being
+// judged by the metric count with no edit. stubStatusTrackerCollector
+// deliberately does NOT implement OutcomeCollector, so this exercises the
+// fallback branch and nothing else. If it ever fails, a third party's build
+// has been broken by a plugin upgrade they did not ask for.
 func TestStatusTracker_ZeroMetricsMarksFailed(t *testing.T) {
 	log := logger.NewTextLogger("error")
 	stub := newStubStatusTrackerCollector("statustrackertest_zero_metric", false, false)

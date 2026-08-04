@@ -172,10 +172,10 @@ being followed in the first place:
   (`collector-pattern.md`), the static-metric-name rule `docs_check_test.go`
   enforces mechanically (above), and registration at the `//
   @@COLLECTOR_REGISTRY@@` marker (`project-scaffold.md`).
-- **The collector-authoring rule**: always emit your metrics on a successful
-  scrape, zero *values* when there's nothing to report, never zero metrics;
-  a bare `return` on "nothing to report" reads as a failed scrape to
-  `StatusTracker`, indistinguishable from a real outage.
+- **The outcome rule**: a collector states its own scrape outcome through
+  `CollectWithOutcome(ch) error`, with a compile-time assertion so a
+  signature typo fails the build rather than silently reverting to the
+  metric-count fallback.
 - **Test-data anonymization**: real hostnames, usernames, and account/tenant
   names never reach a committed fixture, replaced with a placeholder that
   preserves shape (field count, rough magnitude) without preserving content.

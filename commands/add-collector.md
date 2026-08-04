@@ -392,9 +392,9 @@ mechanically. Separately, **rewrite the doc comments**: drop the template's
 "this is a placeholder... replace it when adapting this collector" framing
 (that's no longer true, this collector already targets its real source) and
 write real documentation of what it actually does. Keep comments that
-explain a durable invariant of this exporter as-is (why `Collect`
-logs-and-returns zero metrics on error, why `StatusTracker` treats that as
-failure, why a duplicate label set breaks `Gather` for the whole scrape):
+explain a durable invariant of this exporter as-is (why the collector states
+its own outcome rather than letting `StatusTracker` infer one from a metric
+count, why a duplicate label set breaks `Gather` for the whole scrape):
 those stay true for every collector, not just the one being replaced. Within
 such a kept comment, any embedded `@@…@@` sentinel or `collector="example"`
 illustration must still be updated to the real namespace / new collector
@@ -406,17 +406,51 @@ template happens to ship:
 - Keep the five-piece shape: `<name>Data` (I/O only) → `parse<Name>` (pure)
   → `<name>GetMetrics` (glue) → `Describe`/`Collect`, regardless of how many
   fields or metrics you end up with.
-- **Collector-authoring rule** (non-negotiable): on a successful scrape,
-  always emit every metric, with zero *values* when there's nothing to
-  report, never zero metrics. The shared `StatusTracker` counts emitted
-  metrics per scrape and reports `success=0` for the collector when a
-  `Collect` call sends nothing at all, indistinguishable from a real
-  failure. If any of this collector's metrics has variable labels and can
-  legitimately have zero entries on a healthy scrape (an empty queue, an
-  empty list, ...), keep (or add) a fixed-shape, always-emitted gauge
-  alongside it (exactly what the template's `items`/`entries` field already
-  demonstrates) so a "nothing to report" scrape still sends at least one
-  metric.
+- **Outcome rule** (non-negotiable, *when the seam is present*). **Check
+  first**, the same way the multi seam is checked above, because
+  `OutcomeCollector` lives in `internal/collector/status_tracker.go` and this
+  command never refreshes that file:
+
+  ```sh
+  grep -q 'OutcomeCollector' internal/collector/status_tracker.go && echo current || echo outdated
+  ```
+
+  **If `current`**: the collector states its own outcome. Implement
+  `CollectWithOutcome(ch) error`, return the error on a genuine failure and
+  `nil` on success, have `Collect` delegate to it, and emit the compile-time
+  assertion in the collector's own file:
+
+  ```go
+  var _ OutcomeCollector = (*<Name>Collector)(nil)
+  ```
+
+  That assertion is not decoration. Without it, a typo in
+  `CollectWithOutcome`'s signature compiles fine and `StatusTracker` silently
+  falls back to counting metrics, so the collector looks converted and is not.
+
+  **If `outdated`**: this repository was scaffolded before the outcome seam
+  existed. Emitting the assertion or the method there fails to compile with
+  `undefined: OutcomeCollector`. Do not migrate `status_tracker.go`, and do
+  not emit them. Write a plain `Collect` instead, and apply the older rule it
+  was written for: on a successful scrape always emit every metric, with zero
+  *values* when there is nothing to report, never zero metrics, because that
+  tracker infers failure from a zero metric count. Say plainly which of the
+  two shapes you used and why. Unlike the multi seam above this is **not** a
+  reason to stop: a plain `Collect` still works, on that tracker and on the
+  current one.
+
+  Two consequences to carry into the design: returning `nil` with zero metrics
+  is a **success**, so a legitimately empty scrape no longer has to be
+  disguised; and returning an error after emitting part of the series is a
+  **failure**, with the emitted metrics still forwarded.
+- **A fixed-shape metric is still worth having**, for a reason that changed
+  *on a `current` repository*. It used to be mandatory, as the only way to
+  prove a scrape had happened, and it stays mandatory on an `outdated` one.
+  Once the outcome is stated it becomes a real signal instead: if any metric
+  has variable labels and can legitimately have zero entries (an empty queue,
+  an empty list), a fixed-shape gauge alongside it, valued 0, is easier to
+  query and alert on than a series that vanishes. The template's
+  `items`/`entries` field demonstrates it.
 - More or fewer than the template's two metrics, and any number of labels,
   are all fine: adapt the struct fields, `*prometheus.Desc` fields, and
   `Collect` body freely to match what step 2 asked for.

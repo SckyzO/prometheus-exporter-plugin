@@ -351,11 +351,46 @@ reports/fix passes. Numbered for cross-reference from §2's tables.
    gap where a collector could silently emit nothing and still report
    success. Paired with a hard collector-authoring rule taught in
    `collector-pattern.md`: on a successful-but-empty scrape, always emit
-   metrics with zero *values*, never zero metrics. A documented, deferred-to-v0.2
-   wart: a collector that legitimately has zero series to report reads as a
-   false-positive failure — the gold-standard fix (node_exporter-style
-   `Update(ch) error` collectors) is noted as future work, not done here.
-   (Task 5 fix pass)
+   metrics with zero *values*, never zero metrics.
+
+   **Resolved 2026-08-04, and the wart was real.** A collector that
+   legitimately had zero series to report read as a false-positive failure.
+   `OutcomeCollector` (`CollectWithOutcome(ch) error`) now lets a collector
+   state its own result, and `StatusTracker` believes it; the count rule
+   survives only as a fallback for collectors written before the interface
+   existed, per the two-phase rule. The fix also closed a second, undocumented
+   defect in the opposite direction, a false *negative*: a collector emitting
+   part of its series and then failing read as healthy, because the count was
+   non-zero. That one hides breakage, and the always-emit doctrine above
+   actively widened it.
+
+   **Not fully resolved, and the residue is worth naming.** The two
+   self-instrumentation collectors a fresh scaffold registers through the same
+   seam, `RequestDuration` (http) and `CommandDuration` (cli), are
+   `*prometheus.HistogramVec` values from `client_golang` and therefore cannot
+   implement `OutcomeCollector`. They keep the count rule, and neither
+   pre-populates its label values at init the way `RequestWait` does
+   (`limiter.go.tmpl:47-58`), so on an exporter started with
+   `--no-collector.example` they emit nothing and report
+   `collector_success 0` on a healthy process. That is the original false
+   positive, surviving in a narrow, pre-existing corner. Fixing it is an
+   init-time touch of both label values, not a seam change. See
+   `docs/design/2026-08-01-collector-outcome-seam-design.md` and the gap
+   report's §8.2.
+
+   **A correction to the reasoning, not only to the status.** The original
+   note named "node_exporter-style `Update(ch) error` collectors" as the fix,
+   and the first draft of the gap report claimed that premise was false, on
+   the grounds that node_exporter reports `success = 0` for `ErrNoData` too.
+   Both missed the same thing: **`ErrNoData` does not mean "legitimately
+   empty", it means the data source is absent**, every one of its ~40 use
+   sites being an `os.ErrNotExist` mapping. A legitimately empty node_exporter
+   collector returns `nil` and is reported `success = 1` with zero metrics
+   (`bonding_linux.go:67-71,74-102` with `collector.go:171-176`). The original
+   note was right. Adopting the `ErrNoData` sentinel itself was still
+   declined: treating an absent source as a scrape failure suits a host agent
+   with ninety optional collectors better than a purpose-built exporter.
+   (Task 5 fix pass; resolved by the official-exporter epic)
 7. **`promhttp.ContinueOnError` on the `/metrics` handler.** The implicit
    default (`HTTPErrorOnError`) means one collector's `Gather` error (e.g. a
    duplicate label set) 500s the *entire* scrape, discarding every other
