@@ -129,6 +129,22 @@ func main() {
 	kingpin.Version(version.Print("@@EXPORTER_NAME@@"))
 	kingpin.HelpFlag.Short('h')
 
+	// --version and --help must answer WITHOUT a configuration file, and this
+	// is what stands between them and the mandatory check below.
+	//
+	// kingpin handles both itself, inside Parse, which runs further down: after
+	// that check. Without this, a binary asked for its own version exits 1 with
+	// "the multi-instance target model requires --config.file", and so does
+	// --help. Both are wrong. Packaging, CI and container healthchecks call
+	// --version on a binary they have no configuration for, and --help is the
+	// first thing an operator runs.
+	//
+	// Scanned from os.Args rather than read from a parsed flag, necessarily:
+	// the whole point is that this decision precedes Parse.
+	if wantsVersionOrHelp(os.Args[1:]) {
+		kingpin.Parse() // prints and exits
+	}
+
 	// --config.file is mandatory here; read it before parsing (its value decides
 	// which arguments the parser is given).
 	configPath := config.ExtractFlagValue(os.Args[1:], "config.file")
@@ -352,4 +368,26 @@ func main() {
 	// instances x M collectors, a per-collector wait would worst-case at
 	// N*M*5s. See Registry.Wait's own doc comment.
 	registry.Wait(5 * time.Second)
+}
+
+// wantsVersionOrHelp reports whether the command line asks this binary to
+// describe itself rather than to run. Both questions must be answerable with
+// no configuration file, so main consults this before enforcing
+// --config.file; kingpin.Parse then prints and exits on its own.
+//
+// A pure function over the argument slice, rather than a loop inline in main,
+// so the behaviour is testable: main's own path ends in os.Exit and cannot be
+// called from a test.
+//
+// Exact matches only. "--version=false" is not a request for the version, and
+// a value that merely contains the word (--config.file=/etc/version.yml) must
+// not be mistaken for one.
+func wantsVersionOrHelp(args []string) bool {
+	for _, arg := range args {
+		switch arg {
+		case "--version", "--help", "-h":
+			return true
+		}
+	}
+	return false
 }
