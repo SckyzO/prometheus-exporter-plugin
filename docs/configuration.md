@@ -13,7 +13,7 @@ list without it and refuses to start.
 | Section | Applies to |
 |---|---|
 | `flags:` | every build (any flag the binary declares except `config.file` itself, keyed by its long name) |
-| `http_client_config:` | HTTP flavor only (basic auth, bearer token, TLS and client certs for outbound requests) |
+| `http_client_config:` | HTTP flavor only. A `prometheus/common` `HTTPClientConfig`, so it takes that type's whole key set for outbound requests: basic auth, bearer token, TLS and client certs, and `proxy_url` |
 | `modules:` | `multi` and `multi-instance` only; a `single` build refuses the section at boot |
 | `instances:` | `multi-instance` only, the machines to watch |
 

@@ -241,6 +241,34 @@ At least one `outcome="success"` observation for every collector that talks to
 - Unexpected `outcome="error"` counts: a regression in the release branch. Check the matching
   `*Data` method in `internal/collector/`.
 
+Two traps below waste an afternoon each, on the HTTP flavor. Both make a broken outbound call
+look like a working one, so neither shows up as a wrong answer, only as a missing result.
+
+- **A successful `curl` does not mean a Go client will connect.** If the log says
+  `x509: certificate relies on legacy Common Name field, use SANs instead`, the target's
+  certificate has no `subjectAltName`, and this is not a case where curl proves anything:
+  curl with `--cacert` and **no** `-k` still returns 200 against that same certificate,
+  because OpenSSL still falls back to the Common Name and Go has not since 1.15. Testing
+  harder with curl confirms the wrong thing. Do not reach for `ca_file` or `server_name`
+  either; neither one addresses a name that is absent. Reissue the certificate on the target
+  with a SAN, or accept the risk explicitly via `insecure_skip_verify`, which accepts any
+  certificate from anyone and so is a risk taken on purpose rather than a setting tuned; the
+  commented block in [`../config.example.yml`](../config.example.yml) spells that out next to
+  the key itself. `curl -k` proves less still: it skips verification
+  altogether, so a success there says nothing about the certificate at all.
+- **Adding an `http_client_config:` section silently turns off environment proxying.** With
+  no such section, this exporter uses Go's default transport, so `HTTP_PROXY`/`HTTPS_PROXY`
+  work normally. The moment the section exists, for any reason at all including `basic_auth`
+  on its own, the transport is rebuilt from that section and the environment variables stop
+  being read: no error, no log line, the connection just goes direct. If you added the
+  section and outbound traffic must cross a proxy, name it there with `proxy_url` (or
+  `proxy_from_environment: true`) in the file you pass to `--config.file`, not in the shipped
+  `config.example.yml`, which nothing loads. Separately, `proxychains` does not work on this
+  binary at all and also fails silently, for an unrelated reason: it hooks `connect()` via
+  `LD_PRELOAD`, and there is nothing to hook in a statically linked `CGO_ENABLED=0` Go
+  binary. In both cases confirm the fix by watching the connection arrive at the proxy, never
+  by the absence of an error.
+
 ---
 
 ## Step 7 - Generate a realistic workload
