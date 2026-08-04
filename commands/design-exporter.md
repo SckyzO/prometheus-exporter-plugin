@@ -252,7 +252,12 @@ carries a placeholder line rather than being left out.
   `/prometheus-exporter:generate-dashboard` owns it.
 - `## Session log`: opened with this phase's own entry, one line, dated.
 - `## Open questions / assumptions`: anything discovery could not resolve,
-  flagged here for the user instead of silently assumed.
+  flagged here for the user instead of silently assumed. Every entry opens
+  with a status tag, `[OPEN]` for all of them at this stage, and the section
+  starts with the `Index:` line (`project-journal.md`'s status-tag
+  convention). Tagging from the first write is what keeps the section
+  readable later; retrofitting tags to an untagged pile is the failure this
+  convention exists to prevent.
 
 `## Provenance` gains its `Source material:` line from step 2. Write the
 file, then never rewrite `## Provenance` again: it is the ladder's audit

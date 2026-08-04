@@ -149,7 +149,10 @@ partially damaged file leaves the rest usable.
 - <date> <command> <name>: <one line>
 
 ## Open questions / assumptions
-- <anything discovery could not resolve>
+- Index: <N> open, <N> resolved, <N> accepted
+- [OPEN] <anything discovery could not resolve>
+- [RESOLVED] <the question> -> <how it was settled>, <date>
+- [ACCEPTED] <a deliberate decision, kept for its reasoning>
 ```
 
 `Shared label vocabulary` is the highest-value line in the file. If
@@ -161,6 +164,63 @@ same holds for the metric-name shape, one line above it.
 Every `<...>` above is a hole, filled per project. The headers are not: a
 command looking for `## Cardinality budget` must find that exact string,
 which is also what makes the corruption test of `## Degradation` checkable.
+
+### Status tags in `## Open questions / assumptions`
+
+Every other section is either frozen, or a list whose entries stay true once
+written. This one is neither: it is mutable, all four commands append to it,
+and nothing ever takes anything out. Left without a convention it accumulates
+three different things under one undifferentiated pile: questions that are
+genuinely still open, questions that were answered but got enriched in place
+instead of closed, and passing session observations that were never questions
+at all.
+
+The failure that follows is not that the list gets long. It is that the list
+starts lying. An entry describing a blocker whose fix landed weeks ago still
+reads as a live blocker, and the section is trusted precisely because it is
+the place such things are written down. **A todo list nobody can read is
+worse than no todo list**, because it asserts obstacles that no longer exist,
+and a reader cannot tell which ones without re-deriving every entry.
+
+So each entry opens with one of three tags, and the section carries an index
+line first:
+
+- **`[OPEN]`**: still unresolved. This is the only tag that means work.
+- **`[RESOLVED]`**: it was a question, it has an answer. Record the answer and
+  when, on the same line, and **do not delete the entry**: the reasoning is
+  what makes it worth keeping, and a deleted entry gets rediscovered and
+  re-asked.
+- **`[ACCEPTED]`**: a deliberate decision, not a loose end. This is the quiet
+  win of the three. Decisions taken on purpose accumulate here and get re-read
+  as unfinished business by whoever inherits the file, and marking them says
+  "settled, on purpose" in a way that no amount of prose in the entry does.
+
+`grep "\[OPEN\]" docs/exporter-journal.md` then answers "what is actually
+left" without reading the section, which is the whole point: the index line is
+a convenience and the tags are the source of truth, so a stale count is a
+cosmetic defect rather than a misleading one.
+
+**Retagging is part of doing the work, not a separate tidying pass.** Any of
+the four commands that settles a question while doing its own job retags that
+entry in the same edit, and says so in its output like any other journal
+correction. This is deliberately not part of `## Reconciliation`: that table
+covers only what the disk can state on its own, and whether a question was
+answered is a judgment, not something `docs/metrics.md` can be consulted
+about. Nothing scans the section looking for entries to close, because a
+command that retagged on a guess would produce exactly the false state this
+convention exists to remove.
+
+**No second file.** A separate open-questions file was the obvious
+alternative and is the wrong one: two places to keep in sync is exactly how a
+derivative drifts from its source, and the journal has to stay the single
+place a command reads. Tags cost one token per line and keep the entry next
+to its own history.
+
+**On a journal written before this convention**, entries carry no tag. Treat
+an untagged entry as `[OPEN]`, and tag entries as you touch them rather than
+rewriting the section in one pass: an untagged section is not corrupt (`##
+Degradation` tests headers, never their contents), so there is nothing to
+repair and no reason for a command to rewrite prose it did not write.
 
 ## Section ownership
 

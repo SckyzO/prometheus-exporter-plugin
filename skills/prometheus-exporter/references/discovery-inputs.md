@@ -51,7 +51,7 @@ because it is conditional on that instance existing and on explicit consent,
 so it **supplements** the walk rather than leading it: it confirms what a
 higher rung already stated and fills gaps a higher rung left silent. Where a
 live probe *contradicts* a higher rung, that discrepancy is recorded as an
-`## Open questions / assumptions` entry, never silently resolved. A running
+`[OPEN]` `## Open questions / assumptions` entry, never silently resolved. A running
 instance can be mis-configured or an old build, so the design phase flags
 the conflict for the user instead of picking a winner. The probe never runs
 silently: `/prometheus-exporter:design-exporter` shows the exact URL or
@@ -161,7 +161,9 @@ is where their content is decided:
   instead of re-soliciting the target for it.
 - `## Open questions / assumptions` is where a rung that came back ambiguous
   (a spec silent on auth, a doc page that didn't say how big a collection
-  gets) is flagged for the user instead of quietly assumed.
+  gets) is flagged for the user instead of quietly assumed. Each entry
+  carries a status tag; everything discovery leaves behind starts `[OPEN]`,
+  and a later command retags it rather than deleting it.
 
 The brief's **format** (its full section list, the frozen headers, and what
 happens to the file after scaffolding, when it becomes the project journal
