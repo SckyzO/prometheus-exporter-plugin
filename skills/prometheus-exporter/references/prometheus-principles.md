@@ -63,8 +63,73 @@ MetricFamily whose unit is neither is explicitly flagged as discouraged
 The mirror-image rule from [writing exporters](https://prometheus.io/docs/instrumenting/writing_exporters/)
 covers the other direction: "metric names should not include labels." Don't
 bake a label's dimension into the name either (`http_requests_get_total`
-instead of `http_requests_total{method="get"}`), except when the resulting
-cardinality genuinely requires separate metrics instead of one labeled one.
+instead of `http_requests_total{method="get"}`), except when separate
+metrics are genuinely the better model. The next section is how to tell.
+
+### Deciding between a separate name and a label value
+
+The exception above is the single most re-litigated question when a
+collector is written, so it gets a procedure rather than a judgment call.
+Work the three steps in order and stop at the first one that answers.
+
+**Step 1: apply the official rule of thumb.** [Naming
+practices](https://prometheus.io/docs/practices/naming/) states it directly:
+"A metric should represent the same logical thing being measured across all
+label dimensions. For instance, the `sum()` or `avg()` over all dimensions of
+a given metric should be meaningful. If not, the data should be split into
+multiple metrics."
+
+**This decides in one direction only, and getting that backwards is the
+trap.** A nonsensical `sum()` *forces* separate metrics: temperature and
+humidity under one name with a `sensor_type` label is refused here, because
+adding a temperature to a humidity means nothing. A meaningful `sum()`
+merely *permits* a label; it never requires one. Anyone who reads the rule
+as a two-way test will confidently choose a label in cases where the
+ecosystem has long since settled on separate names, which is worse than
+having no rule at all.
+
+**Step 2: check whether the official guidance already names the case.**
+Several are settled outright, and re-deriving them from Step 1 produces the
+wrong answer. [Writing
+exporters](https://prometheus.io/docs/instrumenting/writing_exporters/) is
+explicit: "Read/write and send/receive are best as separate metrics, rather
+than as a label." So read/write, send/receive, and transmit/receive are
+decided: **separate names**, not one metric with a `direction` label. Note
+that Step 1 alone would have permitted the label here, since a total of
+bytes read plus bytes written is a perfectly meaningful sum. That is exactly
+why Step 2 exists and why Step 1 must not be treated as the whole procedure.
+
+**Step 3: when neither step settles it, look at what an official exporter in
+the same domain already does, before concluding.** Prefer context7 for the
+lookup; fall back to a cold, read-only clone at a release tag when it does
+not cover the exporter. The convention an established exporter shipped is
+stronger evidence than a fresh derivation, because dashboards and alerts in
+the wild are already written against it.
+
+A worked example, since it also shows Steps 1 and 2 interacting: for tape
+drives, `node_exporter` exposes `node_tape_read_bytes_total` and
+`node_tape_written_bytes_total` as separate names with no `direction` label,
+alongside `node_tape_reads_completed_total` and
+`node_tape_writes_completed_total`. The pair is not even symmetrical in
+wording (`read` against `written`), which is a good hint that these are two
+distinct measurements rather than two values of one dimension.
+
+Two further points, both of which stand on their own:
+
+- **Cardinality is still a reason to split.** If one labeled metric would
+  multiply out into a series count the cardinality budget cannot carry
+  (`exporter-architecture.md`), separate metrics are the answer regardless of
+  what Steps 1 to 3 concluded.
+- **A unit is never a label** (see the rule directly above), so a
+  `unit="bytes"`/`unit="seconds"` dimension is not an option this procedure
+  can ever arrive at.
+
+**Record the answer, once.** These arbitrations are made per exporter, not
+per collector: `/prometheus-exporter:design-exporter` works them out and
+writes them into the project journal next to the shared label vocabulary, so
+that `/prometheus-exporter:add-collector` inherits them instead of asking
+again for every collector. A decision that lives only in the conversation
+that produced it will be re-litigated, and re-litigated differently.
 
 **No dynamic metric names, static label keys.** [Writing exporters](https://prometheus.io/docs/instrumenting/writing_exporters/)
 is direct about this: "metric names should not be procedurally generated"
@@ -257,6 +322,10 @@ convention or `_scrape_` as the only correct one.
       `_total`; base units only (`_seconds`, `_bytes`, `_ratio`).
 - [ ] No unit encoded as a label value; no label dimension baked into the
       metric name instead of an actual label.
+- [ ] Every name-vs-label choice went through the three-step procedure, not
+      the `sum()`/`avg()` rule of thumb alone, and the outcome is recorded on
+      the journal's `Name-vs-label arbitrations:` line rather than left in the
+      conversation that decided it.
 - [ ] Metric names and label keys are static: a literal or a
       `BuildFQName(literal, literal, literal)` call, never computed.
 - [ ] Type matches semantics: Counter only for genuine monotonic totals,

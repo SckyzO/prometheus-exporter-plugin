@@ -129,6 +129,7 @@ partially damaged file leaves the rest usable.
 - Concurrency ceiling: <unlimited | N>          (single, multi-instance)
 - Metric name shape: <namespace>_<subsystem>_<name>_<unit>
 - Shared label vocabulary: <label>, <label>, <label>
+- Name-vs-label arbitrations: <dimension>: <separate names | one label>, <why>
 - Business-alert candidates: per collector, one line each
 
 ## Scaffold inputs
@@ -157,6 +158,26 @@ collector 1 emits `pool` and collector 7 emits `pool_name`, no dashboard
 joins them, and nothing on disk states which of the two is the rule:
 existing names can be *observed*, the convention cannot be *derived*. The
 same holds for the metric-name shape, one line above it.
+
+`Name-vs-label arbitrations`, directly below it, carries the same weight for
+the same reason, and closes a gap the label vocabulary alone leaves open: it
+records which dimensions were resolved into **separate metric names** rather
+than label values, which is precisely the information a list of label names
+cannot express, because the whole point of such an arbitration is that no
+label was created. Without it, every new collector re-opens a question that
+was already settled, and settles it differently. One line per arbitration,
+with the reason attached, since the reason is what makes it reusable:
+
+```
+- Name-vs-label arbitrations: read/write: separate names, official guidance
+  names this case; temp/humidity: separate names, sum() is meaningless
+```
+
+`prometheus-principles.md`'s "Deciding between a separate name and a label
+value" is the procedure that produces these lines. It runs once per exporter,
+in `/prometheus-exporter:design-exporter`, and its Step 3 can cost a lookup
+against an official exporter, which is the other reason to write the outcome
+down rather than pay for it again per collector.
 
 Every `<...>` above is a hole, filled per project. The headers are not: a
 command looking for `## Cardinality budget` must find that exact string,

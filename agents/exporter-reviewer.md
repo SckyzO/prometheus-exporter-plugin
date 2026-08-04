@@ -149,6 +149,15 @@ For every metric defined in `internal/collector/*.go` (the same call sites
 - **Never a unit as a label.** The unit belongs in the metric name suffix; a
   label like `unit="bytes"` (a fixed dimension standing in for a name
   suffix) is the anti-pattern to flag, not a stylistic nit.
+- **Name-vs-label, consistent with what was decided.** If the project
+  journal's `## Architecture decisions` carries a `Name-vs-label
+  arbitrations:` line, flag any metric that contradicts it: a dimension
+  recorded as separate names showing up as a label value, or the reverse.
+  Flag the same dimension resolved both ways across two collectors even when
+  the journal is silent, since that is the drift the line exists to prevent.
+  Two cases are settled by official guidance regardless of what any journal
+  says, so flag them on sight: read/write and send/receive belong in separate
+  metric names, not in a `direction` label.
 - **Type sanity.** A monotonically increasing count (errors seen, requests
   made, bytes sent) should be a Counter, not a Gauge that a collector merely
   never decreases: a "const-Gauge for everything" habit loses
