@@ -3,7 +3,9 @@
 #
 # One job, one command: `make check` already bundles vet + lint + test + vuln
 # + actionlint + zizmor + deadcode + docs-check inside the pinned tools image
-# (see Makefile, scripts/docker/tools/) - running it here instead of
+# (see Makefile, scripts/docker/tools/), plus promtool-rules, which resolves
+# promtool on the runner itself because it is not in that image (the Makefile
+# says why) - running it here instead of
 # reimplementing an equivalent set of steps means CI can never drift from
 # what a contributor already ran locally before opening the PR (see
 # CONTRIBUTING.md's Definition of Done). `make race` runs alongside as its

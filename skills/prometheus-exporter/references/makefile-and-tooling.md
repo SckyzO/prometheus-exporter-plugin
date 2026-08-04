@@ -101,7 +101,7 @@ so nobody mistakes a host run for a reproducible one.
 | Quality | `vet` | `go vet ./...` |
 | | `lint` | `golangci-lint run ./...`: same tool and config as CI |
 | | `vuln` | `govulncheck ./...`: reachable-vulnerability, call-graph based |
-| | `check` | `vet` + `lint` + `test` + `vuln` + `actionlint` + `zizmor` + `deadcode` + `docs-check`: the pre-merge/pre-release gate, mirrors CI exactly |
+| | `check` | `vet` + `lint` + `test` + `vuln` + `actionlint` + `zizmor` + `deadcode` + `docs-check` + `promtool-rules`: the pre-merge/pre-release gate, mirrors CI exactly |
 | | `report` | Offline goreportcard-equivalent grade; fails below `B` |
 | | `report-deps` | Tabular dependency status (direct/indirect, patch/minor/major); read-only, never runs `go get` |
 | Security | `actionlint` | Lints `.github/workflows/`; skips gracefully if there is none |
@@ -110,6 +110,7 @@ so nobody mistakes a host run for a reproducible one.
 | | `osv` | Dependency scan against the OSV database |
 | | `deadcode` | Fails if any unreachable Go function is found |
 | | `docs-check` | `docs/metrics.md` documents no metric/label the code doesn't emit |
+| | `promtool-rules` | `monitoring/prometheus/*.yml` load as real rule files (`promtool check rules`), annotation templates included. The only `check` member that does not run in the tools image |
 | Docker | `docker-build[-minimal]` | Builds a local debug image (standard / distroless) |
 | | `docker-run[-minimal]` | Starts the matching compose stack |
 
@@ -150,6 +151,34 @@ Its real input, `docs/metrics.md`, is a plain file the Go toolchain has no
 reason to track as a build dependency: without `-count=1`, a second run
 could serve a stale cached PASS after only that file changed, exactly the
 failure mode a doc/code drift-detector must never have.
+
+`promtool-rules` is the one member of `check` that does not run in the tools
+image, and the reason is worth writing down so nobody "fixes" it by adding a
+tenth `go install` line to the Dockerfile. That line does not work:
+`prometheus/prometheus` declares `replace` directives in its `go.mod`, and
+`go install <pkg>@<version>` refuses a module that does, so `go install
+github.com/prometheus/prometheus/cmd/promtool@latest` fails outright. The
+alternatives all cost more than the check is worth: unpacking the release
+tarball puts a second, separately-pinned version into the file that exists to
+be the single source of the Go version, and building promtool from source
+adds a full Prometheus compile to every image rebuild.
+
+So the target resolves promtool itself instead, preferring one on `PATH` and
+otherwise borrowing the official `prom/prometheus` image's copy. When neither
+is available it **fails** rather than skipping. That is the same contract
+every other tool here has on the native path, where `lint` does not excuse
+itself when `golangci-lint` is missing, and it is the point of a gate: a step
+that quietly declines to run reports the same thing as a step that passed.
+
+The check has to be `promtool check rules` on whole files, not a per-
+expression parse. It loads each file the way Prometheus does
+(`rulefmt.ParseFile`), so it also validates annotation templates such as
+`{{ $labels.__name__ }}` and `humanizeTimestamp`. A file whose expressions
+all parse one at a time can still be rejected whole, which would leave every
+alert in it silently dead. This matters more here than in most repositories,
+because a scaffolded exporter ships `monitoring/prometheus/*.yml` with rules
+commented out and instructions to uncomment and adapt them: everything the
+author writes there is invisible to every other target in this file.
 
 ## Version metadata: one set of ldflags, three build paths
 
