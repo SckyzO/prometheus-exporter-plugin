@@ -43,8 +43,10 @@ Prometheus itself uses.
 | `--log.level` | Log level: `debug`, `info`, `warn`, `error` | `info` |
 | `--log.format` | Log format: `json`, `text` | `text` |
 | `--web.disable-exporter-metrics` | Exclude Go runtime and process metrics from `/metrics` | `false` |
-| `--[no-]collector.<name>` | *(single-target and multi-instance builds)* Enable or disable a collector (kingpin boolean flag) | see below |
-| `--exporter.max-requests-per-target` | *(single-target and multi-instance builds only, absent on `multi`)* Bounds how many outbound requests/commands this exporter has in flight at once. `0` means unlimited. Scope differs by build; see [Bounding outbound concurrency](#bounding-outbound-concurrency) below | `0` |
+@@IF target-model!=multi@@
+| `--[no-]collector.<name>` | Enable or disable a collector (kingpin boolean flag) | see below |
+| `--exporter.max-requests-per-target` | Bounds how many outbound requests/commands this exporter has in flight at once. `0` means unlimited. See [Bounding outbound concurrency](#bounding-outbound-concurrency) below | `0` |
+@@ENDIF@@
 @@IF target-model!=single@@
 | `--web.enable-lifecycle` | Expose `POST /-/reload`, which reloads `--config.file`. `SIGHUP` always works and needs no flag; see [Configuration reload](#configuration-reload) below | `false` |
 @@ENDIF@@
@@ -54,16 +56,22 @@ Prometheus itself uses.
 | `--probe.timeout-offset` | Subtracted from Prometheus's scrape timeout when computing a probe's deadline, so the exporter answers before Prometheus abandons the scrape | `0.5s` |
 @@ENDIF@@
 
-In **single-target builds**, individual collectors may also expose their own flags. The bundled `example` collector does:
+@@IF target-model!=multi@@
+Individual collectors may also expose their own flags. The bundled `example` collector does:
 
 | Flag | Description | Default |
 |------|-------------|---------|
-@@IF flavor=http@@
+@@ENDIF@@
+@@IF target-model=single,flavor=http@@
 | `--collector.example.timeout` | Per-request timeout for the `example` collector | `5s` |
 | `--collector.example.target` | Base URL the `example` collector fetches | `@@DATA_SOURCE@@` |
 @@ENDIF@@
-@@IF flavor!=http@@
+@@IF target-model=single,flavor!=http@@
 | `--collector.example.timeout` | Per-command timeout for the `example` collector | `5s` |
+@@ENDIF@@
+@@IF target-model=multi-instance@@
+| `--collector.example.timeout` | Per-request timeout for the `example` collector | `5s` |
+| `--collector.example.interval` | Background refresh period for the `example` collector | `5m` |
 @@ENDIF@@
 
 @@IF target-model=multi@@
@@ -71,7 +79,7 @@ On this build the `example` collector is built fresh per `/probe` request: its t
 @@ENDIF@@
 
 @@IF target-model=multi-instance@@
-On this build the `example` collector is the background-refresh variant: `--collector.example.timeout` and `--collector.example.interval` (background refresh period, default `5m`) apply the same way to every watched instance, but there is no `--collector.example.target`, since each instance's address comes from `instances:` in the configuration file (see below), not a flag. `--[no-]collector.example` still toggles it on or off, same as single-target.
+On this build the `example` collector is the background-refresh variant, and the two flags above apply the same way to every watched instance. An instance's address is not among them: it comes from `instances:` in the configuration file (see below), not a flag. `--[no-]collector.example` still toggles the collector on or off.
 @@ENDIF@@
 
 There is no single global command/request timeout: each collector owns its own, following
@@ -83,10 +91,10 @@ the full, current flag list.
 | Collector | Default | Description |
 |-----------|---------|-------------|
 | `example` | enabled | Starter collector: replace with your real data source (see `CONTRIBUTING.md`) |
-@@IF flavor=http@@
+@@IF target-model=single,flavor=http@@
 | `http_client_requests` | enabled | Self-instrumentation: HTTP request duration by outcome |
 @@ENDIF@@
-@@IF flavor=cli@@
+@@IF target-model=single,flavor=cli@@
 | `command_exec` | enabled | Self-instrumentation: command execution duration by outcome |
 @@ENDIF@@
 
@@ -101,11 +109,14 @@ Use `--[no-]collector.<name>` (kingpin boolean syntax) to enable or disable a co
 **Example: disable the self-instrumentation collector**
 
 ```bash
-@@IF flavor=http@@
+@@IF target-model=single,flavor=http@@
 ./@@EXPORTER_NAME@@ --no-collector.http_client_requests
 @@ENDIF@@
-@@IF flavor!=http@@
+@@IF target-model=single,flavor!=http@@
 ./@@EXPORTER_NAME@@ --no-collector.command_exec
+@@ENDIF@@
+@@IF target-model=multi-instance@@
+./@@EXPORTER_NAME@@ --no-collector.example
 @@ENDIF@@
 ```
 
@@ -154,6 +165,7 @@ that section it exits with an error instead of starting, because a setting
 that looks applied but does nothing is worse than a refusal.
 @@ENDIF@@
 
+@@IF flavor=http@@
 That section is a `prometheus/common` `HTTPClientConfig`, so it accepts that
 type's whole key set, not only the keys `config.example.yml` happens to show.
 Two are worth calling out because nothing else here would reveal them:
@@ -175,6 +187,7 @@ Two are worth calling out because nothing else here would reveal them:
   credentials, and needs a proxy, has to name it here as well. (The
   precedence list above governs `flags:`; it never applied to these
   variables.)
+@@ENDIF@@
 
 **Precedence, highest wins:**
 
@@ -188,11 +201,13 @@ file. The file itself sits above the process environment, not below it: for
 a flag that also reads an environment variable, the file wins if both are
 set.
 
+@@IF flavor=http@@
 Paths written inside the file (`password_file`, `ca_file`, `cert_file`,
 `key_file`, and similar) resolve relative to the file's own location, not to
 the exporter's working directory. Prefer a `*_file` form over an inline
 secret, `password_file` over `password` for example, so the secret itself
 never has to live in the file.
+@@ENDIF@@
 
 ## Bounding outbound concurrency
 
@@ -598,10 +613,13 @@ itself; see [Configuration reload](#configuration-reload) above:
 - **Collector selection**: disable collectors you don't need to reduce load:
 
   ```bash
-  @@IF flavor=http@@
+  @@IF target-model=single,flavor=http@@
   ./@@EXPORTER_NAME@@ --no-collector.http_client_requests
   @@ENDIF@@
-  @@IF flavor!=http@@
+  @@IF target-model=single,flavor!=http@@
   ./@@EXPORTER_NAME@@ --no-collector.command_exec
+  @@ENDIF@@
+  @@IF target-model=multi-instance@@
+  ./@@EXPORTER_NAME@@ --no-collector.example
   @@ENDIF@@
   ```

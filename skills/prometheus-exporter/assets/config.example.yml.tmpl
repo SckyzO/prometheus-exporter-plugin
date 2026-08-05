@@ -15,6 +15,7 @@
 # exporter's own HTTP server presents to Prometheus. Mixing the two up means
 # looking in the wrong file when either side misbehaves.
 #
+# @@IF flavor=http@@
 # The file has two sections, and one rule decides which a setting belongs to:
 # anything a command-line flag can already express goes under "flags:",
 # keyed by the flag's own long name, without the leading "--". Anything a
@@ -22,17 +23,26 @@
 # HTTP-flavor exporter makes outward, gets its own section instead
 # (http_client_config: below). No setting is ever expressible in both
 # places, so a value never has two conflicting sources.
+# @@ENDIF@@
+# @@IF flavor!=http@@
+# On this build the file has one section, "flags:", keyed by each flag's own
+# long name without the leading "--". The other section an HTTP-flavor
+# exporter carries, http_client_config:, is refused here: this build runs a
+# local command and has nothing to authenticate.
+# @@ENDIF@@
 #
 # Precedence, highest wins: command-line flag, then this file, then the
 # process environment, then the flag's own built-in default. In particular,
 # a value set here is overridden by the same flag passed on the command
 # line, and this file itself sits above the environment, not below it.
 #
+# @@IF flavor=http@@
 # Paths written inside this file, such as password_file below or
 # tls_config's ca_file/cert_file/key_file, resolve relative to this file's
 # own location, not to the exporter's working directory. Prefer a *_file
 # form over an inline value for any secret (password_file over password,
 # for example) so the secret itself never has to live in this file.
+# @@ENDIF@@
 
 flags:
   # A plain scalar: one value for the flag.
@@ -156,8 +166,7 @@ flags:
 # @@ENDIF@@
 # @@IF target-model!=single@@
 # modules: named credential/TLS bundles this exporter can select. How a
-# module gets picked depends on the target model this exporter was
-# scaffolded with:
+# module gets picked on this build:
 #
 # @@ENDIF@@
 # @@IF target-model=multi@@

@@ -305,9 +305,7 @@ for f in README.md SECURITY.md docs/configuration.md docs/metrics.md docs/develo
       # parent is skipping exactly the defect this loop is named for. That
       # is how the first cut of this check stayed green under its own
       # mutation. Mutation-tested in both directions.
-      line=$(grep -F "$(printf '%s\t' "$h3")" "$work/_pm-$m" | head -1)
-      [ -n "$line" ] || continue
-      other=$(printf '%s' "$line" | cut -f2-)
+      other=$(awk -F'\t' -v h="$h3" '$1==h{print $2; found=1; exit} END{exit !found}' "$work/_pm-$m") || continue
       [ "$other" = "$parent" ] ||
         fail "$f: subsection '$h3' sits under '$parent' on single but under '${other:-(no parent at all)}' on $m; gating removed the level-2 heading it was authored beneath"
     done < "$work/_pm-default"
@@ -401,16 +399,40 @@ grep -q 'collector="command_exec"' "$work/cli/docs/validation-checklist.md" ||
 # literal and the collector's own name is what must be found. An option
 # (--collector.<name>.<opt>, three segments) is declared as a whole string in
 # kingpin.Flag, so the literal is what must be found.
-for flag in $(grep -ohE -- '--(no-)?collector\.[a-z0-9_.]+' "$cli_cfgdoc" | sed 's/^--\(no-\)\?collector\.//' | sort -u); do
-  case $flag in
-    *.*) needle="collector.$flag" ;;   # option flag: whole-string literal
-    *)   needle="$flag" ;;             # toggle: the collector name register() takes
-  esac
-  grep -rq "\"$needle\"" "$work/cli/cmd" "$work/cli/internal" ||
-    fail "cli docs/configuration.md names --collector.$flag, which appears nowhere in the generated sources"
-done
+# Two details that each cost this check its own defect once.
+#
+# LC_ALL=C on the sort: under a UTF-8 locale glibc collation ignores
+# punctuation at the primary level, so "example.timeout" and
+# "example.time_out" compare EQUAL and `sort -u` silently drops one before the
+# lookup runs. A typo'd flag colliding that way with a real one was invisible
+# locally while failing in CI, which runs C.UTF-8.
+#
+# The trailing segment is anchored, '(\.[a-z0-9_]+)*' rather than a blanket
+# '[a-z0-9_.]+', so a flag written at the end of a sentence does not absorb
+# the period and turn a correct document into a false failure.
+check_collector_flags() { # <label> <rendered tree>
+  _doc="$2/docs/configuration.md"
+  [ -f "$_doc" ] || return 0
+  for _flag in $(grep -ohE -- '--(no-)?collector\.[a-z0-9_]+(\.[a-z0-9_]+)*' "$_doc" \
+                 | sed 's/^--\(no-\)\?collector\.//' | LC_ALL=C sort -u); do
+    case $_flag in
+      *.*) _needle="collector.$_flag" ;; # option flag: declared as a whole string
+      *)   _needle="$_flag" ;;           # toggle: the name register() takes
+    esac
+    grep -rq "\"$_needle\"" "$2/cmd" "$2/internal" ||
+      fail "$1 docs/configuration.md names --collector.$_flag, which appears nowhere in the generated sources"
+  done
+}
 
-echo "PASS: a cli scaffold's docs name only flags a cli binary actually declares"
+# Run over EVERY rendering, not just cli. Scoping this to one cell is how three
+# instances of the very defect it detects kept shipping on the other two: the
+# flag surface varies by target model as much as by flavor.
+check_collector_flags single "$work/default"
+check_collector_flags multi "$work/multi"
+check_collector_flags multi-instance "$work/mi"
+check_collector_flags cli "$work/cli"
+
+echo "PASS: every rendering's docs name only flags that binary actually declares"
 
 # The same parent-stability invariant as above, on the FLAVOR axis. It is run
 # here rather than in that loop only because $work/cli is rendered at this
@@ -426,9 +448,7 @@ for f in README.md SECURITY.md docs/configuration.md docs/metrics.md docs/develo
   parentmap "$work/default/$f" > "$work/_pm-default"
   parentmap "$work/cli/$f" > "$work/_pm-cli"
   while IFS="$(printf '\t')" read -r h3 parent; do
-    line=$(grep -F "$(printf '%s\t' "$h3")" "$work/_pm-cli" | head -1)
-    [ -n "$line" ] || continue
-    other=$(printf '%s' "$line" | cut -f2-)
+    other=$(awk -F'\t' -v h="$h3" '$1==h{print $2; found=1; exit} END{exit !found}' "$work/_pm-cli") || continue
     [ "$other" = "$parent" ] ||
       fail "$f: subsection '$h3' sits under '$parent' on http but under '${other:-(no parent at all)}' on cli; gating removed the level-2 heading it was authored beneath"
   done < "$work/_pm-default"
