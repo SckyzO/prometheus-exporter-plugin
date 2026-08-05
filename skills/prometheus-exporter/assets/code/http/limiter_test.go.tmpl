@@ -2,6 +2,9 @@ package collector
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -217,5 +220,102 @@ func TestLimiterSetGroupsByTarget(t *testing.T) {
 	}
 	if NewLimiterSet(0).For("http://a.example") != nil {
 		t.Fatal("a LimiterSet built with ceiling 0 handed out a non-nil limiter")
+	}
+}
+
+// TestFetchGivesTheRequestItsOwnBudgetAfterWaiting pins one property, and it
+// is worth being exact about which: the wait for a slot and the request that
+// follows it get SEPARATE budgets. A collector that spends most of its wait
+// budget queued still gets its full request deadline once the slot is granted,
+// instead of inheriting whatever a single shared deadline had left and failing
+// on a request it never had time to finish.
+//
+// It does NOT test that a low ceiling stops starving collectors, and no test
+// here does, because the code does not do that yet: acquireTimeout still
+// defaults to the request timeout, so the same collectors miss out at a
+// ceiling of 1: they fail on the wait rather than mid-request. Sizing the wait
+// budget independently is what would change the count, and that is a separate
+// change.
+//
+// Timings are deliberately coarse (hundreds of milliseconds; 100ms of slack on
+// the wait side, 150ms on the request side) so this asserts an ordering rather
+// than a stopwatch reading.
+func TestFetchGivesTheRequestItsOwnBudgetAfterWaiting(t *testing.T) {
+	const (
+		timeout    = 400 * time.Millisecond
+		holdSlot   = 300 * time.Millisecond
+		serverWork = 250 * time.Millisecond
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(serverWork)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+
+	// NewClientOn is the multi-instance construction path: the deadline cannot
+	// live on the shared http.Client, so it lives on the Client and Fetch
+	// applies it. That is the path where a single shared deadline used to cover
+	// the wait and the request together.
+	tr := NewTransport(&http.Client{})
+	lim := NewLimiter(1)
+	c := NewClientOn(tr, srv.URL, timeout).WithLimiter(lim)
+
+	// Occupy the only slot, then free it after most of the wait budget has been
+	// spent. Acquired directly rather than through a second Fetch so the test
+	// controls exactly when the slot is released.
+	release, err := lim.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("seeding the limiter: %v", err)
+	}
+	go func() {
+		time.Sleep(holdSlot)
+		release()
+	}()
+
+	// holdSlot + serverWork exceeds timeout, so this call can only succeed if
+	// the request deadline starts when the slot is granted. Sharing one budget
+	// leaves 100ms for 250ms of work: "context deadline exceeded".
+	if _, err := c.Fetch(context.Background(), "/"); err != nil {
+		t.Fatalf("Fetch after a %v queue wait: %v; the request must get its own %v, not the remainder of a budget the wait already spent", holdSlot, err, timeout)
+	}
+}
+
+// TestFetchFailsFastWhenTheQueueBudgetExpires pins the bound on the wait
+// itself: a collector that never gets a slot fails on the WAIT, quickly and
+// with a message naming it, rather than blocking forever or proceeding to a
+// request it has no time left to finish.
+//
+// Honest about its own reach: this one passes with the pre-fix ordering too,
+// since a shared deadline also bounded the wait. It does not guard the
+// reordering (its sibling above does that); it guards against the wait losing
+// its bound altogether, which is the failure the boot-time check in
+// wiring/client_build.frag exists to prevent and which would otherwise show up
+// as a hung package rather than a red test.
+func TestFetchFailsFastWhenTheQueueBudgetExpires(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+
+	tr := NewTransport(&http.Client{})
+	lim := NewLimiter(1)
+	c := NewClientOn(tr, srv.URL, 100*time.Millisecond).WithLimiter(lim)
+
+	// Held for the whole test: nothing ever frees this slot.
+	if _, err := lim.Acquire(context.Background()); err != nil {
+		t.Fatalf("seeding the limiter: %v", err)
+	}
+
+	start := time.Now()
+	_, err := c.Fetch(context.Background(), "/")
+	if err == nil {
+		t.Fatal("Fetch succeeded with no slot ever released; the wait must be bounded")
+	}
+	if !strings.Contains(err.Error(), "wait for a request slot") {
+		t.Fatalf("Fetch failed with %v; the error must name the wait, not the request", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("Fetch took %v to give up on an unwinnable slot; the wait budget must bound it", elapsed)
 	}
 }

@@ -102,10 +102,22 @@ var Execute = func(ctx context.Context, name string, args ...string) (out []byte
 	// The per-command deadline is already live on ctx by the time Execute
 	// runs: every caller applies it before calling Execute (see, for example,
 	// exampleData's context.WithTimeout in collector.go), never inside
-	// Execute itself. So the wait for a CommandLimiter slot, below, is
-	// automatically charged against that same budget rather than added on top
-	// of it, the same ordering the http flavor's Fetch applies deliberately
-	// for its own Limiter (see that Client.Fetch's own comment).
+	// Execute itself. So the wait for a CommandLimiter slot, below, is charged
+	// against that same budget rather than added on top of it.
+	//
+	// That is a known limitation on this flavor, not a design to copy. It
+	// means a collector queued behind its siblings spends its command budget
+	// waiting and can reach exec with nothing left, which is the starvation
+	// the http flavor's Client.Fetch now avoids by giving the wait and the
+	// request separate budgets. Closing it here needs more than a reordering:
+	// the deadline arrives already applied to ctx, so Execute would have to
+	// read the remaining budget off ctx.Deadline() and re-arm two budgets from
+	// it, on a ctx stripped of that deadline but still cancelable by its
+	// parent, which is not directly expressible (context.WithoutCancel drops
+	// the cancellation too). Doable, not free, and not a reordering. Until it
+	// is done, keep a ceiling on this flavor comfortably above the number of
+	// collectors that can call Execute at once, or keep the per-collector
+	// timeouts long enough to absorb a queue.
 	//
 	// Enforced here, not just documented above: a collector added later by
 	// /prometheus-exporter:add-collector that forgets its own context.WithTimeout and passes a

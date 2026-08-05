@@ -211,6 +211,31 @@ is bounded by the collector's own `--collector.<name>.timeout`, which is why
 a positive timeout is required once a ceiling is configured: without one,
 the wait would have no deadline of its own to honor.
 
+**The wait and the request are bounded separately** (HTTP flavor). A
+collector that spends time queued still gets its full
+`--collector.<name>.timeout` for the request once a slot is granted, rather
+than whatever the wait left over, so the worst case for one request is the
+wait budget plus the request budget, bounded on both sides. A collector that
+cannot get a slot in time fails on the wait, quickly, with an error naming
+the wait, instead of issuing a request it has no time left to finish.
+
+**This does not mean a low ceiling stops starving collectors.** The wait
+budget currently defaults to the same value as `--collector.<name>.timeout`,
+so at a ceiling of `1`, which is the right value for a target that serializes
+work internally, collectors sharing a refresh interval still queue behind
+each other and the ones at the back still miss out. What changed is that they
+now fail on the wait rather than mid-request, so
+`@@NAMESPACE@@_exporter_request_wait_seconds` and the error message say
+"queue", not "slow target". Size the ceiling and the per-collector timeouts
+with that in mind: a ceiling of `1` needs timeouts long enough that the last
+collector in the queue can still get a slot.
+
+On the CLI flavor the two budgets are still shared: the per-command deadline
+is applied by the caller before `Execute` runs, so a queued command spends
+its own budget waiting. Until that changes, either keep the ceiling above the
+number of collectors that can run a command at once, or set
+`--collector.<name>.timeout` high enough to absorb a queue.
+
 ## Configuration reload (`multi` and `multi-instance` builds only)
 
 A single-target build has no reload at all: its `--config.file`, if any,

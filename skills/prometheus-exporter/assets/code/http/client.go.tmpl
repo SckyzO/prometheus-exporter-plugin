@@ -88,23 +88,28 @@ func (t *Transport) Get() *http.Client { return t.hc.Load() }
 //   - NewClientOn SHARES a Transport with the other collectors of one machine,
 //     so the deadline cannot live on http.Client.Timeout (it would be the same
 //     for all of them). It goes in c.timeout and Fetch applies it as a context
-//     deadline instead, which is what lets one collector wait fifteen minutes
-//     while its sibling waits five seconds.
+//     deadline instead, once it holds a limiter slot, which is what lets one
+//     collector wait fifteen minutes while its sibling waits five seconds.
 type Client struct {
 	tr      *Transport
 	baseURL string
 	timeout time.Duration // 0 means "the deadline is on the shared-nothing http.Client"
 
 	// acquireTimeout bounds ONLY the wait for a limiter slot, never the
-	// request that follows it. It exists because http.Client.Timeout (the
-	// mechanism that bounds the request itself on every path except
-	// NewClientOn) does not start counting until Do begins: it gives no
-	// cover at all for time already spent blocked in Acquire before Do ever
-	// runs. Every constructor below sets it to the same per-request deadline
-	// it already knows, so a Client's worst case with a limiter attached is
-	// at most acquireTimeout (the wait) plus whatever already bounds the
-	// request, never an unbounded queue on top of an already-bounded
-	// request. See acquire and WithLimiter.
+	// request that follows it. It exists because neither mechanism that
+	// bounds the request itself covers the queue: http.Client.Timeout does
+	// not start counting until Do begins, and c.timeout is not applied to
+	// ctx until Fetch has a slot in hand. Neither gives any cover for time
+	// spent blocked in Acquire.
+	//
+	// Every constructor below sets it to the same per-request deadline it
+	// already knows, which makes a Client's worst case with a limiter
+	// attached acquireTimeout (the wait) plus whatever bounds the request:
+	// bounded on both sides, never an unbounded queue and never a request
+	// squeezed into what a queue wait left over. Whether the wait deserves a
+	// budget of its own, in minutes where a request takes seconds, is a
+	// separate question from this one and is not settled by this default.
+	// See acquire and WithLimiter.
 	acquireTimeout time.Duration
 	limiter        *Limiter // nil means unlimited, see limiter.go
 }
@@ -295,29 +300,50 @@ func (c *Client) Fetch(ctx context.Context, path string) (data []byte, err error
 		RequestDuration.WithLabelValues(outcome).Observe(time.Since(start).Seconds())
 	}()
 
-	// The per-collector deadline, for Clients sharing a Transport (see
-	// NewClientOn). A Client built with NewClient never reaches this: its
-	// deadline lives on its own private http.Client.Timeout, so its c.timeout
-	// stays zero and this block is a no-op for it.
-	//
-	// Applied before the limiter below on purpose: for a Client on this path,
-	// ctx now carries the ONLY deadline that governs the rest of this call,
-	// wait and request together, so the wait is charged against this
-	// collector's own budget, never added on top of it. A Client whose
-	// deadline lives on http.Client.Timeout instead reaches acquire below
-	// with no deadline on ctx at all; that path bounds the wait itself, via
-	// acquireTimeout, for exactly this reason. See acquire's own comment.
-	if c.timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, c.timeout)
-		defer cancel()
-	}
-
+	// Queue first, on its own budget: acquire bounds the wait by
+	// acquireTimeout, and nothing of the request's deadline has started yet.
 	release, err := c.acquire(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("wait for a request slot for %s: %w", path, err)
 	}
 	defer release()
+
+	// The per-collector request deadline, for Clients sharing a Transport (see
+	// NewClientOn). A Client built with NewClient never reaches this: its
+	// deadline lives on its own private http.Client.Timeout, so its c.timeout
+	// stays zero and this block is a no-op for it.
+	//
+	// Applied AFTER the slot is won, deliberately, and this ordering was once
+	// the other way round. The reasoning for putting it first was that ctx
+	// would then carry the one deadline governing wait and request together,
+	// so a queue wait was charged against the collector's own budget instead
+	// of added on top of it. That is sound only if queueing is an anomaly, and
+	// it stops being one at a low ceiling: with a ceiling of 1, the right
+	// value for a target that serializes work internally, collectors sharing a
+	// refresh interval fire together and that alignment does not break up on
+	// its own, so the queue is the normal state. A collector could then spend
+	// its entire budget queued and issue a request it had no time left to
+	// finish, which is indistinguishable from the target being slow.
+	//
+	// So the two budgets are separate: the wait bounded by acquireTimeout, the
+	// request by c.timeout, worst case the sum of the two and bounded on both
+	// sides. A collector that cannot get a slot fails on the wait, quickly,
+	// with an error naming the wait.
+	//
+	// What this does NOT do, stated because the numbers invite the wrong
+	// conclusion: it does not by itself make a low ceiling stop starving
+	// collectors. Every constructor still sets acquireTimeout to the same
+	// value as the request timeout, so the same collectors miss out; they now
+	// fail on the wait, honestly and fast, instead of on a request they never
+	// had time to finish. Making a ceiling of 1 actually serviceable needs the
+	// wait budget to be sized independently of the request budget, minutes
+	// against seconds, which is a separate change to a default this one
+	// deliberately leaves alone.
+	if c.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.timeout)
+		defer cancel()
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
@@ -349,15 +375,14 @@ func (c *Client) Fetch(ctx context.Context, path string) (data []byte, err error
 // http.Client.Timeout (every constructor except NewClientOn) keeps that
 // deadline exactly as it was before, limiter or not.
 //
-// Total worst case once a limiter is attached: acquireTimeout (the wait)
-// plus whatever already bounds the request, at most twice the configured
-// timeout, and if the wait alone exceeds that budget Fetch fails fast with
-// an error instead of eventually succeeding late (see Fetch's own error
-// message for this). For NewClientOn, ctx already carries c.timeout's
-// deadline by the time this runs (see Fetch above), so the wait is already
-// covered by that single deadline and acquireTimeout adds nothing further:
-// worst case there stays exactly c.timeout, unchanged from before WithLimiter
-// existed.
+// Total worst case once a limiter is attached, on every construction path
+// alike: acquireTimeout (the wait) plus whatever bounds the request, at most
+// twice the configured timeout, and if the wait alone exceeds its budget Fetch
+// fails fast with an error naming the wait instead of eventually succeeding
+// late (see Fetch's own error message for this). Fetch applies c.timeout only
+// after this returns, precisely so that the request's budget is not whatever
+// the wait happened to leave behind; Fetch's own comment says why that
+// ordering is load-bearing rather than incidental.
 func (c *Client) acquire(ctx context.Context) (func(), error) {
 	if c.limiter == nil {
 		// Not a nil dereference: Acquire's own nil check (see its doc
