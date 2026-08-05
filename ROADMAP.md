@@ -281,7 +281,12 @@ real hardware, plus the versioning question that use exposed.
 - **Where a generated exporter's version starts**, and what the number does
   and does not promise.
 
-## v0.10: what the first real deployment found
+## v0.10: what the first real deployment found (released 2026-08-05)
+
+Every bug below is fixed and every lesson taught, except where an item says
+otherwise: the queue budget landed phase 1 only, and the two items found
+while fixing the others (the container path, the cli flavor's shared budget)
+are recorded here and not yet done. See `CHANGELOG.md` for what shipped.
 
 Everything below came from running a scaffolded exporter against real
 hardware, and none of it is visible from the templates alone. The bugs and the

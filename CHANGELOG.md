@@ -8,6 +8,140 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-05
+
+Almost everything below came from running a scaffolded exporter against real
+hardware, and none of that was visible from the templates alone, which is the
+point worth recording: five of these seven items are defects that passed every
+gate this plugin had. The exception is the last one, a placement defect in
+`/prometheus-exporter:add-collector`'s own prose, found by reviewing v0.9.0 the
+day after it shipped.
+
+### Fixed
+
+- **A refresh succeeding and the data advancing are different claims.** The
+  staleness alert v0.8 shipped reads the collector's own freshness gauge,
+  which stays perfectly current while the source stops publishing and the data
+  behind it freezes: every fetch succeeds, the gauge is fresh, the alert is
+  silent, and the exporter has been serving hours-old data. A collector that
+  reads something the source itself timestamps needs **two** gauges, never
+  one, and the staleness threshold is N missed publications **plus that
+  collector's own interval**, not a constant copied between collectors.
+
+- **`--version` and `--help` exited non-zero on a multi-instance build.**
+  `--config.file` is mandatory on that model and is read straight from
+  `os.Args` before parsing, because its value decides which arguments the
+  parser is given; `main`'s own guard then exits when it is absent. kingpin
+  handles `--version` and `--help` inside `Parse`, which runs after that
+  guard, so neither ever reached the code that would have answered them. (Not
+  `config.Load`, which returns an empty configuration for an empty path and is
+  why the other two target models were never affected.) Packaging, CI and container
+  healthchecks all call `--version` on a binary they have no configuration
+  for. `main.go` now scans `os.Args` for the two flags and lets kingpin answer
+  before enforcing `--config.file`, matching exactly (`--version=false` is not
+  a request for the version, and `--config.file=/etc/version.yml` is not one
+  either).
+
+  The gate missed this for weeks because `golden-smoke.sh` always passed
+  `--config.file`, so the code path existed and was covered in a way that
+  could not see the defect. The harness now asserts both flags answer with no
+  configuration file at all.
+
+- **The shipped systemd unit could not start a multi-instance build.** Its
+  `ExecStart` carried no `--config.file`, which that model requires.
+  `scaffold.sh` now appends the flag for that target model and only there,
+  beside the `ExecReload` surgery it already performed on the same file.
+  `single` and `multi` render the same `ExecStart` as before; the unit file
+  itself gains comments and a third commented example on every model.
+
+  **The container path has the identical defect and is NOT fixed here.**
+  `docker-compose.yml`, `docker-compose.minimal.yml` and both Dockerfile
+  `CMD`s still pass `--web.listen-address` and nothing else, so `make
+  docker-run` on a multi-instance build starts a container that exits
+  immediately, and `restart: unless-stopped` makes that a permanent crash
+  loop rather than one visible failure. Naming the file on the command line is
+  the easy half; it also has to be mounted into the container, which is a
+  compose and Dockerfile change with its own decisions. Tracked in
+  `ROADMAP.md`.
+
+  Worth knowing how quietly it failed: with `Type=simple`, systemd considers
+  the unit started as soon as the process forks, so the start job reports
+  success and `Restart=on-failure` turns the immediate exit into a permanent
+  five-second restart loop rather than one visible failure.
+
+- **The queue wait and the request now have separate budgets** (HTTP flavor,
+  phase 1). `Client.Fetch` applied the collector's timeout to the context
+  *before* acquiring a limiter slot, so on the shared-transport path one
+  deadline covered the wait and the request together and `acquireTimeout` was
+  inert. A collector queued behind its siblings burned its whole budget
+  waiting, then issued a request it had no time to finish.
+
+  **This does not by itself make a low ceiling stop starving collectors, and
+  the numbers say so.** On the field's own 19-collector sweep at a ceiling of
+  1, before: 4 succeeded, 14 starved, typically 1 failed mid-request. After: 5
+  succeeded, 14 starved, 0 failed mid-request. Every constructor still sets
+  `acquireTimeout` to the request timeout, so the same collectors miss out.
+  What changed is the failure: they fail on the wait, fast and named, instead
+  of on a request that looked indistinguishable from a slow target. Sizing the
+  wait budget independently, minutes against seconds, is phase 2 and its own
+  release.
+
+  **The CLI flavor is not covered and still shares one budget.** Its
+  per-command deadline is applied by the caller before `Execute` runs, so a
+  queued command spends its own budget waiting, and the HTTP fix does not
+  transpose: the deadline arrives already on the context. Until that changes,
+  keep the ceiling above the number of collectors that can run a command at
+  once, or set `--collector.<name>.timeout` high enough to absorb a queue.
+  `docs/configuration.md` says so in the generated repository.
+
+### Added
+
+- **Background collectors no longer all fire at once** (stagger:
+  multi-instance, HTTP flavor; lifecycle hardening: every model and both
+  flavors).
+  `instance.StaggeredCollector`, an optional interface a collector may ignore,
+  lets `Registry.Commit` tell each collector it is the *i*-th of *n* starting
+  together; the HTTP background variant delays its **first** refresh by *i/n*
+  of its own interval, leaving the ticker period untouched. Deterministic
+  rather than randomized, so the pattern is reproducible across restarts.
+  Nothing already scaffolded changes: a collector that does not implement the
+  interface is started exactly as before, with no edit.
+
+  The lifecycle had to be hardened first, and that is the more important half.
+  `done` is now closed exactly once through a `sync.Once`, with the close armed
+  as the goroutine's first statement, and `Start` is idempotent. Without that,
+  any delay before the close is armed leaves `Done()` open when the context is
+  cancelled during it, and shutdown waits out its entire budget on a collector
+  that never fetched anything.
+
+  Two shipped documents assumed the first refresh lands at `t=0` and were
+  corrected: the validation checklist (a freshness gauge reading `0` is normal
+  for up to a full interval after boot, not "a few seconds") and the alert
+  rules (`for:` must be at least the collector's own interval, or the staleness
+  alert fires at every restart).
+
+### Changed
+
+- **Four pieces of knowledge the references never taught**, each met in
+  production rather than derived:
+  - A documented state table is a floor, not a ceiling. Written as a
+    recommendation and not a norm, because the ecosystem is split:
+    `node_exporter`'s systemd collector iterates five states where systemd
+    defines eight, `ipmi_exporter` writes `NaN`, `snmp_exporter` falls back to
+    the raw value. If you do emit the unknown value, it goes through the same
+    `Desc` with a bounded label value, never a descriptor built at `Collect`
+    time.
+  - A label's value domain is not the response's item count. Budget the domain
+    the source counts, not the objects an endpoint happens to return.
+  - A per-device counter is exposed per device, never pre-summed by the
+    exporter: `rate()` first, then `sum()`, per Prometheus's own guidance.
+  - A source counter that saturates is a floor, not a measurement, and an
+    average over one is biased low without bound.
+
+- **`/prometheus-exporter:add-collector` consults the naming decisions before
+  proposing metrics**, not after, so the name-vs-label arbitration is made once
+  per exporter instead of re-litigated per collector.
+
 ## [0.9.0] - 2026-08-04
 
 ### Added
