@@ -403,6 +403,37 @@ missing knowledge are tracked together because the first item is both.
   Moved from v0.9 to make room for what the first real deployment found; the
   reasoning is unchanged.
 
+- **`docs/upgrading.md`: what a scaffolded exporter does when the plugin moves
+  on.** Nothing answers this today. The "no migration path, rescaffold and
+  port the collector bodies across" policy exists in exactly two places, both
+  of them comments inside `/prometheus-exporter:add-collector`'s seam checks,
+  and both scoped to the one case where an outdated seam blocks that command.
+  A third party whose exporter is three releases behind finds nothing, and it
+  is the first question they will ask.
+
+  What the page has to say, and the reason it is short: **the plugin's value
+  splits in two and only half of it lives in their repository.** The taught
+  knowledge (`references/`, `commands/`, `agents/`) is read at command time,
+  so updating the plugin updates it, with nothing to do downstream. The
+  templates under `assets/` were copied once and are theirs now, so those
+  never update themselves, by design.
+
+  That makes the answer per-item rather than wholesale: read the plugin's
+  CHANGELOG and cherry-pick, which is what its operator-facing entries are
+  written for. Rescaffolding is the wrong default and needs saying so
+  explicitly, because a repository that has been maintained will usually be
+  *ahead* of the templates in places, and a rescaffold silently discards
+  exactly those fixes. Verified on the first real deployment, which had
+  already solved six of the eight template defects itself, two of them
+  better than the plugin has. The one case that does force a rescaffold is
+  the seam check already implemented; the page points at it rather than
+  restating it.
+
+  Scheduled after the alerting command deliberately: the same page should be
+  able to say what a `rules.yml` that nothing has ever written looks like
+  after that command exists, rather than describing a gap and then needing a
+  rewrite one release later.
+
 ## Ongoing: widening the reference base to the official exporters
 
 Everything this plugin teaches was originally derived from a single reference
