@@ -346,6 +346,18 @@ Before writing a parser, decide, per collector:
   summed across the collector's metrics.
 - **What flag**, if any, caps that number before it becomes a problem.
 
+**A label's value domain is not the response's item count.** The number of
+objects an endpoint hands back is the most available number and the wrong one
+to budget from. Read what the source says the values *are*: a response listing
+devices may be reporting per-slot state, in which case the domain is slots, and
+a slot keeps its series after its device is removed. A response listing jobs may
+be paginated, so its length says nothing about how many jobs exist. A response
+listing errors may be reporting error *types* from a fixed vocabulary, in which
+case the domain is that vocabulary and it is far smaller than the response
+suggests. The two numbers differ in both directions, so neither "the page looked
+short" nor "the list looked long" is evidence. Find the domain in the target's
+own documentation, or ask the target for its total, and budget that.
+
 Worked example, anchored to the bundled `example` collector's CLI-flavor
 shape (`internal/collector/collector.go`): it emits
 `<namespace>_example{key="..."}`, one series per distinct key the data

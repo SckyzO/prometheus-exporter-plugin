@@ -258,6 +258,59 @@ reach for a Histogram instead, exactly as this scaffold's own
 `RequestDuration`/`CommandDuration` already do for per-request/per-command
 timing.
 
+### Two counter traps a target can hand you
+
+Field experience rather than prometheus.io guidance, except where cited: both
+come from the source, so no type choice on this side fixes them.
+
+**A per-device counter is exposed per device, never pre-summed.** The
+temptation, when a target reports N devices each with its own counter, is to
+add them up and expose the total, because the total is usually the number
+people ask for. Do not: the sum is only monotonic while N is, so removing a
+device drops it, and `rate()` reads any drop as a counter reset and credits
+the whole post-drop value as new activity. Decommissioning a device then
+produces a spike in a graph of work done.
+
+[Writing exporters](https://prometheus.io/docs/instrumenting/writing_exporters/)
+rules out the shape independently of that artifact, for a `label="total"`
+series and for an unlabeled one alike. On what each costs: *"The former breaks
+for people who do a `sum()` over your metric, and the latter breaks sum and is
+quite difficult to work with."* And on what to do instead: *"Never do either of
+these, rely on Prometheus aggregation instead."*
+
+The aggregation that replaces it has a required order, and getting it backwards
+reintroduces exactly the artifact above. [Querying
+functions](https://prometheus.io/docs/prometheus/latest/querying/functions/) is
+explicit: *"always take a `rate()` first, then aggregate."* `sum(rate(x[5m]))`
+over per-device counters does not spike when a device goes away, because the
+departed series simply stops contributing; `rate(sum(x)[5m:])` does. So expose
+the per-device counter, labeled, and put the ordering rule in the metric's own
+help text or in `docs/metrics.md` where whoever writes the query will meet it.
+
+**A source counter that saturates is a floor, not a measurement.** Some targets
+hold a counter at its type's ceiling instead of wrapping (65535 on a uint16,
+255 on a byte, whatever the target's own documentation states) rather than
+letting it roll over. Once pinned, every scrape reports the same value,
+`rate()` reads zero, and the metric looks calm precisely when the underlying
+quantity is at its worst. The tell is a value sitting exactly at a type
+boundary, unchanged across scrapes.
+
+The consequence reaches past the metric, into the rules written over it. An
+average over a saturating counter is biased low and can never exceed the
+ceiling, however bad the true values are: a device pinned at the maximum
+representable value still raises the fleet mean, but it raises it toward a
+number that understates reality by an unknown margin, so a threshold placed
+above the ceiling can never fire on that average. (A `sum()` is not bounded the
+same way, since several saturated devices add past the ceiling; the bias
+downward remains.)
+
+Say it in the metric's help text, with the ceiling: *"Reported by the device
+and saturates at 65535; a value at that ceiling is a lower bound, not a
+count."* Then alert on reaching the ceiling (`>= 65535`, not `== 65535`, so a
+target that clamps slightly differently or a later model that widens the type
+still trips it) rather than on a rate or an average of it, and see
+`dashboards-and-alerts.md` before writing a rule that aggregates one.
+
 ## Low-cardinality labels
 
 Label values must come from a small, bounded set known in advance: never
@@ -362,6 +415,13 @@ convention or `_scrape_` as the only correct one.
       line rather than left in the conversation that decided it.
 - [ ] Metric names and label keys are static: a literal or a
       `BuildFQName(literal, literal, literal)` call, never computed.
+- [ ] A per-device counter is exposed per device, never pre-summed into a
+      total the exporter computes: `rate()` reads the drop from a shrinking
+      population as a counter reset, and aggregation belongs in PromQL,
+      `rate()` first and `sum()` after.
+- [ ] A source counter that can saturate says so in its help text, with the
+      ceiling value, because a value at the ceiling is a lower bound rather
+      than a count and an average over it is biased low without bound.
 - [ ] Type matches semantics: Counter only for genuine monotonic totals,
       Histogram for distributions you'll aggregate or want percentiles from,
       Gauge for a snapshot or a last-scrape outcome/duration.
