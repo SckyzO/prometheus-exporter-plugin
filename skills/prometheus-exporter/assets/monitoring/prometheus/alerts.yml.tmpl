@@ -177,12 +177,17 @@ groups:
       #       summary: '@@EXPORTER_NAME@@ target critically degraded'
       #       description: '{{ $labels.instance }} has reported {{ $value }} for 10 minutes (threshold: 500).'
       #
-      # The bundled ExampleCollector itself emits @@NAMESPACE@@_items /
-      # @@NAMESPACE@@_healthy (HTTP flavor) or @@NAMESPACE@@_example /
-      # @@NAMESPACE@@_example_entries (CLI flavor). See docs/metrics.md for
-      # the pair your flavor actually ships. `/prometheus-exporter:add-collector` (if you have
-      # the scaffolding plugin available) proposes a real, uncommented
-      # alert here for every collector's own metrics as you add them.
+      # @@IF flavor=http@@
+      # The bundled ExampleCollector itself emits @@NAMESPACE@@_items and
+      # @@NAMESPACE@@_healthy. See docs/metrics.md.
+      # @@ENDIF@@
+      # @@IF flavor=cli@@
+      # The bundled ExampleCollector itself emits @@NAMESPACE@@_example and
+      # @@NAMESPACE@@_example_entries. See docs/metrics.md.
+      # @@ENDIF@@
+      # `/prometheus-exporter:add-collector` (if you have the scaffolding
+      # plugin available) proposes a real, uncommented alert here for every
+      # collector's own metrics as you add them.
 
       # --- Staleness, for background-variant collectors only ---
       #

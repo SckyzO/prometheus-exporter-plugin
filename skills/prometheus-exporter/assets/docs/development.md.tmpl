@@ -110,6 +110,20 @@ make docker-build
 make docker-run    # starts the compose stack; override DOCKER_IMAGE=/DOCKER_TAG= for a different image/tag
 ```
 
+@@IF target-model=multi-instance@@
+Create the configuration file before the first `docker-run`: this target model
+reads the instances it watches from `--config.file` and exits without it, and
+the compose file mounts `./config.yml` read-only.
+
+```bash
+cp config.example.yml config.yml   # then uncomment and edit its instances: block
+```
+
+Skip that and Docker creates a *directory* named `config.yml` instead of
+failing, and the container crash-loops on a read error against something that
+is not a file.
+@@ENDIF@@
+
 A minimal, distroless variant is also available (`Dockerfile.minimal` /
 `docker-compose.minimal.yml`, ~15MB, always non-root, no shell, no package manager), useful
 for confirming the exporter also runs on the hardened image, or for iterating with the

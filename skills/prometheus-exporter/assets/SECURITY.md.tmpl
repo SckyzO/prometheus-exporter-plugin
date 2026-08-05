@@ -98,8 +98,15 @@ single-target build therefore takes effect on its own, with no restart and
 no reload; rotating an inline value (`password`, `bearer_token`, `key`, none
 of which are recommended, see above) still means restarting the process,
 since nothing re-parses the configuration file to pick it up. A module is
-selected per request (`?module=` on a multi-target build's `/probe`) or once
-at boot (an instance's `module:` key on a multi-instance build); either way
+@@IF target-model=multi@@
+selected per request (`?module=` on `/probe`); either way
+@@ENDIF@@
+@@IF target-model=multi-instance@@
+selected once at boot (an instance's `module:` key); either way
+@@ENDIF@@
+@@IF target-model=single@@
+never selected at all on this build, which refuses the section; either way
+@@ENDIF@@
 it is never a metric label and never reaches any series this exporter
 exposes.
 
@@ -116,6 +123,7 @@ reload leaves running).
 See [docs/configuration.md](docs/configuration.md) for the file's format and
 the precedence rules.
 
+@@IF target-model=multi@@
 ## Multi-target `/probe` (if applicable)
 
 Multi-target builds (`--target-model multi`) also expose a
@@ -169,6 +177,8 @@ considerations apply here:
   allow-any-by-default prober, the real hardening boundary is network
   placement: run `/probe` somewhere that cannot reach anything you don't
   want probed, the same posture recommended for the Blackbox/SNMP exporters.
+
+@@ENDIF@@
 
 Released binaries and images are signed. Binaries carry a CycloneDX software bill of materials;
 container images get their own CycloneDX SBOM via `make sbom-image`, plus a supplementary SPDX

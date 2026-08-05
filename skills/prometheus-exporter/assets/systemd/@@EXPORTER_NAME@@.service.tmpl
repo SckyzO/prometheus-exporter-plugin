@@ -82,8 +82,7 @@ ExecReload=/bin/kill -HUP $MAINPID
 NoNewPrivileges=true
 
 # The directives below are stricter and can need one-off tuning (e.g. if you
-# point --web.config.file, or a CLI-flavor collector's target binary, at a
-# path one of these would otherwise block). Uncomment progressively and
+# point --web.config.file at a path one of these would otherwise block). Uncomment progressively and
 # re-test after each one - `systemctl status @@EXPORTER_NAME@@` and the
 # journal will show a sandboxing failure clearly if one bites:
 #
@@ -98,8 +97,8 @@ NoNewPrivileges=true
 # LockPersonality=true        # cannot change the process execution domain
 # MemoryDenyWriteExecute=true # blocks W^X violations (JIT-style exploits)
 # RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
-# CapabilityBoundingSet=      # drop every capability; add back only what a
-#                              # CLI-flavor target binary genuinely needs
+# CapabilityBoundingSet=      # drop every capability; add back only what
+#                              # this exporter genuinely needs
 # ReadWritePaths=             # this exporter writes nothing by default (no
 #                              # cache, no local state) - add a path here
 #                              # only if a collector you add needs one

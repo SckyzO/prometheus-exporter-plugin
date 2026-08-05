@@ -58,11 +58,16 @@ flags:
     - "127.0.0.1:19101"
 
   # A collector's own flags follow the same rule as any built-in flag.
-  # Commented out because this file ships with both target models and a
-  # multi-target exporter declares no collector.example.* flags: its target
-  # arrives per request on /probe rather than from a flag. Uncomment it on a
-  # single-target exporter, where the flag exists.
+  # @@IF target-model=multi@@
+  # This build declares no collector.example.* flags at all: its target
+  # arrives per request on /probe rather than from a flag, so there is
+  # nothing to set here.
+  # @@ENDIF@@
+  # @@IF target-model!=multi@@
+  # Commented out rather than active because an example pointing at a value
+  # you have not chosen is worse than no example. Uncomment and adapt.
   # collector.example.timeout: 10s
+  # @@ENDIF@@
 
   # Bounds how many outbound requests/commands this exporter has in flight
   # at once. 0 (the default) means unlimited. Available on single-target and
@@ -73,11 +78,17 @@ flags:
   # multi-instance).
   # exporter.max-requests-per-target: 4
 
+# @@IF flavor=http@@
 # http_client_config carries the authentication and TLS settings no flag can
-# express. It only applies to an HTTP-flavor exporter's outbound requests. A
-# CLI-flavor exporter runs a local command instead, so it has nothing to
-# authenticate: given this section it refuses to start rather than accept a
-# setting it would silently drop.
+# express, and applies to this exporter's outbound requests.
+# @@ENDIF@@
+# @@IF flavor!=http@@
+# http_client_config carries authentication and TLS for an HTTP-flavor
+# exporter's outbound requests. This build runs a local command instead, so it
+# has nothing to authenticate: given this section it refuses to start rather
+# than accept a setting it would silently drop. It is documented here because
+# the same file is the starting point for both flavors.
+# @@ENDIF@@
 #
 # Commented out here on purpose: an active block pointing at password_file/
 # ca_file/cert_file/key_file paths that do not exist on your machine would
@@ -141,34 +152,50 @@ flags:
 # this section, and how a module gets picked, depends on the target model
 # this exporter was scaffolded with:
 #
-# - single-target builds refuse this section outright at boot: it does not
-#   apply there at all.
-# - multi-target builds (/probe) select a module per request with
-#   /probe?target=...&module=...; there, a module may carry both a
-#   collectors: subset and an http_client_config:.
-# - multi-instance builds have each instances: entry reference a module by
-#   name in its own module: key (see docs/configuration.md), resolved once
-#   at boot rather than per request.
-#   There, a module's collectors: key is refused: collector enablement is
-#   global via --[no-]collector.<name> instead, so a per-module subset would
-#   be meaningless.
+# @@IF target-model=single@@
+# This build refuses this section outright at boot: it does not apply here at
+# all. It is described below because the same file is the starting point for
+# the other two target models, where it does.
+# @@ENDIF@@
+# @@IF target-model=multi@@
+# This build (/probe) selects a module per request with
+# /probe?target=...&module=...; a module may carry both a collectors: subset
+# and an http_client_config:.
+# @@ENDIF@@
+# @@IF target-model=multi-instance@@
+# This build has each instances: entry reference a module by name in its own
+# module: key (see docs/configuration.md), resolved once at boot rather than
+# per request. A module's collectors: key is REFUSED here: collector
+# enablement is global via --[no-]collector.<name> instead, so a per-module
+# subset would be meaningless.
+# @@ENDIF@@
 #
-# On a multi-target build specifically, credentials never combine: at most
+# @@IF target-model=multi@@
+# Credentials never combine: at most
 # one of the modules a request selects may carry an http_client_config:, and
 # naming two is refused with a 400 rather than resolved by a precedence
 # nobody wrote. A module that lists no collectors contributes only its
 # credentials, which is what lets a credentials module be combined with
 # collector modules.
 #
-# On a multi-target build, this section and the top-level http_client_config:
-# above cannot both be set: with modules declared, nothing reads the
-# top-level one. (Multi-instance tolerates both present, but then the
-# top-level section goes unread too, since every instance resolves its module
-# by name; a known asymmetry, not something to rely on.)
+# This section and the top-level http_client_config: above cannot both be
+# set: with modules declared, nothing reads the top-level one.
+# @@ENDIF@@
+# @@IF target-model=multi-instance@@
+# This section and the top-level http_client_config: above may both be
+# present, but the top-level one then goes unread, since every instance
+# resolves its module by name. A known asymmetry, not something to rely on.
+# @@ENDIF@@
 #
 # Commented out for the same reason as http_client_config: above, an active
 # block pointing at files that do not exist on your machine would fail to load.
 #
+# @@IF target-model=single@@
+# Nothing below applies to this build, which refuses the section entirely.
+# The examples are kept out of a single-target file on purpose: an example
+# you cannot use is indistinguishable, on a first reading, from one you can.
+# @@ENDIF@@
+# @@IF target-model=multi@@
 # Two conventions work, and the choice is yours to make here rather than in
 # code, so it is reversible without regenerating anything.
 #
@@ -203,3 +230,53 @@ flags:
 #
 #   Scraped with: /probe?target=...&module=quick
 #   (the default module supplies the credentials; naming it is optional)
+# @@ENDIF@@
+# @@IF target-model=multi-instance@@
+# A module here is credentials and TLS only. No collectors: key: this build
+# enables collectors globally with --[no-]collector.<name>, and a module that
+# carries one is refused at boot.
+#
+# modules:
+#   prod:
+#     http_client_config:
+#       basic_auth:
+#         username: monitoring
+#         password_file: /etc/@@EXPORTER_NAME@@/prod_password
+#   lab:
+#     http_client_config:
+#       tls_config:
+#         ca_file: /etc/@@EXPORTER_NAME@@/lab-ca.pem
+# @@ENDIF@@
+
+# @@IF target-model=multi-instance@@
+# instances: the list of machines this exporter watches. REQUIRED on this
+# target model, and the reason --config.file is mandatory here: the binary
+# refuses to start without this file, because this list is what it would
+# otherwise have nothing to poll.
+#
+# Uncomment and adapt. Each entry needs a unique name and an address; module:
+# is optional and names an entry from modules: above. The name becomes the
+# value of this exporter's identifying label (@@INSTANCE_LABEL@@) on every
+# series that instance produces, so choose names you are willing to see in
+# Grafana and in alert annotations, and do not rename them casually: renaming
+# one breaks continuity of its series exactly as relabelling would.
+#
+# instances:
+#   - name: machine-a
+#     address: https://machine-a.example:8443
+#   - name: machine-b
+#     address: https://machine-b.example:8443
+#   - name: lab-1
+#     address: https://lab-1.example:8443
+#
+# No module: key above, deliberately. Uncommenting this block alone must give
+# you a file that loads: add `module: <name>` to an entry only once you have
+# also uncommented a modules: section declaring that name, or the exporter
+# refuses to start with "references module ... but the config declares no
+# modules". An example whose only working form is one nobody described is not
+# an example.
+#
+# Two entries may name the same physical machine: they are then watched, and
+# rate-limited, independently. See docs/configuration.md's
+# "Bounding outbound concurrency" for what that costs.
+# @@ENDIF@@

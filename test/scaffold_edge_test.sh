@@ -273,4 +273,135 @@ grep -q '`demo_example`' "$metricsdoc" || fail "docs/metrics.md does not documen
 [ ! -e "$work/metricsdoc-dst/internal/collector/metrics.md.tmpl" ] || fail "metrics.md.tmpl staging file should not survive in internal/collector/"
 [ ! -e "$work/metricsdoc-dst/internal/collector/metrics.md" ] || fail "metrics.md should not remain in internal/collector/ after relocation to docs/"
 
+# ---------------------------------------------------------------------------
+# Conditional blocks (@@IF ... @@ / @@ENDIF@@)
+#
+# The seam the six-symptom scaffold report came down to: selectors decided
+# which CODE shipped and nothing about prose or example configuration, so
+# every model received every model's text. These assertions pin the engine,
+# not any particular template's use of it.
+# ---------------------------------------------------------------------------
+condsrc="$work/cond-src"
+mkdir -p "$condsrc/code/http" "$condsrc/code/cli" "$condsrc/licenses"
+: > "$condsrc/code/http/x.go.tmpl"
+: > "$condsrc/code/cli/y.go.tmpl"
+echo apache > "$condsrc/licenses/LICENSE-apache-2.0.txt"
+
+condvars="--var EXPORTER_NAME=demo --var NAMESPACE=demo --var OWNER=acme --var LICENSE=apache-2.0"
+
+# A marker alone on its line, bare, comment-prefixed, and indented: the three
+# shapes YAML, Go and Markdown actually need.
+cat > "$condsrc/t.txt.tmpl" <<'CONDFIX'
+always-head
+@@IF target-model=multi-instance@@
+mi-only
+@@ENDIF@@
+# @@IF target-model!=multi@@
+not-multi
+# @@ENDIF@@
+  @@IF flavor=cli@@
+cli-only
+  @@ENDIF@@
+@@IF target-model=multi-instance,flavor=http@@
+mi-and-http
+@@ENDIF@@
+@@IF target-model=multi-instance,flavor!=http@@
+mi-and-not-http
+@@ENDIF@@
+always-tail @@EXPORTER_NAME@@
+CONDFIX
+
+# shellcheck disable=SC2086
+run --src "$condsrc" --dst "$work/cond-mi" --flavor http --forge none --target-model multi-instance $condvars
+[ "$rc" -eq 0 ] || fail "conditional scaffold (multi-instance) exited $rc: $(cat "$err")"
+got=$(cat "$work/cond-mi/t.txt")
+want='always-head
+mi-only
+not-multi
+mi-and-http
+always-tail demo'
+[ "$got" = "$want" ] || fail "multi-instance conditional render wrong.
+got:
+$got
+want:
+$want"
+
+# shellcheck disable=SC2086
+run --src "$condsrc" --dst "$work/cond-multi" --flavor http --forge none --target-model multi $condvars
+[ "$rc" -eq 0 ] || fail "conditional scaffold (multi) exited $rc: $(cat "$err")"
+grep -q 'mi-only' "$work/cond-multi/t.txt" && fail "multi kept a multi-instance-only block"
+grep -q 'not-multi' "$work/cond-multi/t.txt" && fail "multi kept a target-model!=multi block"
+
+# shellcheck disable=SC2086
+run --src "$condsrc" --dst "$work/cond-cli" --flavor cli --forge none $condvars
+[ "$rc" -eq 0 ] || fail "conditional scaffold (cli) exited $rc: $(cat "$err")"
+grep -q 'cli-only' "$work/cond-cli/t.txt" || fail "cli scaffold dropped its own flavor block"
+grep -q 'mi-only' "$work/cond-cli/t.txt" && fail "single-target scaffold kept a multi-instance block"
+
+# No marker survives into the output, on any model. A leaked @@IF@@ would be
+# caught by the residual-sentinel guard, but assert it here too: that guard
+# has an allowlist and this must never be added to it.
+for d in cond-mi cond-multi cond-cli; do
+  grep -q '@@IF\|@@ENDIF@@' "$work/$d/t.txt" && fail "$d leaked a conditional marker into the rendered file"
+done
+
+echo "PASS: conditional blocks keep, drop, and leave no marker behind"
+
+# A file with no marker at all must be passed through byte for byte. This is
+# what keeps every template written before this pass existed rendering exactly
+# as it did, and it is the claim the two-phase rule rests on here.
+printf 'line one\nline two @@EXPORTER_NAME@@\n\n  indented\n' > "$condsrc/plain.txt.tmpl"
+# shellcheck disable=SC2086
+run --src "$condsrc" --dst "$work/cond-plain" --flavor http --forge none $condvars
+[ "$rc" -eq 0 ] || fail "plain scaffold exited $rc: $(cat "$err")"
+printf 'line one\nline two demo\n\n  indented\n' > "$work/_want-plain"
+cmp -s "$work/cond-plain/plain.txt" "$work/_want-plain" ||
+  fail "a marker-free file was not passed through unchanged: $(diff "$work/_want-plain" "$work/cond-plain/plain.txt" || true)"
+
+echo "PASS: a marker-free template renders byte for byte as before"
+
+# Failure modes, each loud rather than silent. A silently-never-matching block
+# is exactly the defect class this seam exists to end, so a typo must not be
+# able to produce one.
+cond_rejects() {
+  rm -rf "$work/cond-bad" "$condsrc/bad.txt.tmpl"
+  printf '%s\n' "$1" > "$condsrc/bad.txt.tmpl"
+  # shellcheck disable=SC2086
+  run --src "$condsrc" --dst "$work/cond-bad" --flavor http --forge none --target-model multi-instance $condvars
+  [ "$rc" -ne 0 ] || fail "scaffold accepted a malformed conditional: $2"
+  grep -q "$3" "$err" || fail "wrong diagnostic for $2; got: $(cat "$err")"
+}
+cond_rejects '@@IF target-model=multi-instance@@
+x' 'an @@IF@@ never closed' 'never closed'
+cond_rejects '@@ENDIF@@' 'a stray @@ENDIF@@' 'no matching'
+cond_rejects '@@IF target-model=multi-instance@@
+@@IF flavor=http@@
+x
+@@ENDIF@@
+@@ENDIF@@' 'a nested @@IF@@' 'nested'
+cond_rejects '@@IF model=multi-instance@@
+x
+@@ENDIF@@' 'an unknown key' 'unknown @@IF@@ key'
+cond_rejects '@@IF forge=github@@
+x
+@@ENDIF@@' 'the forge key, deliberately not supported' 'unknown @@IF@@ key'
+cond_rejects '@@IF target-model=multi-instace@@
+x
+@@ENDIF@@' 'a typo in the value' 'unknown value'
+cond_rejects '@@IF flavor=grpc@@
+x
+@@ENDIF@@' 'a flavor the source tree does not carry' 'unknown value'
+cond_rejects '@@IF target-model multi-instance@@
+x
+@@ENDIF@@' 'a missing operator' 'expected key=value'
+cond_rejects '@@IF target-model=multi-instance,flavor=grpc@@
+x
+@@ENDIF@@' 'a bad value in the second term of an AND' 'unknown value'
+cond_rejects '@@IF target-model=multi-instance,model=x@@
+x
+@@ENDIF@@' 'a bad key in the second term of an AND' 'unknown @@IF@@ key'
+rm -f "$condsrc/bad.txt.tmpl"
+
+echo "PASS: malformed conditionals are rejected loudly, never silently dropped"
+
 echo "PASS"

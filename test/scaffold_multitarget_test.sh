@@ -178,4 +178,148 @@ grep -q '^ExecReload=' "$work/multi/systemd/demo.service" ||
 
 echo "PASS: the systemd unit's ExecStart and ExecReload match the target model"
 
+# ---------------------------------------------------------------------------
+# 5. config.example.yml describes the model it was scaffolded for, and only
+#    that one. This is the first application of the conditional-block seam,
+#    and the property is the one the field report asked for: no file mentions
+#    a model that was not chosen.
+#
+#    Asserted on the RENDERED file rather than the template, because the
+#    template legitimately contains all three and the whole question is what
+#    survives selection.
+# ---------------------------------------------------------------------------
+mi_cfg="$work/mi/config.example.yml"
+[ -f "$mi_cfg" ] || fail "multi-instance scaffold shipped no config.example.yml"
+
+# instances: is the one section this model cannot start without, which is why
+# --config.file is mandatory here. A file that omits it is a starting point
+# that cannot start.
+grep -q '^# instances:' "$mi_cfg" ||
+  fail "multi-instance config.example.yml has no instances: section; it is the only mandatory section on this model"
+grep -q 'probe' "$mi_cfg" &&
+  fail "multi-instance config.example.yml documents /probe, a route this binary never registers"
+grep -q 'collectors: \[' "$mi_cfg" &&
+  fail "multi-instance config.example.yml uses a module collectors: key, which this model refuses at boot (the same file says so)"
+
+default_cfg="$work/default/config.example.yml"
+grep -q 'probe' "$default_cfg" &&
+  fail "single-target config.example.yml documents /probe, which only the multi model serves"
+grep -q '^# instances:' "$default_cfg" &&
+  fail "single-target config.example.yml documents instances:, which only multi-instance reads"
+
+# multi keeps what is genuinely its own: the /probe module examples, with the
+# collectors: key that model does accept. Asserted so a later tightening of
+# the conditionals cannot silently empty this file.
+multi_cfg="$work/multi/config.example.yml"
+grep -q 'probe?target=' "$multi_cfg" ||
+  fail "multi config.example.yml lost its /probe module examples"
+grep -q 'collectors: \[' "$multi_cfg" ||
+  fail "multi config.example.yml lost the module collectors: key, which this model accepts"
+
+# No conditional marker reaches any rendered file. The residual-sentinel guard
+# would also catch this, but assert it here: that guard carries an allowlist
+# and these must never be added to it.
+for m in default multi mi; do
+  if grep -rq '@@IF\|@@ENDIF@@' "$work/$m" 2>/dev/null; then
+    fail "$m scaffold leaked a conditional marker: $(grep -rl '@@IF\|@@ENDIF@@' "$work/$m" | head -3)"
+  fi
+done
+
+echo "PASS: config.example.yml describes only the target model it was scaffolded for"
+
+# The property the field report asked for, applied to the whole tree rather
+# than one file: no rendered artifact mentions a route, a model or a flavor
+# this scaffold did not produce. Checked on the two selectors that actually
+# mislead a reader, /probe (a route only multi registers) and the CLI-flavor
+# asides in an http tree.
+for m in default mi; do
+  if grep -rln '/probe' "$work/$m" --include='*.md' --include='*.yml' 2>/dev/null | grep -q .; then
+    fail "$m scaffold documents /probe, a route only a multi build registers: $(grep -rln '/probe' "$work/$m" --include='*.md' --include='*.yml' | head -3)"
+  fi
+done
+if ! grep -rq 'probe?target=' "$work/multi" --include='*.md' 2>/dev/null; then
+  fail "multi scaffold lost its own /probe documentation"
+fi
+for m in default multi mi; do
+  if grep -rlin 'CLI flavor\|CLI-flavor' "$work/$m" --include='*.md' --include='*.yml' 2>/dev/null | grep -q .; then
+    fail "$m scaffold (http) carries a CLI-flavor aside: $(grep -rlin 'CLI flavor\|CLI-flavor' "$work/$m" --include='*.md' --include='*.yml' | head -3)"
+  fi
+done
+
+echo "PASS: no rendered file mentions a target model or flavor that was not chosen"
+
+# The container path must be able to start the model it was scaffolded for,
+# the same claim the systemd unit now carries. Naming the file on the command
+# line is only half of it in a container: without the mount the flag points at
+# nothing, and `restart: unless-stopped` turns that into a permanent crash
+# loop rather than one visible failure.
+for f in docker-compose.yml docker-compose.minimal.yml; do
+  mi_c="$work/mi/$f"
+  [ -f "$mi_c" ] || fail "multi-instance scaffold shipped no $f"
+  grep -q -- '- --config.file=' "$mi_c" ||
+    fail "multi-instance $f passes no --config.file; the container exits before it binds"
+  grep -q ':/etc/demo/config.yml:ro' "$mi_c" ||
+    fail "multi-instance $f names --config.file but mounts nothing at that path"
+
+  for m in default multi; do
+    other="$work/$m/$f"
+    grep -q -- '- --config.file=' "$other" &&
+      fail "$m $f gained --config.file; that model starts without one"
+  done
+done
+
+echo "PASS: the container path can start a multi-instance build, mount included"
+
+# ---------------------------------------------------------------------------
+# 6. What the assertions above cannot see, and this repository has now shipped
+#    three times: a guardrail that covers a path in a way that cannot see the
+#    defect. Everything so far checks that unwanted text is GONE. Nothing
+#    checked that wanted text SURVIVED, and gating by hand over-dropped six
+#    passages with every assertion, and golden-smoke, staying green.
+#
+#    So: structure, and a floor of content that must exist on every model.
+# ---------------------------------------------------------------------------
+
+# A heading that lost its parent is the signature of an @@ENDIF@@ landing one
+# heading too early. Cheap to detect: no `###` may appear before the first
+# `##` of a rendered document.
+for m in default multi mi; do
+  for f in "$work/$m"/*.md "$work/$m"/docs/*.md; do
+    [ -f "$f" ] || continue
+    orphan=$(awk '/^## /{seen=1} /^### /{if(!seen){print FNR": "$0; exit}}' "$f")
+    [ -z "$orphan" ] || fail "$m ${f##*/} has a level-3 heading before any level-2 heading (gating closed a block too early): $orphan"
+  done
+done
+
+# Content that is model-independent must reach every model. Each string below
+# stands for a passage a hand-written gate actually swallowed.
+for m in default multi mi; do
+  grep -q 'CycloneDX' "$work/$m/SECURITY.md" ||
+    fail "$m SECURITY.md lost the supply-chain section; it describes signing and SBOMs, which no target model changes"
+  grep -q 'Prometheus scrape endpoint' "$work/$m/README.md" ||
+    fail "$m README.md lost its endpoint table"
+  grep -q 'Bounding outbound concurrency' "$work/$m/docs/configuration.md" ||
+    fail "$m docs/configuration.md lost the concurrency section"
+done
+
+# Content that IS model-dependent must reach exactly the models that serve it.
+# /-/reload is the one the first pass got wrong: multi-instance registers the
+# route and its README stopped documenting it.
+for m in multi mi; do
+  grep -q '/-/reload' "$work/$m/README.md" ||
+    fail "$m README.md does not document POST /-/reload, which this model registers"
+done
+grep -q '/-/reload' "$work/default/README.md" &&
+  fail "single-target README.md documents POST /-/reload, which that model has no route for"
+
+# A bulleted lead-in with no bullets under it reads as a truncated document.
+# Checked on the one section that is gated three ways.
+for m in default multi mi; do
+  cfg="$work/$m/docs/configuration.md"
+  awk '/^set a number:\*\*$/{while ((getline line) > 0) { if (line ~ /^[ \t]*$/) continue; if (line !~ /^- /) print "dangling"; exit }}' "$cfg" | grep -q dangling &&
+    fail "$m docs/configuration.md introduces the ceiling bullets and then lists none"
+done
+
+echo "PASS: gating dropped nothing a model still needs, and left no orphaned heading"
+
 echo "PASS"

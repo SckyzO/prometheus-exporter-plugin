@@ -629,6 +629,46 @@ if ! ( cd "$work" && ./bin/demo_exporter --config.file=config.example.yml --help
 fi
 echo "confirmed: config.example.yml loads ($flavor/$forge)"
 
+# ...and that it loads with --help is exactly as far as the assertion above can
+# see. It never starts the server and never scrapes, which is why a
+# config.example.yml with no instances: block, the one section a multi-instance
+# build cannot start without, passed this gate for as long as it existed.
+#
+# So do the whole documented path on the model that has one: uncomment the
+# shipped instances: block, start the binary against it, scrape /metrics.
+# A generated repository serving 200 after the only route its own docs
+# describe is the property the field report asked for; nothing weaker proves
+# the example is usable rather than merely parseable.
+if [ "$target_model" = multi-instance ]; then
+  echo "== the documented path serves /metrics ($flavor/$forge) =="
+  cfg="$work/_from-example.yml"
+  awk '/^# instances:$/{on=1} on{ if ($0 ~ /^#$/) exit; sub(/^# ?/,""); print }' \
+    "$work/config.example.yml" > "$cfg"
+  grep -q '^instances:' "$cfg" ||
+    die "config.example.yml ships no commented instances: block to uncomment ($flavor/$forge); a multi-instance build cannot start without one"
+
+  port=19787
+  ( cd "$work" && ./bin/demo_exporter --config.file="$cfg" --web.listen-address=":$port" \
+      >"$work/_serve.log" 2>&1 & echo $! > "$work/_serve.pid" )
+  # Poll rather than sleep a fixed amount: a cold binary on a loaded CI box is
+  # slower than a warm one here, and a fixed sleep would flake in exactly the
+  # direction that hides a real failure.
+  code=000
+  i=0
+  while [ "$i" -lt 40 ]; do
+    code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/metrics" || echo 000)
+    [ "$code" = 200 ] && break
+    i=$((i + 1))
+    sleep 0.25
+  done
+  kill "$(cat "$work/_serve.pid")" 2>/dev/null || true
+  if [ "$code" != 200 ]; then
+    cat "$work/_serve.log" || true
+    die "/metrics answered $code after uncommenting config.example.yml's instances: block ($flavor/$forge); the documented path must reach a scrape"
+  fi
+  echo "confirmed: uncommenting the shipped instances: block yields a 200 on /metrics ($flavor/$forge)"
+fi
+
 # --exporter.max-requests-per-target's boot-time guard (Task 10, obligation
 # 1): --collector.example.timeout=0s combined with a configured ceiling must
 # refuse to boot, naming the collector, rather than silently building a
