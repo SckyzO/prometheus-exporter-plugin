@@ -154,7 +154,7 @@ meaningful, serving the exporter over HTTPS and/or behind a password from a
 YAML file in [Prometheus's own TLS/Basic Auth configuration
 format](https://prometheus.io/docs/prometheus/latest/configuration/https/),
 with zero application code of this exporter's own involved. The systemd
-unit's commented `ExecStart` example (`packaging-and-ops.md`) and
+unit's commented TLS `ExecStart` example (`packaging-and-ops.md`) and
 `docs/configuration.md` both point at the same flag; the point is that it is
 **documented, not imposed**: an operator who needs it turns it on
 explicitly, on their own schedule.
