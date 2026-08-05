@@ -739,9 +739,43 @@ if [ "$flavor" = http ] && [ "$target_model" = single ]; then
   if [ "$refuse_rc" -eq 0 ]; then
     die "boot-time guard: exporter exited 0 instead of refusing --collector.example.timeout=0s under a configured ceiling ($flavor/$forge), see $refuse_log"
   fi
-  grep -q 'a positive --collector.example.timeout is required' "$refuse_log" \
+  grep -q 'a positive --collector.example.timeout or --exporter.max-request-wait is required' "$refuse_log" \
     || die "boot-time guard: refusal message does not name the collector/timeout as expected ($flavor/$forge), see $refuse_log"
   echo "confirmed: --collector.example.timeout=0s with a configured ceiling refuses to boot, naming the collector ($flavor/$forge)"
+
+  # The other half of the same guard: it must stay NECESSARY, not only
+  # sufficient. --exporter.max-request-wait bounds the wait on its own, so the
+  # same flags that are refused above become legitimate once it is set, and a
+  # guard that still refused them would reject a correct configuration.
+  #
+  # Asserted by running rather than by reading, because "does not refuse" is
+  # only meaningful if the process then actually serves: an exporter that
+  # exits 0 for some unrelated reason would pass a mere rc check. This one has
+  # to answer /metrics.
+  echo "== --exporter.max-request-wait relaxes that guard ($flavor/$forge) =="
+  relax_log="$work/.golden-smoke-max-request-wait-relax.log"
+  relax_port=9988
+  ( cd "$work" && ./bin/demo_exporter --collector.example.timeout=0s --exporter.max-requests-per-target=1 --exporter.max-request-wait=30s --web.listen-address="127.0.0.1:$relax_port" >"$relax_log" 2>&1 ) &
+  relax_pid=$!
+  # shellcheck disable=SC2064
+  trap "kill $relax_pid 2>/dev/null || true" EXIT
+  relax_ok=no
+  i=0
+  while [ "$i" -lt 50 ]; do
+    # kill -0 first, so a process that died on boot is reported as itself
+    # rather than as a ten-second timeout.
+    kill -0 "$relax_pid" 2>/dev/null \
+      || die "--exporter.max-request-wait: exporter exited instead of accepting a 0s collector timeout under a ceiling ($flavor/$forge), see $relax_log"
+    if curl -fsS "http://127.0.0.1:$relax_port/metrics" >/dev/null 2>&1; then relax_ok=yes; break; fi
+    i=$((i + 1))
+    sleep 0.2
+  done
+  kill "$relax_pid" 2>/dev/null || true
+  wait "$relax_pid" 2>/dev/null || true
+  trap - EXIT
+  [ "$relax_ok" = yes ] \
+    || die "--exporter.max-request-wait: exporter never served /metrics with a 0s collector timeout under a ceiling ($flavor/$forge), see $relax_log"
+  echo "confirmed: a set --exporter.max-request-wait makes the same flags boot and serve, so the refusal stays necessary ($flavor/$forge)"
 fi
 
 # promtool check rules (Task 12): monitoring/prometheus/{alerts,rules}.yml must

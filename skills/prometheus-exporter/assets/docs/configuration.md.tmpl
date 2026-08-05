@@ -47,6 +47,12 @@ Prometheus itself uses.
 | `--[no-]collector.<name>` | Enable or disable a collector (kingpin boolean flag) | see below |
 | `--exporter.max-requests-per-target` | Bounds how many outbound requests/commands this exporter has in flight at once. `0` means unlimited. See [Bounding outbound concurrency](#bounding-outbound-concurrency) below | `0` |
 @@ENDIF@@
+@@IF target-model=single,flavor=http@@
+| `--exporter.max-request-wait` | Budgets the wait for a slot separately from the request. `0` bounds the wait by the collector's own timeout instead. Only meaningful with a ceiling set | `0` |
+@@ENDIF@@
+@@IF target-model=multi-instance@@
+| `--exporter.max-request-wait` | Budgets the wait for a slot separately from the request. `0` bounds the wait by the collector's own timeout instead. Only meaningful with a ceiling set | `0` |
+@@ENDIF@@
 @@IF target-model!=single@@
 | `--web.enable-lifecycle` | Expose `POST /-/reload`, which reloads `--config.file`. `SIGHUP` always works and needs no flag; see [Configuration reload](#configuration-reload) below | `false` |
 @@ENDIF@@
@@ -268,7 +274,7 @@ is bounded by the collector's own `--collector.<name>.timeout`, which is why
 a positive timeout is required once a ceiling is configured: without one,
 the wait would have no deadline of its own to honor.
 
-@@IF flavor=http@@
+@@IF target-model!=multi,flavor=http@@
 **The wait and the request are bounded separately.** A
 collector that spends time queued still gets its full
 `--collector.<name>.timeout` for the request once a slot is granted, rather
@@ -277,16 +283,25 @@ wait budget plus the request budget, bounded on both sides. A collector that
 cannot get a slot in time fails on the wait, quickly, with an error naming
 the wait, instead of issuing a request it has no time left to finish.
 
-**This does not mean a low ceiling stops starving collectors.** The wait
-budget currently defaults to the same value as `--collector.<name>.timeout`,
-so at a ceiling of `1`, which is the right value for a target that serializes
-work internally, collectors sharing a refresh interval still queue behind
-each other and the ones at the back still miss out. What changed is that they
-now fail on the wait rather than mid-request, so
-`@@NAMESPACE@@_exporter_request_wait_seconds` and the error message say
-"queue", not "slow target". Size the ceiling and the per-collector timeouts
-with that in mind: a ceiling of `1` needs timeouts long enough that the last
-collector in the queue can still get a slot.
+**Size the wait budget yourself once the ceiling is low.** By default the
+wait is bounded by `--collector.<name>.timeout`, and under that default one
+ceiling serves only as many collectors as the ratio between that timeout and
+how long a single request takes. The rest starve on every sweep, not
+occasionally: collectors sharing a refresh interval fire together and that
+alignment does not break up on its own. Measured on a nineteen-collector
+sweep at a ceiling of `1`, each request taking a fifth of its timeout, five
+are served and fourteen starve, every time.
+
+`--exporter.max-request-wait` is what fixes that, by budgeting the wait
+independently of the request: set it and the same nineteen are all served.
+Size it as roughly the number of collectors sharing one queue times how long
+one of them holds a slot, which usually lands in minutes where the request
+timeout is in seconds. It has no default beyond "follow the request timeout"
+because nothing in the process can see that collector count.
+
+Leaving it unset changes nothing from earlier versions, and a collector that
+still cannot get a slot fails on the wait, quickly, with an error naming the
+wait rather than a slow target.
 
 @@ENDIF@@
 @@IF flavor!=http@@

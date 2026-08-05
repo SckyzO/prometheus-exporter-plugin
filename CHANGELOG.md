@@ -8,6 +8,56 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`--exporter.max-request-wait`: the queue budget, phase 2, which is what
+  makes a concurrency ceiling of `1` serviceable** (http flavor, single-target
+  and multi-instance). Phase 1 separated the wait from the request but changed
+  no count, because every constructor still sized the wait budget at the
+  request timeout. Under that sizing one ceiling serves only as many
+  collectors as the ratio between the timeout and a single request's duration,
+  and the rest starve on every sweep rather than occasionally: same-interval
+  tickers fire together and that alignment does not break up on its own.
+
+  Measured on the same 19-collector sweep at a ceiling of 1, request work at a
+  fifth of the timeout, now a rerunnable harness rather than a one-off
+  (`test/queue-budget-sweep.sh`, which scaffolds a real exporter and measures
+  the rendered templates):
+
+  | | ok | starved on wait | failed on request |
+  |---|---|---|---|
+  | v0.10 (phase 1) | 5 | 14 | 0 |
+  | this release, flag unset | 5 | 14 | 0 |
+  | this release, `--exporter.max-request-wait=6s` | **19** | **0** | 0 |
+
+  **The default does not move.** Unset means the wait stays bounded by the
+  collector's own timeout, exactly as before, so no already-scaffolded
+  exporter changes behaviour and no operator who configured nothing is
+  affected. Moving the default was considered and rejected: an unbounded or
+  arbitrarily long default recreates the silent queueing the ceiling exists to
+  prevent, and there is no non-arbitrary multiple of a request timeout to use
+  instead, because the right value depends on how many collectors share the
+  queue, which nothing in the process can see.
+
+  Global rather than per collector, matching the ceiling it budgets against: a
+  queue belongs to one watched machine, and how long to tolerate queueing
+  depends on how many collectors share that queue, not on what any one of them
+  does.
+
+  Two properties were held rather than assumed, both mutation-tested. The
+  boot-time refusal in `client_build.frag` had to be **relaxed** to stay
+  necessary: a wait budget bounds the wait on its own, so a non-positive
+  collector timeout is no longer an unbounded wait, and golden-smoke now
+  asserts both halves, that the refusal still fires without the flag and that
+  the same flags boot and serve with it. And
+  `..._exporter_request_wait_seconds` still brackets the wait alone, now
+  asserted on the observed value rather than only on sample counts, since a
+  wait budget far longer than a request is exactly the condition under which a
+  histogram quietly measuring both would mislead whoever is sizing the flag.
+
+  Not covered: the cli flavor, whose per-command deadline arrives already
+  applied to `ctx` and needs a different fix, still tracked separately.
+
 ## [0.9.0] - 2026-08-04
 
 ### Added
