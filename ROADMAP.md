@@ -312,6 +312,15 @@ missing knowledge are tracked together because the first item is both.
   queue budget, under the two-phase rule.
 - **The shipped systemd unit does not start a multi-instance build**: its
   `ExecStart` carries no `--config.file`, which that model requires.
+- **Neither does the shipped container path**, found while fixing the unit
+  above and not by the field: `docker-compose.yml`, `docker-compose.minimal.yml`
+  and both Dockerfile `CMD`s pass `--web.listen-address` and nothing else, so
+  `make docker-run` on a multi-instance build starts a container that exits
+  immediately, and `restart: unless-stopped` makes that a permanent crash
+  loop rather than a single visible failure. Bigger than the unit fix, and
+  deliberately not folded into it: the file has to be mounted into the
+  container as well as named on the command line, which is a compose change,
+  not a flag.
 - **The boot storm, and the lifecycle that blocks the obvious fix.** Every
   background collector fires its first refresh at once. Delaying `Start` is
   unsafe as the variant is written: `done` is created in the constructor and
