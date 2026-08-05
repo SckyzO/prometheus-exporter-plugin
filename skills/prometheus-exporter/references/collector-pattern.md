@@ -394,7 +394,14 @@ the same split as that seam: `NewExampleCollector(log, client, interval)`
 (`background_collector.go.tmpl`) takes no `ctx` at all, unlike the
 synchronous constructor above, because a background collector's cancellation
 context does not arrive at construction, it arrives at `Start(ctx)`, called
-separately by `Registry.Commit`, not by `main` itself. `internal/instance`'s
+separately by `Registry.Commit`, not by `main` itself. `Start` is idempotent
+and `done` is closed exactly once on every path out of its goroutine, with
+the close armed before anything that can return early. That is not defensive
+decoration: it is what makes the first refresh safe to delay at all
+(`SetStartStagger`, see `exporter-architecture.md`). Arm the close after the
+delay instead and a context cancelled during it leaves `Done()` open forever,
+so shutdown waits out its entire budget on a collector that never fetched
+anything. `internal/instance`'s
 `Factory.New`, `func(h *instance.Handle) (BackgroundCollector, error)`,
 matches that shape exactly: no `ctx` parameter either. `h` is the one
 watched machine's `Handle`, built once by `Registry.Prepare` and shared by

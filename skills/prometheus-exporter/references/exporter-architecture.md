@@ -209,7 +209,22 @@ pollers), so a factory failure (a bad timeout, an unreadable CA) is caught
 before anything is touched. `Commit(ctx, plan)` is the phase that cannot
 fail: it `Start(ctx)`s each new `instance.BackgroundCollector`, and
 registers its `StatusTracker` under a labelled wrapper of the exporter's
-registry. Boot is `Prepare` against an empty live set followed by `Commit`,
+registry.
+
+Started in one loop, but not fired in one instant. Before each `Start`,
+`Commit` offers the collector its position through the optional
+`instance.StaggeredCollector` interface (`SetStartStagger(i, n)`), and the
+background variant answers by delaying its first refresh by `i/n` of its own
+interval. Without it every collector of one instance fetches at `t=0` and
+then stays in phase forever, because same-interval tickers that fire together
+never drift apart on their own: against a concurrency ceiling that means the
+same collectors queue behind the same siblings on every sweep, permanently.
+The interface is deliberately separate from `BackgroundCollector` rather than
+folded into it, under the two-phase rule: a collector scaffolded before this
+existed satisfies `BackgroundCollector` and nothing else, and is started
+unchanged with no edit. The offset is deterministic, not randomized, so the
+same collector gets the same offset on every restart and the resulting scrape
+pattern is reproducible. Boot is `Prepare` against an empty live set followed by `Commit`,
 the exact same two calls a `SIGHUP` or `POST /-/reload` makes, which is why
 the reload path is exercised by every start, not only by an operator sending
 a signal. `/prometheus-exporter:add-collector` understands this model too:

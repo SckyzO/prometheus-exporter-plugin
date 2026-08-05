@@ -226,3 +226,96 @@ func TestExampleCollector_FirstScrapeEmitsFreshnessGaugeZero(t *testing.T) {
 		t.Fatalf("unexpected collecting result:\n%s", err)
 	}
 }
+
+// TestExampleCollector_DoneClosesWhenCancelledDuringTheStartOffset is the
+// regression test for the lifecycle hazard that staggering introduces. done is
+// created in the constructor and closed by Start's goroutine, so a goroutine
+// that returns before doing any work must still close it. Delay the first
+// refresh, cancel during the delay, and Done() must fire anyway: if the close
+// were armed after the delay instead of before it, shutdown would wait out its
+// entire budget on a collector that never fetched anything.
+func TestExampleCollector_DoneClosesWhenCancelledDuringTheStartOffset(t *testing.T) {
+	log := logger.NewTextLogger("error")
+	c := NewExampleCollector(log, NewClient("http://example.invalid", time.Second), time.Hour)
+	// 1 of 2 over an hour: a delay this run will never outlive.
+	c.SetStartStagger(1, 2)
+	if c.startOffset != 30*time.Minute {
+		t.Fatalf("startOffset = %v, want 30m", c.startOffset)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	c.Start(ctx)
+	cancel()
+
+	select {
+	case <-c.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("Done() never closed after ctx was cancelled during the start offset; shutdown would hang")
+	}
+}
+
+// TestExampleCollector_StartIsIdempotent pins the other half of that
+// invariant: a second Start must not launch a second goroutine, because two
+// goroutines would both close done and the second close panics.
+//
+// It pins the conjunction, not each guard: with startOnce in place, doneOnce
+// alone cannot be falsified by any test, since a single goroutine closes the
+// channel once either way. That redundancy is deliberate defence in depth
+// (whichever guard a later edit drops, the other still holds the invariant),
+// not something this test can prove one piece at a time.
+func TestExampleCollector_StartIsIdempotent(t *testing.T) {
+	log := logger.NewTextLogger("error")
+	c := NewExampleCollector(log, NewClient("http://example.invalid", time.Second), time.Hour)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	c.Start(ctx)
+	c.Start(ctx)
+	c.Start(ctx)
+	cancel()
+
+	select {
+	case <-c.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("Done() never closed after cancel")
+	}
+	// A second close would already have panicked above; assert the channel is
+	// closed rather than merely readable once.
+	select {
+	case <-c.Done():
+	default:
+		t.Fatal("Done() is not closed")
+	}
+}
+
+// TestExampleCollector_SetStartStaggerIsDeterministicAndOptional pins the
+// offsets by VALUE, which is the point of choosing a deterministic scheme over
+// a randomized one: a randomized jitter could only ever be asserted by bounds.
+func TestExampleCollector_SetStartStaggerIsDeterministicAndOptional(t *testing.T) {
+	log := logger.NewTextLogger("error")
+	newC := func() *ExampleCollector {
+		return NewExampleCollector(log, NewClient("http://example.invalid", time.Second), 60*time.Second)
+	}
+
+	for _, tc := range []struct {
+		name string
+		i, n int
+		want time.Duration
+	}{
+		{"never called leaves zero", -1, -1, 0},
+		{"first of four does not wait", 0, 4, 0},
+		{"second of four waits a quarter", 1, 4, 15 * time.Second},
+		{"last of four waits three quarters", 3, 4, 45 * time.Second},
+		{"alone is a no-op", 0, 1, 0},
+		{"out of range is a no-op", 4, 4, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newC()
+			if tc.i >= 0 {
+				c.SetStartStagger(tc.i, tc.n)
+			}
+			if c.startOffset != tc.want {
+				t.Fatalf("startOffset = %v, want %v", c.startOffset, tc.want)
+			}
+		})
+	}
+}

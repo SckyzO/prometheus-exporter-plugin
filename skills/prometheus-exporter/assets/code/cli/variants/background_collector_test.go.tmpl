@@ -265,3 +265,29 @@ func TestExampleCollector_FirstScrapeEmitsFreshnessGaugeZero(t *testing.T) {
 		t.Fatalf("unexpected collecting result:\n%s", err)
 	}
 }
+
+// TestExampleCollector_StartIsIdempotent pins the lifecycle invariant shutdown
+// depends on: done is closed exactly once, on every path out of Start's
+// goroutine, and a second Start launches nothing. Without the guard, two
+// goroutines would each close done and the second close panics.
+func TestExampleCollector_StartIsIdempotent(t *testing.T) {
+	log := logger.NewTextLogger("error")
+	c := NewExampleCollector(log, time.Second, time.Hour)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	c.Start(ctx)
+	c.Start(ctx)
+	c.Start(ctx)
+	cancel()
+
+	select {
+	case <-c.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("Done() never closed after ctx was cancelled")
+	}
+	select {
+	case <-c.Done():
+	default:
+		t.Fatal("Done() is not closed")
+	}
+}

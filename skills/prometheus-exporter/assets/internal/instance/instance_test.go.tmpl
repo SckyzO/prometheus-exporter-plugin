@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -743,5 +744,92 @@ func TestWaitSharesOneBudgetAcrossInstances(t *testing.T) {
 	if elapsed > threshold {
 		t.Fatalf("Wait took %v with a %v budget (one instance finishing at %v, one never exiting); want at most ~%v (one shared budget), not ~%v (a fresh budget per instance, %v + %v)",
 			elapsed, budget, lateAfter, threshold, lateAfter+budget, lateAfter, budget)
+	}
+}
+
+// staggerBG is a BackgroundCollector that ALSO implements StaggeredCollector,
+// recording what Commit told it. fakeBG deliberately does not implement the
+// interface, so the two together cover both sides of the type assertion.
+type staggerBG struct {
+	fakeBG
+	gotI, gotN int
+	staggered  bool
+}
+
+func newStaggerBG(name string) *staggerBG {
+	s := &staggerBG{}
+	s.desc = prometheus.NewDesc("demo_"+name, "fixture", nil, nil)
+	s.done = make(chan struct{})
+	return s
+}
+
+func (s *staggerBG) SetStartStagger(i, n int) {
+	s.gotI, s.gotN, s.staggered = i, n, true
+}
+
+// TestCommitStaggersEveryCollectorItStarts pins the wiring, not the arithmetic.
+// The per-collector offset is unit-tested in internal/collector; what is
+// untestable there is whether anything ever CALLS it, and with which arguments.
+// Without this, swapping i and n at the call site, or deleting the call
+// entirely, leaves the whole suite green: the feature would be unreachable and
+// nothing would say so.
+func TestCommitStaggersEveryCollectorItStarts(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const n = 3
+	var made []*staggerBG
+	enabled := true
+	var factories []Factory
+	for i := 0; i < n; i++ {
+		name := fmt.Sprintf("c%d", i)
+		factories = append(factories, Factory{
+			Name:    name,
+			Enabled: &enabled,
+			New: func(h *Handle) (BackgroundCollector, error) {
+				bg := newStaggerBG(name)
+				made = append(made, bg)
+				return bg, nil
+			},
+		})
+	}
+
+	r := NewRegistry(logger.NewTextLogger("error"), prometheus.NewRegistry(), "target", factories, 0)
+	applyOrFail(t, r, ctx, []config.ResolvedInstance{inst("lib1", "https://a.example", nil, nil)})
+
+	if len(made) != n {
+		t.Fatalf("built %d collectors, want %d", len(made), n)
+	}
+	for i, bg := range made {
+		if !bg.staggered {
+			t.Fatalf("collector %d was started without being staggered", i)
+		}
+		// Order matters as much as the values: i is the collector's position,
+		// n the size of the group. Swapping them still "calls the method".
+		if bg.gotI != i || bg.gotN != n {
+			t.Fatalf("collector %d got SetStartStagger(%d, %d), want (%d, %d)", i, bg.gotI, bg.gotN, i, n)
+		}
+	}
+}
+
+// TestCommitStartsACollectorThatCannotBeStaggered is the other side of the
+// assertion: a collector scaffolded before StaggeredCollector existed satisfies
+// BackgroundCollector only, and must still be started, unchanged and with no
+// edit. fakeBG is exactly that collector.
+func TestCommitStartsACollectorThatCannotBeStaggered(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	r, made := testRegistry(t, prometheus.NewRegistry())
+	applyOrFail(t, r, ctx, []config.ResolvedInstance{inst("lib1", "https://a.example", nil, nil)})
+
+	if len(*made) != 1 {
+		t.Fatalf("built %d collectors, want 1", len(*made))
+	}
+	if _, ok := BackgroundCollector((*made)[0]).(StaggeredCollector); ok {
+		t.Fatal("fakeBG implements StaggeredCollector; this test no longer covers the collector that does not")
+	}
+	if got := atomic.LoadInt32(&(*made)[0].starts); got != 1 {
+		t.Fatalf("starts = %d, want 1: a collector that cannot be staggered must still be started", got)
 	}
 }

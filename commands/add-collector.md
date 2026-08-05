@@ -378,7 +378,8 @@ always-emitted freshness gauge, metric name literal
 EXACTLY like any other `"@@NAMESPACE@@_..."` literal in the table below; its
 `_last_refresh_timestamp_seconds` suffix is a locked, non-negotiable part of
 the name, only `example`→`<name>` and `@@NAMESPACE@@` ever change in it),
-`Start(ctx context.Context)`, and `Done() <-chan struct{}`. None of these
+`Start(ctx context.Context)`, `Done() <-chan struct{}`, and, on the http
+variant, `SetStartStagger(i, n int)`. None of these
 need a new rename rule beyond the existing
 `example`→`<name>`/`Example`→`<Name>` pair, since none of those identifiers
 contain "example"/"Example" themselves. `New<Name>Collector` for this
