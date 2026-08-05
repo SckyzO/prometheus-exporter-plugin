@@ -80,7 +80,24 @@ type ExampleCollector struct {
 	// done is closed when the background goroutine launched by Start exits.
 	// main.go waits on Done() (via the backgroundCollector seam) after the
 	// HTTP server has shut down, so the process doesn't exit mid-refresh.
-	done chan struct{}
+	//
+	// Closed through doneOnce, and Start guarded by startOnce, so the
+	// invariant shutdown depends on holds no matter how Start is called: done
+	// is closed exactly once, on every path out of the goroutine, and a second
+	// Start cannot launch a second goroutine that would close an already
+	// closed channel and panic. That is what makes it safe to put a delay
+	// INSIDE the goroutine (see startOffset and Start): the deferred close is
+	// armed before the delay, so a ctx cancelled during the delay still
+	// releases anything waiting on Done() instead of hanging shutdown for its
+	// whole budget.
+	done      chan struct{}
+	doneOnce  sync.Once
+	startOnce sync.Once
+
+	// startOffset delays only the FIRST refresh, never the ticker cadence
+	// after it. Zero by default, so a collector nobody staggers behaves
+	// exactly as it always did. See SetStartStagger.
+	startOffset time.Duration
 }
 
 // NewExampleCollector builds the collector and its Descs. It is pure: it
@@ -111,26 +128,82 @@ func NewExampleCollector(log *logger.Logger, client *Client, interval time.Durat
 	}
 }
 
-// Start launches the background refresh goroutine. Call once, after
-// construction. The first refresh runs immediately (so the cache starts
-// filling as soon as the process starts) without Start itself waiting for
-// it: a slow first fetch never blocks process startup. The goroutine exits
-// when ctx is cancelled; Done() can then be used to wait for it to finish.
+// SetStartStagger tells this collector it is the i-th of n collectors starting
+// together, so it can offset its first refresh by i/n of its own interval
+// instead of firing with all the others.
+//
+// It exists for the multi-instance model, where every background collector of
+// one instance is started in the same loop, so without it they all fetch at
+// t=0 and then keep fetching together forever: same-interval tickers that fire
+// together stay in phase, and nothing breaks that alignment up on its own.
+// Against a target with a concurrency ceiling, that means the same collectors
+// queue behind the same siblings on every single sweep.
+//
+// On a single-target build nothing calls this, and that is not an oversight:
+// each background collector there is wired by its own registration closure,
+// which knows nothing of how many others exist. The method still ships, so a
+// collector adapted from this template satisfies the same seam wherever it
+// ends up.
+//
+// Deliberately deterministic rather than randomized: the same collector gets
+// the same offset on every restart, which is what makes the resulting scrape
+// pattern reproducible and the behaviour testable by value rather than only
+// by bounds. Scaled by the collector's OWN interval, not a shared window, so
+// collectors on different cadences each spread across their own.
+//
+// Optional, and a no-op if never called: a collector nobody staggers keeps
+// startOffset at zero and refreshes immediately, exactly as before.
+//
+// Call it before Start, never after. Not "after Start it is ignored", which
+// would be a comfortable thing to write and is false: startOffset is written
+// here with no synchronisation and read by Start's goroutine, so a later call
+// is a data race the detector will flag, and it may well take effect if the
+// goroutine has not reached the read yet. The one shipped caller
+// (internal/instance's Commit loop) calls both from the same goroutine, so the
+// go statement orders the write before the read.
+func (c *ExampleCollector) SetStartStagger(i, n int) {
+	if n <= 1 || i <= 0 || i >= n {
+		return
+	}
+	c.startOffset = c.interval * time.Duration(i) / time.Duration(n)
+}
+
+// Start launches the background refresh goroutine. Safe to call more than
+// once: only the first call launches anything. The first refresh runs as soon
+// as the goroutine does, or after startOffset when one was set, without Start
+// itself waiting for it: a slow first fetch never blocks process startup. The
+// goroutine exits when ctx is cancelled; Done() can then be used to wait for
+// it to finish.
 func (c *ExampleCollector) Start(ctx context.Context) {
-	go func() {
-		defer close(c.done)
-		c.refresh(ctx)
-		ticker := time.NewTicker(c.interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				c.refresh(ctx)
-			case <-ctx.Done():
-				return
+	c.startOnce.Do(func() {
+		go func() {
+			// Armed before the delay below, deliberately. A ctx cancelled
+			// during startOffset must still close done, or Done() never fires
+			// and shutdown waits out its whole budget on a goroutine that
+			// never had anything to do.
+			defer c.doneOnce.Do(func() { close(c.done) })
+
+			if c.startOffset > 0 {
+				select {
+				case <-time.After(c.startOffset):
+				case <-ctx.Done():
+					return
+				}
 			}
-		}
-	}()
+
+			c.refresh(ctx)
+			ticker := time.NewTicker(c.interval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					c.refresh(ctx)
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	})
 }
 
 // Done returns a channel that is closed when the background goroutine

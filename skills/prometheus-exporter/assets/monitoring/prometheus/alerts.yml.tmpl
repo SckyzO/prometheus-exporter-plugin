@@ -242,3 +242,12 @@ groups:
       # The gauge reads 0, not a large negative, before the first refresh
       # ever completes. `time() - 0` is therefore enormous at startup, which
       # is what `for:` absorbs. Do not drop it.
+      #
+      # And size it for the WORST first refresh, not the first one. On a
+      # multi-instance build, an instance's collectors are deliberately
+      # staggered so they do not all fetch at once, by up to one full interval
+      # for the last of them, so its gauge legitimately reads 0 for that long
+      # on every restart. `for:` shorter than the collector's own interval
+      # therefore fires this alert at every boot and clears itself minutes
+      # later, which trains an operator to ignore it. Rule of thumb: `for:` at
+      # least the collector's refresh interval.

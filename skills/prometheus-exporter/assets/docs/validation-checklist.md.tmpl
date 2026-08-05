@@ -202,8 +202,12 @@ grep -E "^@@NAMESPACE@@_.*_last_refresh_timestamp_seconds" /tmp/scrape.txt
 
 Each value must be a recent Unix timestamp: `time() - <value>` should be below that
 collector's refresh interval, not far above it. A value of `0` means no refresh has ever
-completed, which at startup is normal for a few seconds and at any other time is a failure
-this step exists to catch. Compare against the alert of the same shape in
+completed. At any other time that is a failure this step exists to catch. At startup it is
+normal, and for longer than you might expect on a multi-instance build: an instance's
+collectors are staggered so they do not all fetch at once, so the last of them legitimately
+reads `0` for up to one full refresh interval after boot. Check this step once every
+collector has had its first interval, not seconds after starting the process. Compare
+against the alert of the same shape in
 [../monitoring/prometheus/alerts.yml](../monitoring/prometheus/alerts.yml).
 
 **A current freshness gauge is not proof the data is current.** It records when this

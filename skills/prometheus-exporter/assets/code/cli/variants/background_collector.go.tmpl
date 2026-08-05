@@ -138,7 +138,27 @@ type ExampleCollector struct {
 	// done is closed when the background goroutine launched by Start exits.
 	// main.go waits on Done() (via the backgroundCollector seam) after the
 	// HTTP server has shut down, so the process doesn't exit mid-refresh.
-	done chan struct{}
+	//
+	// Closed through doneOnce, and Start guarded by startOnce, so the
+	// invariant shutdown depends on holds no matter how Start is called: done
+	// is closed exactly once, on every path out of the goroutine, and a second
+	// Start cannot launch a second goroutine that would close an already
+	// closed channel and panic. That is also what would make it safe to put a
+	// delay INSIDE the goroutine, since the deferred close is armed before
+	// anything else runs: a ctx cancelled during such a delay still releases
+	// anything waiting on Done() instead of hanging shutdown for its whole
+	// budget.
+	//
+	// This flavor ships no such delay. The http variant beside it carries a
+	// SetStartStagger seam, wired by internal/instance so an instance's
+	// collectors do not all fetch at once; there is no multi-instance model on
+	// this flavor (it requires --flavor http), so nothing here starts N
+	// collectors in one pass and the seam would have no caller. The invariant
+	// above is worth holding regardless: it is what makes Start safe to call
+	// twice, and shutdown correct if a future variant does add a delay.
+	done      chan struct{}
+	doneOnce  sync.Once
+	startOnce sync.Once
 }
 
 // NewExampleCollector builds the collector and its Descs. It is pure: it
@@ -169,26 +189,31 @@ func NewExampleCollector(log *logger.Logger, timeout, interval time.Duration) *E
 	}
 }
 
-// Start launches the background refresh goroutine. Call once, after
-// construction. The first refresh runs immediately (so the cache starts
-// filling as soon as the process starts) without Start itself waiting for
-// it: a slow first fetch never blocks process startup. The goroutine exits
-// when ctx is cancelled; Done() can then be used to wait for it to finish.
+// Start launches the background refresh goroutine. Safe to call more than
+// once: only the first call launches anything. The first refresh runs as soon
+// as the goroutine does, without Start itself waiting for it: a slow first run
+// never blocks process startup. The goroutine exits when ctx is cancelled;
+// Done() can then be used to wait for it to finish.
 func (c *ExampleCollector) Start(ctx context.Context) {
-	go func() {
-		defer close(c.done)
-		c.refresh(ctx)
-		ticker := time.NewTicker(c.interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				c.refresh(ctx)
-			case <-ctx.Done():
-				return
+	c.startOnce.Do(func() {
+		go func() {
+			// Armed first, before anything that can return early, so every
+			// path out of this goroutine closes done exactly once.
+			defer c.doneOnce.Do(func() { close(c.done) })
+
+			c.refresh(ctx)
+			ticker := time.NewTicker(c.interval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					c.refresh(ctx)
+				case <-ctx.Done():
+					return
+				}
 			}
-		}
-	}()
+		}()
+	})
 }
 
 // Done returns a channel that is closed when the background goroutine

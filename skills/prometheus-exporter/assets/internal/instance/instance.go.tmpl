@@ -38,6 +38,27 @@ type BackgroundCollector interface {
 	Done() <-chan struct{}
 }
 
+// StaggeredCollector is the OPTIONAL half of that lifecycle: a
+// BackgroundCollector that can offset its first refresh so an instance's
+// collectors do not all fetch at once.
+//
+// Optional on purpose, and checked with a type assertion rather than folded
+// into BackgroundCollector above: a collector scaffolded before this existed
+// satisfies BackgroundCollector and nothing else, and must keep working with
+// no edit. Widening the required interface would break every one of them at
+// compile time, for a refinement none of them needs to opt into.
+//
+// The reason it exists at all: the add loop below starts an instance's
+// collectors in one pass, so without this they all fire at t=0 and then stay
+// in phase forever, because same-interval tickers that fire together never
+// drift apart on their own. Against a concurrency ceiling that means the same
+// collectors queue behind the same siblings on every sweep, permanently.
+type StaggeredCollector interface {
+	// SetStartStagger says this collector is the i-th of n starting together.
+	// Called before Start, once, and free to ignore the hint.
+	SetStartStagger(i, n int)
+}
+
 // Handle is everything the process keeps about ONE watched machine: the
 // transport its collectors share, the concurrency ceiling they contend for, the
 // labels its series carry, and the cancellation that stops its pollers.
@@ -483,7 +504,14 @@ func (r *Registry) Commit(ctx context.Context, p *Plan) {
 		op.handle.cancel = cancel
 		op.handle.bgs = op.collectors
 		op.handle.tracker = op.tracker
-		for _, bg := range op.collectors {
+		// Staggered before started, never after: SetStartStagger only affects
+		// the first refresh, and Start is what consumes it. A collector that
+		// does not implement StaggeredCollector is started unchanged, which is
+		// what keeps a scaffold that predates the seam working with no edit.
+		for i, bg := range op.collectors {
+			if s, ok := bg.(StaggeredCollector); ok {
+				s.SetStartStagger(i, len(op.collectors))
+			}
 			bg.Start(instCtx)
 		}
 		prometheus.WrapRegistererWith(op.handle.labels, r.root).MustRegister(op.tracker)
