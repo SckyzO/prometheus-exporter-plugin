@@ -351,6 +351,20 @@ missing knowledge are tracked together because the first item is both.
   closed by `Start`'s goroutine, so a `Start` that never runs leaves `Done()`
   open and hangs shutdown.
 
+  **Done**, in that order. The lifecycle first: `done` is now closed exactly
+  once through a `sync.Once`, with the close armed before anything that can
+  return early, and `Start` is idempotent. Then the spreading:
+  `instance.StaggeredCollector`, an optional interface a collector may ignore,
+  lets `Registry.Commit` tell each collector it is the `i`-th of `n` starting
+  together, and the http background variant delays its first refresh by `i/n`
+  of its own interval. Deterministic, not randomized, so the pattern is
+  reproducible across restarts and testable by value.
+
+  Not staggered: single-target builds, whose background collectors are wired
+  one at a time by `/prometheus-exporter:add-collector` with no `n` available
+  at the call site, and the cli flavor, which has no multi-instance model to
+  start `n` collectors in one pass.
+
 **Knowledge the templates never taught, each found by meeting it:**
 
 - A documented state table is a floor, not a ceiling: emit an observed state
