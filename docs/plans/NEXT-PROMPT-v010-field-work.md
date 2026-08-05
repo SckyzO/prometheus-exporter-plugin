@@ -19,10 +19,9 @@ est déjà dans `ROADMAP.md` v0.10.
 ## L'état, à vérifier en ouvrant
 
 - Dernier tag : **v0.9.0**. `plugin.json` à `0.9.0`.
-- **PR #40** (`--version`/`--help` sans fichier de config) était verte et non
-  mergée à la clôture. Si elle traîne, merge-la d'abord.
+- Arbre propre, **aucune PR ouverte**, tout est mergé sur `main`.
 - Deux des cinq points de v0.10 sont déjà faits : la règle des deux jauges
-  (#39) et `--version` (#40).
+  (#39) et `--version`/`--help` (#40). Les trois autres sont ci-dessous.
 
 ## Ce qu'il reste, ordonné par risque croissant
 
