@@ -86,10 +86,15 @@ var (
 	// nothing.
 	//
 	// A ceiling turns a slow collector into a source of starvation for its
-	// siblings, so it is a deliberate choice with a visible cost. The wait is
-	// charged against each collector's own timeout, and
+	// siblings, so it is a deliberate choice with a visible cost. The wait
+	// gets its own budget rather than eating into the collector's request
+	// timeout (see Client.Fetch), which makes the worst case for one request
+	// the two added together, and
 	// @@NAMESPACE@@_exporter_request_wait_seconds is what makes queueing
-	// visible rather than silent.
+	// visible rather than silent. Set the ceiling with that in mind: at a
+	// ceiling of 1, collectors sharing a refresh interval queue behind each
+	// other on every sweep, and the ones at the back of the queue still fail,
+	// now on the wait rather than mid-request.
 	maxRequestsPerTarget = kingpin.Flag(
 		"exporter.max-requests-per-target",
 		"Maximum concurrent requests this exporter issues per watched instance. 0 (default) means unlimited. Two instances sharing one physical address are bounded independently, not together.",

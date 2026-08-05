@@ -86,11 +86,17 @@ func NewLimiter(limit int) *Limiter {
 // is a no-op when err is non-nil, so callers can defer it unconditionally
 // after checking the error.
 //
-// Honouring ctx is what makes a ceiling safe to turn on: the caller's own
-// deadline (a collector's --collector.<name>.timeout) bounds the wait, so a
-// starved poller fails its refresh, logs, and keeps its previous cache. Without
-// it the poller would sit in the queue while time.Ticker silently dropped its
-// ticks and the effective refresh interval drifted with nothing reporting it.
+// Honouring ctx is what makes a ceiling safe to turn on: the wait is bounded,
+// so a starved poller fails its refresh, logs, and keeps its previous cache.
+// Without it the poller would sit in the queue while time.Ticker silently
+// dropped its ticks and the effective refresh interval drifted with nothing
+// reporting it.
+//
+// On this flavor the bound is Client.acquireTimeout, not the caller's own
+// deadline: Client.Fetch hands this method a ctx that carries no request
+// deadline yet, on purpose, so the wait and the request are budgeted
+// separately (see Fetch's own comment). A caller reaching Acquire directly
+// with a deadlined ctx is bounded by whichever expires first, as always.
 func (l *Limiter) Acquire(ctx context.Context) (func(), error) {
 	if l == nil {
 		return func() {}, nil

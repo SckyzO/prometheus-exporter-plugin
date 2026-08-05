@@ -19,5 +19,7 @@
 	// --collector.example.timeout already bounds the wait for a
 	// CommandLimiter slot (an immediately-expired context, not an unbounded
 	// one), unlike the gap Client.acquireTimeout exists to close on the http
-	// flavor's own NewClient/NewClientFor paths.
+	// flavor. What this flavor does NOT get from that is a wait budget
+	// separate from the command's own; see execute.go's comment on the
+	// ordering for what that costs and why it is not fixed by reordering.
 	collector.CommandLimiter = collector.NewLimiter(*maxRequestsPerTarget)

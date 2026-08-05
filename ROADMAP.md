@@ -303,13 +303,37 @@ missing knowledge are tracked together because the first item is both.
   healthchecks all call `--version` on a binary they have no configuration
   for. The gate missed it because `golden-smoke.sh` always passes
   `--config.file`; closing the test hole is part of the fix.
-- **The concurrency ceiling is unusable at 1**, which is the value the plugin
-  itself recommends for a target that serializes internally. One deadline
-  covers the queue wait and the request together, so a collector queued behind
-  its siblings burns its whole budget waiting. Measured in the field: 14 of 19
-  collectors starved on every sweep, permanently, because same-interval
-  tickers fire together and the alignment never breaks up. Needs a separate
-  queue budget, under the two-phase rule.
+- **The concurrency ceiling is unusable at 1**, which is the right value for a
+  target that serializes internally. One deadline covered the queue wait and
+  the request together, so a collector queued behind its siblings burned its
+  whole budget waiting. Measured in the field: 14 of 19 collectors starved on
+  every sweep, permanently, because same-interval tickers fire together and
+  the alignment never breaks up.
+
+  **Phase 1 is done** (http flavor): `Client.Fetch` acquires its slot before
+  applying the request deadline, so the wait is bounded by `acquireTimeout`
+  and the request gets its own full budget. That does not change the count.
+  Measured on the same 19-collector sweep afterwards: 5 succeed and 14 still
+  starve, because every constructor still sets `acquireTimeout` to the
+  request timeout. What it changes is the failure: the 14 now fail on the
+  wait, fast and named, instead of on a request they had no time to finish,
+  which was indistinguishable from a slow target.
+
+  **Phase 2 is what makes the ceiling serviceable**: let the wait budget be
+  sized independently of the request budget, minutes against seconds, and
+  decide whether its default should stop tracking the request timeout. That
+  is a configuration-surface change and a default move, so it is its own
+  release under the two-phase rule.
+- **The CLI flavor shares one budget the same way the HTTP one did**, found
+  while fixing the HTTP client and not by the field: `Execute` receives a
+  `ctx` whose per-command deadline the caller has already applied, so the wait
+  for a `CommandLimiter` slot is charged against the command's own budget. The
+  HTTP fix does not transfer, because reordering is not available here: the
+  deadline arrives already on `ctx`. Closing it means reading the remaining
+  budget off `ctx.Deadline()` and re-arming two budgets from it, on a context
+  stripped of that deadline but still cancelable by its parent, which the
+  standard library does not express directly. Doable, not a reordering, and
+  its own item.
 - **The shipped systemd unit does not start a multi-instance build**: its
   `ExecStart` carries no `--config.file`, which that model requires.
 - **Neither does the shipped container path**, found while fixing the unit

@@ -53,10 +53,13 @@ var (
 	// configured nothing.
 	//
 	// A ceiling turns a slow collector into a source of starvation for its
-	// siblings, so it is a deliberate choice with a visible cost. The wait is
-	// charged against each collector's own timeout, and
-	// @@NAMESPACE@@_exporter_request_wait_seconds is what makes queueing
-	// visible rather than silent.
+	// siblings, so it is a deliberate choice with a visible cost. Either way
+	// the wait is bounded and @@NAMESPACE@@_exporter_request_wait_seconds is
+	// what makes queueing visible rather than silent, but what bounds it
+	// differs by flavor: on http the wait has a budget of its own, so the
+	// worst case for one request is that budget plus the request timeout; on
+	// cli the collector's own timeout covers the wait and the command
+	// together, so a queued command spends its own budget waiting.
 	maxRequestsPerTarget = kingpin.Flag(
 		"exporter.max-requests-per-target",
 		"Maximum concurrent requests this exporter issues to one target. 0 (default) means unlimited.",

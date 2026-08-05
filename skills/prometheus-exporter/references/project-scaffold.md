@@ -276,7 +276,9 @@ alongside this one.
 `collector.RequestWait` (`http_client_request_wait` / `command_exec_wait`,
 same underlying histogram either flavor) is the second self-instrumentation
 metric alongside the duration one, also labeled only by `outcome` (`success`
-if a slot was granted, `error` if the caller's own deadline expired first,
+if a slot was granted, `error` if the deadline bounding the wait expired
+before one was (`Client.acquireTimeout` on the http flavor, the caller's own
+deadline on the cli one),
 mirroring `RequestDuration`/`CommandDuration`'s own convention): it records
 how long a request or command waited for a slot from
 `--exporter.max-requests-per-target`'s ceiling, whether or not one was ever
