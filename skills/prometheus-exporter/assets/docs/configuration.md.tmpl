@@ -45,7 +45,9 @@ Prometheus itself uses.
 | `--web.disable-exporter-metrics` | Exclude Go runtime and process metrics from `/metrics` | `false` |
 | `--[no-]collector.<name>` | *(single-target and multi-instance builds)* Enable or disable a collector (kingpin boolean flag) | see below |
 | `--exporter.max-requests-per-target` | *(single-target and multi-instance builds only, absent on `multi`)* Bounds how many outbound requests/commands this exporter has in flight at once. `0` means unlimited. Scope differs by build; see [Bounding outbound concurrency](#bounding-outbound-concurrency) below | `0` |
-| `--web.enable-lifecycle` | *(multi-target and multi-instance builds only)* Expose `POST /-/reload`, which reloads `--config.file`. `SIGHUP` always works and needs no flag; see [Configuration reload](#configuration-reload-multi-and-multi-instance-builds-only) below | `false` |
+@@IF target-model!=single@@
+| `--web.enable-lifecycle` | Expose `POST /-/reload`, which reloads `--config.file`. `SIGHUP` always works and needs no flag; see [Configuration reload](#configuration-reload) below | `false` |
+@@ENDIF@@
 @@IF target-model=multi@@
 | `--probe.target-allowlist` | Restrict `/probe` to these target hosts (repeatable; host or host:port, exact match) | (empty = allow-any) |
 | `--probe.timeout` | Ceiling on each `/probe` request's own deadline | `5s` |
@@ -54,10 +56,15 @@ Prometheus itself uses.
 
 In **single-target builds**, individual collectors may also expose their own flags. The bundled `example` collector does:
 
-| Flag | Description | Default | Flavor |
-|------|-------------|---------|--------|
-| `--collector.example.timeout` | Per-request/per-command timeout for the `example` collector | `5s` | HTTP and CLI |
-| `--collector.example.target` | Base URL the `example` collector fetches | `@@DATA_SOURCE@@` | HTTP only |
+| Flag | Description | Default |
+|------|-------------|---------|
+@@IF flavor=http@@
+| `--collector.example.timeout` | Per-request timeout for the `example` collector | `5s` |
+| `--collector.example.target` | Base URL the `example` collector fetches | `@@DATA_SOURCE@@` |
+@@ENDIF@@
+@@IF flavor!=http@@
+| `--collector.example.timeout` | Per-command timeout for the `example` collector | `5s` |
+@@ENDIF@@
 
 @@IF target-model=multi@@
 On this build the `example` collector is built fresh per `/probe` request: its target and timeout come from the request (bounded by the `--probe.*` flags above), so it exposes no `--collector.example.*` flags, and there is no `--[no-]collector.<name>` toggle.
@@ -275,9 +282,10 @@ above the number of collectors that can run a command at once, or set
 `--collector.<name>.timeout` high enough to absorb a queue.
 @@ENDIF@@
 
-## Configuration reload (`multi` and `multi-instance` builds only)
+## Configuration reload
 
-A single-target build has no reload at all: its `--config.file`, if any,
+@@IF target-model=single@@
+This build has no reload: its `--config.file`, if any,
 holds only a `flags:` section (applied once at startup, and a running
 process cannot adopt a new value for a flag) and an `http_client_config:`
 section whose file-backed secrets and TLS material `prometheus/common`
@@ -287,9 +295,9 @@ accepts: `username_file`, `password_file`, `credentials_file`,
 `bearer_token_file`, `client_secret_file`, `client_certificate_key_file`,
 `ca_file`, `cert_file` and `key_file`. See `SECURITY.md` for the full
 reasoning.
-
-Multi-target and multi-instance builds both reload `--config.file` in
-place, two ways:
+@@ENDIF@@
+@@IF target-model!=single@@
+This build reloads `--config.file` in place, two ways:
 
 - **`SIGHUP`**: always available, no flag needed. Sending it already
   requires being on the machine, which is why it needs no separate opt-in.
@@ -338,6 +346,7 @@ family is later unregistered, so silently allowing it would panic rather
 than reload. Everything else on this build reloads with no restart: which
 instances exist, an instance's address, its credentials, and the values of
 its labels.
+@@ENDIF@@
 
 @@IF target-model=multi@@
 ## The `/probe?target=` endpoint (multi-target builds only)
@@ -567,16 +576,15 @@ In addition, each I/O flavor exposes a histogram timing its own outbound calls:
 | `@@NAMESPACE@@_exporter_command_duration_seconds` | Duration of external commands executed by collectors | `outcome` (`success`/`error`) | CLI |
 | `@@NAMESPACE@@_exporter_request_wait_seconds` | Duration a request or command waited for a concurrency slot, by outcome. Both series stay at a permanent zero once `--exporter.max-requests-per-target` is unset (the default); see [Bounding outbound concurrency](#bounding-outbound-concurrency) above | `outcome` (`success`/`error`) | HTTP and CLI |
 
-On a multi-target or multi-instance build, two further gauges report the
-health of the configuration-reload mechanism itself (absent on
-single-target builds, which have no reload; see
-[Configuration reload](#configuration-reload-multi-and-multi-instance-builds-only)
-above):
+@@IF target-model!=single@@
+Two further gauges report the health of the configuration-reload mechanism
+itself; see [Configuration reload](#configuration-reload) above:
 
 | Metric | Description | Labels |
 |---|---|---|
 | `@@NAMESPACE@@_exporter_config_last_reload_successful` | Whether the last configuration reload attempt succeeded (`1`) or failed (`0`) | - |
 | `@@NAMESPACE@@_exporter_config_last_reload_success_timestamp_seconds` | Unix time of the last successful configuration reload | - |
+@@ENDIF@@
 
 ---
 

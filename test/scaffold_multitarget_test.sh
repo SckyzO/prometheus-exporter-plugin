@@ -300,10 +300,16 @@ for f in README.md SECURITY.md docs/configuration.md docs/metrics.md docs/develo
     # Only headings present in BOTH renders can be compared; one that exists on
     # a single model is legitimately model-specific.
     while IFS="$(printf '\t')" read -r h3 parent; do
-      other=$(grep -F "$(printf '%s\t' "$h3")" "$work/_pm-$m" | head -1 | cut -f2-)
-      [ -n "$other" ] || continue
+      # Test the LINE for presence, not the parent: a heading whose parent
+      # gated away entirely has an empty parent, and skipping on an empty
+      # parent is skipping exactly the defect this loop is named for. That
+      # is how the first cut of this check stayed green under its own
+      # mutation. Mutation-tested in both directions.
+      line=$(grep -F "$(printf '%s\t' "$h3")" "$work/_pm-$m" | head -1)
+      [ -n "$line" ] || continue
+      other=$(printf '%s' "$line" | cut -f2-)
       [ "$other" = "$parent" ] ||
-        fail "$f: subsection '$h3' sits under '$parent' on single but under '$other' on $m; gating removed the level-2 heading it was authored beneath"
+        fail "$f: subsection '$h3' sits under '$parent' on single but under '${other:-(no parent at all)}' on $m; gating removed the level-2 heading it was authored beneath"
     done < "$work/_pm-default"
   done
 done
@@ -379,14 +385,55 @@ grep -q 'no-collector.http_client_requests' "$cli_cfgdoc" &&
 grep -q 'collector="command_exec"' "$work/cli/docs/validation-checklist.md" ||
   fail "cli docs/validation-checklist.md expects the http flavor's series names; the operator would chase a series this binary never emits"
 
-# Every flag name the cli docs tell an operator to run must exist in the
-# binary. This is the generic form of the two greps above, and it is what
-# would have caught the regression without anyone naming the flag first.
-for flag in $(grep -oh -- '--no\?-collector\.[a-z_]*' "$cli_cfgdoc" | sed 's/^--no-collector\.//;s/^--collector\.//' | sort -u); do
-  grep -rq "\"$flag\"" "$work/cli/cmd" "$work/cli/internal" ||
+# Every collector flag the cli docs name must exist in the binary. This is the
+# generic form of the two greps above, and it is what would have caught the
+# regression without anyone naming the flag first.
+#
+# -E, not BRE: the first cut of this used '--no\?-collector\.', where \? makes
+# the preceding "o" optional rather than the "no-" group, so the pattern read
+# as --n(o?)-collector and matched --no-collector and --n-collector but never
+# --collector. The strip below was dead code and the loop inspected no
+# per-collector option flag at all. Mutation-tested in both directions.
+#
+# The two flag shapes need different lookups, which is why this is not one
+# grep. A toggle (--[no-]collector.<name>, two segments) is built by
+# concatenation in register(), so "collector.<name>" appears nowhere as a
+# literal and the collector's own name is what must be found. An option
+# (--collector.<name>.<opt>, three segments) is declared as a whole string in
+# kingpin.Flag, so the literal is what must be found.
+for flag in $(grep -ohE -- '--(no-)?collector\.[a-z0-9_.]+' "$cli_cfgdoc" | sed 's/^--\(no-\)\?collector\.//' | sort -u); do
+  case $flag in
+    *.*) needle="collector.$flag" ;;   # option flag: whole-string literal
+    *)   needle="$flag" ;;             # toggle: the collector name register() takes
+  esac
+  grep -rq "\"$needle\"" "$work/cli/cmd" "$work/cli/internal" ||
     fail "cli docs/configuration.md names --collector.$flag, which appears nowhere in the generated sources"
 done
 
 echo "PASS: a cli scaffold's docs name only flags a cli binary actually declares"
+
+# The same parent-stability invariant as above, on the FLAVOR axis. It is run
+# here rather than in that loop only because $work/cli is rendered at this
+# point in the file and not earlier.
+#
+# Running it on the model axis alone was itself the defect: this PR's whole
+# subject is that prose varies by flavor as well as by target model, so leaving
+# the flavor axis uncovered left the invariant blind to half of what it guards.
+# Mutation-tested: gating a level-2 heading out of the cli rendering leaves the
+# model-axis loop green and turns this one red.
+for f in README.md SECURITY.md docs/configuration.md docs/metrics.md docs/development.md; do
+  [ -f "$work/cli/$f" ] && [ -f "$work/default/$f" ] || continue
+  parentmap "$work/default/$f" > "$work/_pm-default"
+  parentmap "$work/cli/$f" > "$work/_pm-cli"
+  while IFS="$(printf '\t')" read -r h3 parent; do
+    line=$(grep -F "$(printf '%s\t' "$h3")" "$work/_pm-cli" | head -1)
+    [ -n "$line" ] || continue
+    other=$(printf '%s' "$line" | cut -f2-)
+    [ "$other" = "$parent" ] ||
+      fail "$f: subsection '$h3' sits under '$parent' on http but under '${other:-(no parent at all)}' on cli; gating removed the level-2 heading it was authored beneath"
+  done < "$work/_pm-default"
+done
+
+echo "PASS: no subsection changed parent between flavors either"
 
 echo "PASS"

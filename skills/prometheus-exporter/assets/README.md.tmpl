@@ -139,10 +139,10 @@ This build also exposes:
 
 | Endpoint | Description |
 |---|---|
-| `POST /-/reload` | Reloads `--config.file` in place, no restart. Behind `--web.enable-lifecycle` (default off); `SIGHUP` always works and needs no flag. See [Configuration reload](docs/configuration.md#configuration-reload-multi-and-multi-instance-builds-only) |
+| `POST /-/reload` | Reloads `--config.file` in place, no restart. Behind `--web.enable-lifecycle` (default off); `SIGHUP` always works and needs no flag. See [Configuration reload](docs/configuration.md#configuration-reload) |
 @@ENDIF@@
-@@IF target-model=multi@@
 
+@@IF target-model=multi@@
 ```bash
 curl 'http://localhost:@@DEFAULT_PORT@@/probe?target=http://target-a:9100'
 ```

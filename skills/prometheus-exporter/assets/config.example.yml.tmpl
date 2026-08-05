@@ -69,14 +69,13 @@ flags:
   # collector.example.timeout: 10s
   # @@ENDIF@@
 
+  # @@IF target-model!=multi@@
   # Bounds how many outbound requests/commands this exporter has in flight
-  # at once. 0 (the default) means unlimited. Available on single-target and
-  # multi-instance builds only: a multi-target exporter has no such flag, see
-  # docs/configuration.md's "Bounding outbound concurrency" section for what
-  # this actually bounds on each build (per target address on single-target
-  # HTTP, exporter-wide on single-target CLI, per watched instance on
-  # multi-instance).
+  # at once. 0 (the default) means unlimited. See docs/configuration.md's
+  # "Bounding outbound concurrency" section for what this bounds on this
+  # build.
   # exporter.max-requests-per-target: 4
+  # @@ENDIF@@
 
 # @@IF flavor=http@@
 # http_client_config carries the authentication and TLS settings no flag can
@@ -86,9 +85,9 @@ flags:
 # http_client_config carries authentication and TLS for an HTTP-flavor
 # exporter's outbound requests. This build runs a local command instead, so it
 # has nothing to authenticate: given this section it refuses to start rather
-# than accept a setting it would silently drop. It is documented here because
-# the same file is the starting point for both flavors.
+# than accept a setting it would silently drop, so no example is shown here.
 # @@ENDIF@@
+# @@IF flavor=http@@
 #
 # Commented out here on purpose: an active block pointing at password_file/
 # ca_file/cert_file/key_file paths that do not exist on your machine would
@@ -147,15 +146,19 @@ flags:
 #     # with a SAN. docs/validation-checklist.md carries the diagnosis steps,
 #     # including why a successful curl does not predict a working Go client.
 #     insecure_skip_verify: false
+# @@ENDIF@@
 
-# modules: named credential/TLS bundles this exporter can select. What reads
-# this section, and how a module gets picked, depends on the target model
-# this exporter was scaffolded with:
-#
 # @@IF target-model=single@@
-# This build refuses this section outright at boot: it does not apply here at
-# all. It is described below because the same file is the starting point for
-# the other two target models, where it does.
+# modules: named credential/TLS bundles. This build refuses this section at
+# boot, so no example is shown here: an example you cannot use is
+# indistinguishable, on a first reading, from one you can. The other two
+# target models are where it applies.
+# @@ENDIF@@
+# @@IF target-model!=single@@
+# modules: named credential/TLS bundles this exporter can select. How a
+# module gets picked depends on the target model this exporter was
+# scaffolded with:
+#
 # @@ENDIF@@
 # @@IF target-model=multi@@
 # This build (/probe) selects a module per request with
@@ -169,7 +172,9 @@ flags:
 # enablement is global via --[no-]collector.<name> instead, so a per-module
 # subset would be meaningless.
 # @@ENDIF@@
+# @@IF target-model!=single@@
 #
+# @@ENDIF@@
 # @@IF target-model=multi@@
 # Credentials never combine: at most
 # one of the modules a request selects may carry an http_client_config:, and
@@ -186,14 +191,11 @@ flags:
 # present, but the top-level one then goes unread, since every instance
 # resolves its module by name. A known asymmetry, not something to rely on.
 # @@ENDIF@@
+# @@IF target-model!=single@@
 #
 # Commented out for the same reason as http_client_config: above, an active
 # block pointing at files that do not exist on your machine would fail to load.
 #
-# @@IF target-model=single@@
-# Nothing below applies to this build, which refuses the section entirely.
-# The examples are kept out of a single-target file on purpose: an example
-# you cannot use is indistinguishable, on a first reading, from one you can.
 # @@ENDIF@@
 # @@IF target-model=multi@@
 # Two conventions work, and the choice is yours to make here rather than in

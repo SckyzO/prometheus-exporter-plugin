@@ -99,15 +99,15 @@ no reload; rotating an inline value (`password`, `bearer_token`, `key`, none
 of which are recommended, see above) still means restarting the process,
 since nothing re-parses the configuration file to pick it up. A module is
 @@IF target-model=multi@@
-selected per request (`?module=` on `/probe`); either way
+selected per request (`?module=` on `/probe`).
 @@ENDIF@@
 @@IF target-model=multi-instance@@
-selected once at boot (an instance's `module:` key); either way
+selected once at boot (an instance's `module:` key).
 @@ENDIF@@
 @@IF target-model=single@@
-never selected at all on this build, which refuses the section; either way
+never selected at all on this build, which refuses the section.
 @@ENDIF@@
-it is never a metric label and never reaches any series this exporter
+It is never a metric label and never reaches any series this exporter
 exposes.
 
 @@IF target-model!=single@@

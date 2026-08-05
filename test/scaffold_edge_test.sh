@@ -400,6 +400,17 @@ x
 cond_rejects '@@IF target-model=multi-instance,model=x@@
 x
 @@ENDIF@@' 'a bad key in the second term of an AND' 'unknown @@IF@@ key'
+
+# A marker behind prose, separated by a REAL TAB. Regression test for the two
+# halves of the engine disagreeing on what whitespace is: the residual-sentinel
+# guard once used the BRE '@@IF[ \t]', where \t inside a bracket expression is
+# the literal set {space, backslash, t} and not a tab at all, while the awk
+# pass reads a real tab. A marker separated by a tab therefore leaked into a
+# generated repository with exit 0, which is precisely the shape of the bug
+# that guard was widened to close. printf renders the \t here, so this case
+# fails against the BRE form and passes against [[:space:]].
+cond_rejects "$(printf 'Trailing prose @@IF\tflavor=http@@')" \
+  'a marker behind prose separated by a tab' 'residual'
 rm -f "$condsrc/bad.txt.tmpl"
 
 echo "PASS: malformed conditionals are rejected loudly, never silently dropped"
