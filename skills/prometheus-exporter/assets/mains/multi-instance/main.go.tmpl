@@ -100,6 +100,32 @@ var (
 		"Maximum concurrent requests this exporter issues per watched instance. 0 (default) means unlimited. Two instances sharing one physical address are bounded independently, not together.",
 	).Default("0").Int()
 
+	// maxRequestWait budgets the WAIT for a slot separately from the request
+	// that follows it. 0, the default, keeps the wait bounded by each
+	// collector's own timeout, which is what every build before this flag
+	// existed did, so nothing moves under an operator who sets nothing.
+	//
+	// This is the flag that makes a low ceiling serviceable, and this target
+	// model is where it matters most: every collector here is a background
+	// poller with its own ticker, and collectors sharing a refresh interval
+	// fire together on every sweep. Tied to the request timeout, one ceiling
+	// serves only as many of them as the ratio between that timeout and a
+	// single request's duration, and the rest starve permanently rather than
+	// transiently, because the alignment never breaks up. Size it as roughly
+	// the number of collectors sharing one instance's queue times how long
+	// one of them holds a slot: minutes, typically, where the request timeout
+	// is seconds. It has no non-arbitrary default for that reason, the count
+	// being invisible from where a Client is built.
+	//
+	// Global rather than per instance or per collector, matching the ceiling
+	// it budgets against: the queue is a property of one watched machine, and
+	// how long a collector should tolerate queueing depends on how many
+	// collectors share that queue, not on what any one of them does.
+	maxRequestWait = kingpin.Flag(
+		"exporter.max-request-wait",
+		"Maximum time a request waits for a concurrency slot before giving up, budgeted separately from the request itself. 0 (default) bounds the wait by the collector's own timeout instead. Only meaningful with --exporter.max-requests-per-target set.",
+	).Default("0").Duration()
+
 	// configFile is REQUIRED for this target model: without it there are no
 	// instances to watch. Its value is read straight from os.Args below, before
 	// parsing, because it decides which arguments the parser is given.
@@ -237,7 +263,7 @@ func main() {
 	// documented meaning for 0). Each Handle Prepare builds gets its own
 	// Limiter from this same ceiling, so an instance added by a later reload
 	// is covered too, without anything having to be pre-populated.
-	registry := instance.NewRegistry(log, reg, instanceLabel, enabled, *maxRequestsPerTarget)
+	registry := instance.NewRegistry(log, reg, instanceLabel, enabled, *maxRequestsPerTarget, *maxRequestWait)
 	plan, err := registry.Prepare(instances)
 	if err != nil {
 		// A transport that cannot be built (unreadable CA or secret file) is a

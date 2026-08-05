@@ -33,8 +33,17 @@
 	// the thing that must happen here, at flag-parse time). Reject at boot,
 	// naming the collector, the same way instance.Handle.ClientFor already
 	// refuses a non-positive NewClientOn timeout.
-	if *maxRequestsPerTarget > 0 && *exampleTimeout <= 0 {
-		fmt.Fprintln(os.Stderr, fmt.Errorf("collector %q: a positive --collector.example.timeout is required when --exporter.max-requests-per-target is set, got %v (the limiter wait would otherwise be unbounded)", "example", *exampleTimeout))
+	//
+	// --exporter.max-request-wait widens what counts as bounded, so this
+	// refusal has to widen with it or it stops being NECESSARY: with a wait
+	// budget set, a non-positive collector timeout no longer produces an
+	// unbounded wait, and refusing it would reject a configuration that is
+	// now correct. It stays SUFFICIENT because acquireTimeout ends up
+	// non-positive only when both of these are, which is exactly the
+	// condition below. See Client.acquire, which skips its WithTimeout on a
+	// non-positive acquireTimeout and hands Acquire an undeadlined context.
+	if *maxRequestsPerTarget > 0 && *maxRequestWait <= 0 && *exampleTimeout <= 0 {
+		fmt.Fprintln(os.Stderr, fmt.Errorf("collector %q: a positive --collector.example.timeout or --exporter.max-request-wait is required when --exporter.max-requests-per-target is set, got timeout %v (the limiter wait would otherwise be unbounded)", "example", *exampleTimeout))
 		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
 		os.Exit(1) //nolint:gocritic // stop() called explicitly above
 	}
@@ -52,4 +61,7 @@
 		exampleClient = collector.NewClient(*exampleTarget, *exampleTimeout)
 	}
 	// A nil limiter (the default ceiling of 0) leaves this a no-op.
-	exampleClient = exampleClient.WithLimiter(collector.Limiters.For(*exampleTarget))
+	// WithAcquireTimeout is likewise a no-op at the default 0, which keeps the
+	// wait bounded by the collector's own timeout exactly as before.
+	exampleClient = exampleClient.WithLimiter(collector.Limiters.For(*exampleTarget)).
+		WithAcquireTimeout(*maxRequestWait)

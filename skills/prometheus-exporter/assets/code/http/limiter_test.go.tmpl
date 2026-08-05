@@ -200,6 +200,88 @@ func TestAcquireLabelsRequestWaitByOutcome(t *testing.T) {
 	}
 }
 
+// requestWaitSampleSum reads the observed SECONDS, not the sample count, which
+// is what makes it possible to assert that the histogram brackets the wait
+// alone. Same gather-into-a-throwaway-registry shape as its sibling above.
+func requestWaitSampleSum(t *testing.T, outcome string) float64 {
+	t.Helper()
+	reg := prometheus.NewRegistry()
+	if err := reg.Register(RequestWait); err != nil {
+		t.Fatalf("register RequestWait: %v", err)
+	}
+	mfs, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+	for _, mf := range mfs {
+		if mf.GetName() != "@@NAMESPACE@@_exporter_request_wait_seconds" {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			for _, l := range m.GetLabel() {
+				if l.GetName() == "outcome" && l.GetValue() == outcome {
+					return m.GetHistogram().GetSampleSum()
+				}
+			}
+		}
+	}
+	t.Fatalf(`no @@NAMESPACE@@_exporter_request_wait_seconds series with outcome=%q`, outcome)
+	return 0
+}
+
+// TestRequestWaitMeasuresTheWaitAlone pins what the metric's own name claims,
+// which nothing asserted before: its sibling above counts samples by outcome
+// and would stay green if the histogram bracketed the wait AND the request.
+//
+// This matters more now that the wait has a budget of its own and can be far
+// longer than a request: an operator sizing --exporter.max-request-wait reads
+// this histogram to decide, so a value that quietly included request time
+// would drive that decision wrong, and would do it invisibly, since both
+// numbers move together under load.
+func TestRequestWaitMeasuresTheWaitAlone(t *testing.T) {
+	const (
+		holdSlot   = 300 * time.Millisecond
+		serverWork = 400 * time.Millisecond // deliberately larger than the wait
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(serverWork)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+
+	before := requestWaitSampleSum(t, "success")
+
+	lim := NewLimiter(1)
+	c := NewClientOn(NewTransport(&http.Client{}), srv.URL, 5*time.Second).
+		WithLimiter(lim).
+		WithAcquireTimeout(5 * time.Second)
+
+	release, err := lim.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("seeding the limiter: %v", err)
+	}
+	go func() {
+		time.Sleep(holdSlot)
+		release()
+	}()
+
+	if _, err := c.Fetch(context.Background(), "/"); err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+
+	// Two observations landed on outcome="success": the seeding Acquire above
+	// (immediate, near zero) and Fetch's own (about holdSlot). So the delta is
+	// about holdSlot, and it must NOT have grown by serverWork on top.
+	delta := requestWaitSampleSum(t, "success") - before
+	if delta < holdSlot.Seconds()*0.5 {
+		t.Fatalf("observed wait total grew by only %.3fs, less than half the %v the slot was held: the histogram is not bracketing the wait at all", delta, holdSlot)
+	}
+	if ceiling := (holdSlot + serverWork/2).Seconds(); delta > ceiling {
+		t.Fatalf("observed wait total grew by %.3fs, past %.3fs: request time is leaking into a histogram that claims to measure the wait for a slot", delta, ceiling)
+	}
+}
+
 // TestLimiterSetGroupsByTarget proves two collectors on the same address share
 // one ceiling and two collectors on different addresses do not.
 func TestLimiterSetGroupsByTarget(t *testing.T) {

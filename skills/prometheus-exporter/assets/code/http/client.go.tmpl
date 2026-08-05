@@ -102,14 +102,20 @@ type Client struct {
 	// ctx until Fetch has a slot in hand. Neither gives any cover for time
 	// spent blocked in Acquire.
 	//
-	// Every constructor below sets it to the same per-request deadline it
+	// Every constructor below seeds it with the same per-request deadline it
 	// already knows, which makes a Client's worst case with a limiter
 	// attached acquireTimeout (the wait) plus whatever bounds the request:
 	// bounded on both sides, never an unbounded queue and never a request
-	// squeezed into what a queue wait left over. Whether the wait deserves a
-	// budget of its own, in minutes where a request takes seconds, is a
-	// separate question from this one and is not settled by this default.
-	// See acquire and WithLimiter.
+	// squeezed into what a queue wait left over.
+	//
+	// That seeding is a default, not the value: WithAcquireTimeout replaces it
+	// with a budget of the wait's own, which is what makes a low ceiling
+	// serviceable. A queue's tolerable wait scales with how many collectors
+	// share it and how long each holds a slot, so it belongs in minutes where
+	// a request belongs in seconds, and tying the two together caps the number
+	// of collectors one ceiling can serve at the ratio between the request
+	// timeout and the request's own duration. See acquire, WithLimiter and
+	// WithAcquireTimeout.
 	acquireTimeout time.Duration
 	limiter        *Limiter // nil means unlimited, see limiter.go
 }
@@ -186,6 +192,37 @@ func NewClientOn(tr *Transport, target string, timeout time.Duration) *Client {
 // reload-prepare-time) check, and it runs before this method ever does.
 func (c *Client) WithLimiter(lim *Limiter) *Client {
 	c.limiter = lim
+	return c
+}
+
+// WithAcquireTimeout returns the same Client with a wait budget of its own,
+// replacing the per-request deadline every constructor seeds acquireTimeout
+// with. A non-positive d keeps that seeded default, so a caller can pass an
+// unset flag straight through without testing it first.
+//
+// This is what makes a low ceiling serviceable. With the wait budget tied to
+// the request timeout, one ceiling serves only as many collectors as the ratio
+// between that timeout and a single request's duration: at a ceiling of 1,
+// nineteen collectors that fire together and take a fifth of their timeout
+// each, five get served and fourteen starve on every sweep, permanently,
+// because same-interval tickers align and that alignment does not break up on
+// its own. Sized independently, in minutes where the request is in seconds,
+// the same nineteen all get served.
+//
+// Deliberately NOT defaulted to something generous here. An unbounded or
+// arbitrarily long wait is the silent-queueing failure the ceiling exists to
+// prevent, and there is no non-arbitrary multiple of a request timeout that
+// happens to be right, because the correct value depends on how many
+// collectors share the queue, which this Client cannot see. The operator sets
+// it against their own collector count; the flag's own help text says so.
+//
+// Total: raising this raises a request's worst case, which is the wait budget
+// plus whatever bounds the request. A collector that gives up still fails on
+// the wait, named as the wait, exactly as it did before.
+func (c *Client) WithAcquireTimeout(d time.Duration) *Client {
+	if d > 0 {
+		c.acquireTimeout = d
+	}
 	return c
 }
 
@@ -330,15 +367,14 @@ func (c *Client) Fetch(ctx context.Context, path string) (data []byte, err error
 	// sides. A collector that cannot get a slot fails on the wait, quickly,
 	// with an error naming the wait.
 	//
-	// What this does NOT do, stated because the numbers invite the wrong
-	// conclusion: it does not by itself make a low ceiling stop starving
-	// collectors. Every constructor still sets acquireTimeout to the same
-	// value as the request timeout, so the same collectors miss out; they now
-	// fail on the wait, honestly and fast, instead of on a request they never
-	// had time to finish. Making a ceiling of 1 actually serviceable needs the
-	// wait budget to be sized independently of the request budget, minutes
-	// against seconds, which is a separate change to a default this one
-	// deliberately leaves alone.
+	// Separating the two budgets is necessary for a low ceiling to be usable
+	// but not sufficient, and the difference is the wait budget's SIZE. Every
+	// constructor seeds acquireTimeout with the request timeout, and under
+	// that seeding one ceiling serves only as many collectors as the ratio
+	// between the timeout and a single request's duration: the rest starve on
+	// every sweep, honestly and fast rather than mid-request, but they starve.
+	// WithAcquireTimeout is what sizes the wait independently, and
+	// --exporter.max-request-wait is what reaches it from a flag.
 	if c.timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, c.timeout)
@@ -367,17 +403,18 @@ func (c *Client) Fetch(ctx context.Context, path string) (data []byte, err error
 	return data, nil
 }
 
-// acquire waits for a limiter slot, bounding that wait to acquireTimeout so
-// it can never exceed the same deadline that already governs the request
-// about to follow it. The bound is applied to a context local to this call
-// only: it never replaces or shortens the ctx Fetch goes on to build the
+// acquire waits for a limiter slot, bounding that wait to acquireTimeout.
+// That bound defaults to the same deadline governing the request about to
+// follow, and WithAcquireTimeout replaces it with a budget of the wait's own,
+// which may be far longer. The bound is applied to a context local to this
+// call only: it never replaces or shortens the ctx Fetch goes on to build the
 // request with, so a Client whose request deadline lives on
 // http.Client.Timeout (every constructor except NewClientOn) keeps that
 // deadline exactly as it was before, limiter or not.
 //
 // Total worst case once a limiter is attached, on every construction path
-// alike: acquireTimeout (the wait) plus whatever bounds the request, at most
-// twice the configured timeout, and if the wait alone exceeds its budget Fetch
+// alike: acquireTimeout (the wait) plus whatever bounds the request, and if
+// the wait alone exceeds its budget Fetch
 // fails fast with an error naming the wait instead of eventually succeeding
 // late (see Fetch's own error message for this). Fetch applies c.timeout only
 // after this returns, precisely so that the request's budget is not whatever
