@@ -94,7 +94,12 @@ Use `--[no-]collector.<name>` (kingpin boolean syntax) to enable or disable a co
 **Example: disable the self-instrumentation collector**
 
 ```bash
+@@IF flavor=http@@
 ./@@EXPORTER_NAME@@ --no-collector.http_client_requests
+@@ENDIF@@
+@@IF flavor!=http@@
+./@@EXPORTER_NAME@@ --no-collector.command_exec
+@@ENDIF@@
 ```
 
 **Example: custom timeout and logging**
@@ -202,7 +207,8 @@ index a ceiling by the way the other two models have.
 @@ENDIF@@
 
 @@IF target-model=multi@@
-There is no ceiling to size on this build, so nothing below applies to it.
+This build has no ceiling to size, so the rest of this section is background
+rather than something to act on.
 @@ENDIF@@
 @@IF target-model!=multi@@
 **What the ceiling actually bounds on this build, worth knowing before you
@@ -223,8 +229,8 @@ set a number:**
   binary each one targets.
 @@ENDIF@@
 @@IF target-model=multi-instance@@
-- **One ceiling per watched *instance***, the
-  `instances:` entry, from `--config.file`), not per physical address. Two
+- **One ceiling per watched *instance*** (the `instances:` entry, from
+  `--config.file`), not per physical address. Two
   `instances:` entries that happen to name the same physical machine are
   bounded **independently**, not jointly, so this exporter's aggregate
   concurrency against that one machine can exceed the configured value. This
@@ -584,5 +590,10 @@ above):
 - **Collector selection**: disable collectors you don't need to reduce load:
 
   ```bash
+  @@IF flavor=http@@
   ./@@EXPORTER_NAME@@ --no-collector.http_client_requests
+  @@ENDIF@@
+  @@IF flavor!=http@@
+  ./@@EXPORTER_NAME@@ --no-collector.command_exec
+  @@ENDIF@@
   ```

@@ -246,7 +246,7 @@ for m in default multi mi; do
   fi
 done
 
-echo "PASS: no rendered file mentions a target model or flavor that was not chosen"
+echo "PASS: no rendered doc or config mentions a target model or flavor that was not chosen"
 
 # The container path must be able to start the model it was scaffolded for,
 # the same claim the systemd unit now carries. Naming the file on the command
@@ -281,13 +281,30 @@ echo "PASS: the container path can start a multi-instance build, mount included"
 # ---------------------------------------------------------------------------
 
 # A heading that lost its parent is the signature of an @@ENDIF@@ landing one
-# heading too early. Cheap to detect: no `###` may appear before the first
-# `##` of a rendered document.
-for m in default multi mi; do
-  for f in "$work/$m"/*.md "$work/$m"/docs/*.md; do
-    [ -f "$f" ] || continue
-    orphan=$(awk '/^## /{seen=1} /^### /{if(!seen){print FNR": "$0; exit}}' "$f")
-    [ -z "$orphan" ] || fail "$m ${f##*/} has a level-3 heading before any level-2 heading (gating closed a block too early): $orphan"
+# heading too early. The obvious check, "no ### before the document's first
+# ##", is structurally incapable of seeing it: every real over-drop of this
+# class happens deep in the file, under some earlier ##. Written that way once,
+# it stayed green on exactly the defect it was named for.
+#
+# The invariant that does hold: a subsection's PARENT must not change between
+# target models. If gating removes the ## a ### was authored under, that ###
+# reattaches to whatever ## precedes it instead, and the pairing diverges.
+parentmap() { # <rendered .md> -> "<h3 title>\t<nearest preceding h2 title>"
+  awk '/^## /{h2=substr($0,4)} /^### /{print substr($0,5) "\t" h2}' "$1"
+}
+for f in README.md SECURITY.md docs/configuration.md docs/metrics.md docs/development.md; do
+  for m in multi mi; do
+    [ -f "$work/$m/$f" ] && [ -f "$work/default/$f" ] || continue
+    parentmap "$work/default/$f" > "$work/_pm-default"
+    parentmap "$work/$m/$f" > "$work/_pm-$m"
+    # Only headings present in BOTH renders can be compared; one that exists on
+    # a single model is legitimately model-specific.
+    while IFS="$(printf '\t')" read -r h3 parent; do
+      other=$(grep -F "$(printf '%s\t' "$h3")" "$work/_pm-$m" | head -1 | cut -f2-)
+      [ -n "$other" ] || continue
+      [ "$other" = "$parent" ] ||
+        fail "$f: subsection '$h3' sits under '$parent' on single but under '$other' on $m; gating removed the level-2 heading it was authored beneath"
+    done < "$work/_pm-default"
   done
 done
 
@@ -314,12 +331,62 @@ grep -q '/-/reload' "$work/default/README.md" &&
 
 # A bulleted lead-in with no bullets under it reads as a truncated document.
 # Checked on the one section that is gated three ways.
+# A lead-in that promised a list and got none. Anchored on the lead-in's
+# TEXT, normalized across line wraps, not on a physical line: a previous
+# version matched the second line of a two-line wrap, so reflowing that
+# sentence silently turned the assertion into a no-op. A blanket "any bolded
+# lead-in must be followed by a list" rule was tried and rejected: a bolded
+# lead-in followed by prose is ordinary Markdown, and the rule fired on four
+# innocent paragraphs.
 for m in default multi mi; do
   cfg="$work/$m/docs/configuration.md"
-  awk '/^set a number:\*\*$/{while ((getline line) > 0) { if (line ~ /^[ \t]*$/) continue; if (line !~ /^- /) print "dangling"; exit }}' "$cfg" | grep -q dangling &&
-    fail "$m docs/configuration.md introduces the ceiling bullets and then lists none"
+  [ -f "$cfg" ] || continue
+  # Paragraphs, blank-line separated, each flattened to one line.
+  awk 'BEGIN{RS="";FS="\n"} {p=""; for(i=1;i<=NF;i++) p = p (i>1?" ":"") $i; print p}' "$cfg" > "$work/_paras"
+  n=$(grep -n 'worth knowing before you set a number' "$work/_paras" | head -1 | cut -d: -f1)
+  if [ -n "$n" ]; then
+    nextp=$(sed -n "$((n + 1))p" "$work/_paras")
+    case "$nextp" in
+      "- "*) ;;
+      *) fail "$m docs/configuration.md introduces the ceiling bullets and then lists none; next paragraph is: $nextp" ;;
+    esac
+  fi
 done
 
 echo "PASS: gating dropped nothing a model still needs, and left no orphaned heading"
+
+# ---------------------------------------------------------------------------
+# 7. The cli flavor, from the REAL assets tree.
+#
+#    Every tree above is --flavor http; the only cli runs are the two
+#    rejection cases, and scaffold_edge_test.sh uses a synthetic fixture. That
+#    blind spot let a regression ship: docs/configuration.md's worked examples
+#    hardcoded an http-only flag name, so a cli repository was told to run a
+#    flag its binary does not declare. golden-smoke builds cli, but
+#    `make docs-check` only reconciles docs/metrics.md against the collector
+#    sources, so it cannot see configuration.md or validation-checklist.md.
+# ---------------------------------------------------------------------------
+# shellcheck disable=SC2086
+run --src "$assets" --dst "$work/cli" --flavor cli --forge none $commonvars
+[ "$rc" -eq 0 ] || fail "cli scaffold exited $rc, expected 0 (stderr: $(cat "$err"))"
+
+cli_cfgdoc="$work/cli/docs/configuration.md"
+grep -q 'no-collector.command_exec' "$cli_cfgdoc" ||
+  fail "cli docs/configuration.md does not name this flavor's own self-instrumentation collector in its worked examples"
+grep -q 'no-collector.http_client_requests' "$cli_cfgdoc" &&
+  fail "cli docs/configuration.md tells the operator to run --no-collector.http_client_requests, a flag a cli binary never declares"
+
+grep -q 'collector="command_exec"' "$work/cli/docs/validation-checklist.md" ||
+  fail "cli docs/validation-checklist.md expects the http flavor's series names; the operator would chase a series this binary never emits"
+
+# Every flag name the cli docs tell an operator to run must exist in the
+# binary. This is the generic form of the two greps above, and it is what
+# would have caught the regression without anyone naming the flag first.
+for flag in $(grep -oh -- '--no\?-collector\.[a-z_]*' "$cli_cfgdoc" | sed 's/^--no-collector\.//;s/^--collector\.//' | sort -u); do
+  grep -rq "\"$flag\"" "$work/cli/cmd" "$work/cli/internal" ||
+    fail "cli docs/configuration.md names --collector.$flag, which appears nowhere in the generated sources"
+done
+
+echo "PASS: a cli scaffold's docs name only flags a cli binary actually declares"
 
 echo "PASS"

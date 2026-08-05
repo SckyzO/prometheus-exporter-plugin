@@ -110,6 +110,7 @@ never selected at all on this build, which refuses the section; either way
 it is never a metric label and never reaches any series this exporter
 exposes.
 
+@@IF target-model!=single@@
 `POST /-/reload` is a mutating endpoint. It is gated behind
 `--web.enable-lifecycle`, default `false`: the same conservative-default
 reasoning as everything else in this file, since shipping every generated
@@ -119,6 +120,7 @@ configured nothing. SIGHUP needs no flag: sending it already requires being
 on the machine. See [docs/configuration.md](docs/configuration.md) for the
 full reload surface (what SIGHUP and `POST /-/reload` do, and what a refused
 reload leaves running).
+@@ENDIF@@
 
 See [docs/configuration.md](docs/configuration.md) for the file's format and
 the precedence rules.

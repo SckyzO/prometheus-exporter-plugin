@@ -647,26 +647,53 @@ if [ "$target_model" = multi-instance ]; then
   grep -q '^instances:' "$cfg" ||
     die "config.example.yml ships no commented instances: block to uncomment ($flavor/$forge); a multi-instance build cannot start without one"
 
+  grep -q 'name: machine-a' "$cfg" ||
+    die "the extracted instances: block names no instance ($flavor/$forge); an empty list would still parse and prove nothing"
+
   port=19787
-  ( cd "$work" && ./bin/demo_exporter --config.file="$cfg" --web.listen-address=":$port" \
-      >"$work/_serve.log" 2>&1 & echo $! > "$work/_serve.pid" )
+  ( cd "$work" && exec ./bin/demo_exporter --config.file="$cfg" --web.listen-address=":$port" \
+      >"$work/_serve.log" 2>&1 ) &
+  serve_pid=$!
+  # Killed on every exit path, not only the happy one: every other server block
+  # in this file installs a trap and this one did not, which is how it would
+  # have leaked a listener into the next cell on a die().
+  trap 'kill "$serve_pid" 2>/dev/null || true' EXIT
+
   # Poll rather than sleep a fixed amount: a cold binary on a loaded CI box is
-  # slower than a warm one here, and a fixed sleep would flake in exactly the
-  # direction that hides a real failure.
+  # slower than a warm one, and a fixed sleep flakes in exactly the direction
+  # that hides a real failure. Give up early if the process is already gone,
+  # so a refused bind or a rejected configuration is reported as itself rather
+  # than as a timeout.
   code=000
+  body="$work/_metrics.txt"
   i=0
   while [ "$i" -lt 40 ]; do
-    code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/metrics" || echo 000)
+    kill -0 "$serve_pid" 2>/dev/null || break
+    code=$(curl -s -o "$body" -w '%{http_code}' "http://127.0.0.1:$port/metrics" || echo 000)
     [ "$code" = 200 ] && break
     i=$((i + 1))
     sleep 0.25
   done
-  kill "$(cat "$work/_serve.pid")" 2>/dev/null || true
+
+  if ! kill -0 "$serve_pid" 2>/dev/null; then
+    cat "$work/_serve.log" || true
+    die "the exporter exited before serving a scrape ($flavor/$forge); the shipped instances: block must be startable as written"
+  fi
   if [ "$code" != 200 ]; then
     cat "$work/_serve.log" || true
     die "/metrics answered $code after uncommenting config.example.yml's instances: block ($flavor/$forge); the documented path must reach a scrape"
   fi
-  echo "confirmed: uncommenting the shipped instances: block yields a 200 on /metrics ($flavor/$forge)"
+  # A 200 alone would also be returned by a leftover listener on this port, or
+  # by a process serving zero instances. Assert the body carries the instances
+  # the example declares, which only this binary on this config can produce.
+  # scaffold.sh --instance-label is not passed by this harness, so the default
+  # applies; that default is what the generated series carries.
+  grep -q 'target="machine-a"' "$body" ||
+    die "/metrics answered 200 but carries no target=\"machine-a\" series ($flavor/$forge); the 200 did not come from the exporter this check started"
+
+  kill "$serve_pid" 2>/dev/null || true
+  trap - EXIT
+  echo "confirmed: uncommenting the shipped instances: block yields a 200 on /metrics carrying its instances ($flavor/$forge)"
 fi
 
 # --exporter.max-requests-per-target's boot-time guard (Task 10, obligation

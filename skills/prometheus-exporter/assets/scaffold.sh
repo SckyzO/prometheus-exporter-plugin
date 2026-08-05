@@ -531,7 +531,7 @@ fi
 # A marker must be alone on its line, optionally indented and optionally
 # behind a `#` or `//` comment marker, so the same syntax works in YAML,
 # Markdown and Go without any of them rendering it. Marker lines are always
-# removed. Keys are target-model, flavor and forge; values are validated
+# removed. Keys are target-model and flavor; values are validated
 # against the same sets this script validates its own flags against, so a
 # typo is a loud failure rather than a block that silently never matches.
 # forge is deliberately NOT a key: no template needs one, and an unexercised
@@ -780,7 +780,7 @@ grep_rc=0
 # repository silently, which is the one thing this guard exists to prevent.
 # @@ENDIF@@ alone was already caught, which made the hole asymmetric and
 # therefore easy to miss: an unrecognised IF leaked whenever no ENDIF followed.
-grep -rn '@@[A-Z_]*@@\|@@IF[ \t]\|@@ENDIF@@' "$dst" > "$sentinels" || grep_rc=$?
+grep -rn '@@[A-Z_]*@@\|@@IF[[:space:]]\|@@ENDIF@@' "$dst" > "$sentinels" || grep_rc=$?
 case "$grep_rc" in
   0|1) ;;
   *) die "residual-sentinel scan of $dst failed (grep exit $grep_rc)" ;;
