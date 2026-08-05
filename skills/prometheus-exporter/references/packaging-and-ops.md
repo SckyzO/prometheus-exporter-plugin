@@ -178,7 +178,7 @@ the Makefile).
 ## `systemd/@@EXPORTER_NAME@@.service`
 
 The non-container path: a dedicated, unprivileged system user, never root,
-runs the binary directly.
+runs the binary directly. As rendered for a single-target build, the default:
 
 ```ini
 [Service]
@@ -192,12 +192,43 @@ RestartSec=5
 NoNewPrivileges=true
 ```
 
+The same two lines on a multi-instance build:
+
+```ini
+ExecStart=/usr/local/bin/@@EXPORTER_NAME@@ --web.listen-address=":@@DEFAULT_PORT@@" --config.file="/etc/@@EXPORTER_NAME@@/config.yml"
+ExecReload=/bin/kill -HUP $MAINPID
+```
+
+`ExecStart` and `ExecReload` are both subject to per-target-model surgery
+`scaffold.sh` performs after rendering, for the same reason
+`internal/reload/` itself is conditional: what `SIGHUP` does, and whether the
+binary can run at all without `--config.file`, are decided by the generated
+`cmd/@@EXPORTER_NAME@@/main.go`, not by the unit file. No single model has
+both lines rewritten.
+
+`ExecStart` gains `--config.file="/etc/@@EXPORTER_NAME@@/config.yml"` on a
+multi-instance build and only there. That model's `main.go` refuses to start
+without the flag, because the file is what lists the instances to watch, so a
+unit shipped without it is not a unit missing an option, it is a service that
+never binds a port.
+
+Worth knowing how that failure actually presents, because it is quieter than
+it sounds: with `Type=simple`, systemd considers the unit started as soon as
+the main process is forked off, so the start job reports success and the
+binary then exits non-zero a moment later. `Restart=on-failure` and
+`RestartSec=5` below turn that into a permanent five-second restart loop,
+which surfaces in `systemctl status @@EXPORTER_NAME@@` and the journal rather
+than in whatever `systemctl start` printed.
+
+The path is conventional and is meant to be corrected, exactly like the
+binary path already on that line. A single-target or multi-target build runs
+without the flag, so its `ExecStart` is left as rendered rather than pointed
+at a file that need not exist; the unit ships a commented variant showing the
+flag for whoever does have a configuration file to load there.
+
 `ExecReload` is what makes `systemctl reload @@EXPORTER_NAME@@` do anything
 at all: without it, `reload` fails outright with "Job type reload is not
-applicable". Whether it ships active or commented out is per-target-model
-surgery `scaffold.sh` performs after rendering, because what `SIGHUP` does
-is decided by the generated `cmd/@@EXPORTER_NAME@@/main.go`, not by the
-unit file itself. On a multi-target or multi-instance build,
+applicable". On a multi-target or multi-instance build,
 `internal/reload` catches `SIGHUP` and reloads `--config.file` in place: no
 restart, no dropped connection, so `scaffold.sh` leaves `ExecReload` active.
 On a single-target build (the default, shown above), nothing in `main.go`
@@ -226,14 +257,16 @@ the exact same guarantee `no-new-privileges:true` already gives the
 container path above, so the binary gets identical treatment whether it
 runs as a container or a systemd unit.
 
-### Two commented examples, and a large commented hardening block
+### Three commented examples, and a large commented hardening block
 
-The unit ships two commented `ExecStart` variants to adapt rather than
-type from scratch: one adding `--web.config.file` for TLS/Basic Auth
-(pointing at exporter-toolkit's own web-configuration docs;
-`security-and-hardening.md` covers this flag's purpose), and one showing
-`--no-collector.<name>` for running with only specific collectors enabled
-(pointing at `docs/configuration.md`).
+The unit ships three commented `ExecStart` variants to adapt rather than
+type from scratch: one adding `--config.file` (already active on a
+multi-instance build, as above, and useful on the other two models once
+there is a file to load; pointing at `docs/configuration.md`), one adding
+`--web.config.file` for TLS/Basic Auth (pointing at exporter-toolkit's own
+web-configuration docs; `security-and-hardening.md` covers this flag's
+purpose), and one showing `--no-collector.<name>` for running with only
+specific collectors enabled (pointing at `docs/configuration.md`).
 
 Below `NoNewPrivileges=true` sits a longer block of stricter directives, all
 commented out on purpose:
@@ -302,6 +335,10 @@ cache, and neither file needs to `COPY` the other's contents into an image.
       `NoNewPrivileges=true` is active unconditionally, and the stricter
       block below it is uncommented progressively, re-testing after each
       directive.
+- [ ] The active `ExecStart` carries `--config.file` on a `multi-instance`
+      build, which refuses to start without it, and the path points at a file
+      that exists. Reading it off a commented example does not count: a
+      commented flag starts nothing.
 - [ ] `ExecReload=/bin/kill -HUP $MAINPID` is active for `multi` and
       `multi-instance` builds (they ship `internal/reload` and handle
       `SIGHUP` in place) and commented out (`# ExecReload=...`) for

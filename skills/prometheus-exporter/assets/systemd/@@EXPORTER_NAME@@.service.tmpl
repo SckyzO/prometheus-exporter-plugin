@@ -16,7 +16,28 @@ Group=@@EXPORTER_NAME@@
 # `make build` is bin/@@EXPORTER_NAME@@ inside the project checkout, but most
 # operators copy it to /usr/local/bin/ (or extract it there from one of the
 # tagged-release archives - see docs/release-process.md) for a real install.
+#
+# --config.file is not equally optional on every target model. A
+# multi-instance build refuses to start without it, because that file is what
+# lists the instances to watch, so scaffold.sh renders the line below with the
+# flag already on it for that model and the path is yours to correct like the
+# binary path beside it. A single-target or multi-target build starts without
+# the flag and needs it only once there is a configuration file to load; the
+# commented variant just below is for them.
 ExecStart=/usr/local/bin/@@EXPORTER_NAME@@ --web.listen-address=":@@DEFAULT_PORT@@"
+
+# The three examples below REPLACE the active ExecStart above, they do not sit
+# beside it: a second active ExecStart= is refused outright on this unit, which
+# is Type=simple, not Type=oneshot. Take the flags you want from them and put
+# them on the one line above.
+
+# --- Example with a configuration file ---
+# Already on the line above if you scaffolded multi-instance, where it is
+# mandatory. Optional on the other two models; see docs/configuration.md for
+# what the file holds on the model you scaffolded.
+# ExecStart=/usr/local/bin/@@EXPORTER_NAME@@ \
+#   --web.listen-address=":@@DEFAULT_PORT@@" \
+#   --config.file="/etc/@@EXPORTER_NAME@@/config.yml"
 
 # --- Example with TLS and/or basic auth ---
 # See the exporter-toolkit web-config docs for the file format:

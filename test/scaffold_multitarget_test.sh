@@ -133,4 +133,49 @@ grep -q 'target-model multi requires --flavor http' "$err" || fail "expected a c
 
 echo "PASS: --target-model multi --flavor cli is rejected with a clear message"
 
+# ---------------------------------------------------------------------------
+# 4. The shipped systemd unit must be startable on the model it was scaffolded
+#    for. Assert the ACTIVE ExecStart, never a commented example: a commented
+#    example is what documenting this defect instead of fixing it would look
+#    like, and it would leave a multi-instance operator with a service that
+#    exits before it ever binds a port.
+# ---------------------------------------------------------------------------
+mi_unit="$work/mi/systemd/demo.service"
+[ -f "$mi_unit" ] || fail "multi-instance scaffold did not ship systemd/demo.service"
+
+# Assert the WHOLE line, not just the presence of the flag. scaffold.sh appends
+# to the rendered ExecStart with sed's `&`; an edit that lost `&` would leave
+# "ExecStart= --config.file=..." behind, which carries the flag, satisfies a
+# substring check, and starts no binary at all. Ask what the assertion cannot
+# see, then close it: this one now pins the binary path and the pre-existing
+# flag as well.
+grep -q '^ExecStart=/usr/local/bin/demo .*--web\.listen-address=.*--config\.file=' "$mi_unit" ||
+  fail "multi-instance systemd unit's active ExecStart is not the rendered command plus --config.file (got: $(grep '^ExecStart=' "$mi_unit"))"
+
+# Exactly one active ExecStart: systemd rejects a second one outside
+# Type=oneshot, and this unit is Type=simple.
+mi_execstarts=$(grep -c '^ExecStart=' "$mi_unit")
+[ "$mi_execstarts" -eq 1 ] ||
+  fail "multi-instance systemd unit has $mi_execstarts active ExecStart lines, expected exactly 1"
+
+grep -q '^ExecReload=' "$mi_unit" || fail "multi-instance systemd unit's ExecReload is not active"
+
+# single and multi start without the flag; adding it there would point them at
+# a file that need not exist. Their ExecStart must come through untouched.
+for m in default multi; do
+  unit="$work/$m/systemd/demo.service"
+  [ -f "$unit" ] || fail "$m scaffold did not ship systemd/demo.service"
+  grep -q '^ExecStart=.*--config\.file=' "$unit" &&
+    fail "$m scaffold's active ExecStart gained --config.file (that model starts without one)"
+done
+
+# The ExecReload surgery this block now shares its plumbing with must keep
+# behaving exactly as before: commented on single, active on multi.
+grep -q '^# ExecReload=' "$work/default/systemd/demo.service" ||
+  fail "single scaffold's ExecReload is not commented out"
+grep -q '^ExecReload=' "$work/multi/systemd/demo.service" ||
+  fail "multi scaffold's ExecReload is not active"
+
+echo "PASS: the systemd unit's ExecStart and ExecReload match the target model"
+
 echo "PASS"

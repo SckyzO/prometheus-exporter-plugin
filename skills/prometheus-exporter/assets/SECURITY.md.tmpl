@@ -45,10 +45,12 @@ Only the latest release receives security fixes.
 
 ## Configuration file
 
-`--config.file` is optional and empty by default: pass no such flag and this
-exporter reads nothing from disk. If you do use it, its `http_client_config:`
-section is the one place in a generated repository that can hold credentials,
-so treat that file as a secret.
+`--config.file` is empty by default: pass no such flag and this exporter reads
+nothing from disk. It is optional on a single-target and a multi-target build;
+a multi-instance build requires it, since the file is what lists the instances
+to watch. Either way, its `http_client_config:` section is the one place in a
+generated repository that can hold credentials, so treat that file as a
+secret.
 
 - **Prefer the `_file` variants to inline values.** `password_file`,
   `credentials_file`, `bearer_token_file`, `client_secret_file`,

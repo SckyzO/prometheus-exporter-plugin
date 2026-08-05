@@ -325,31 +325,61 @@ if [ "$target_model" != multi ] && [ "$target_model" != multi-instance ]; then
   rm -rf "$dst/internal/reload"
 fi
 
-# The systemd unit's ExecReload is per-target-model surgery for the same
-# reason internal/reload/ itself is: a single-target build installs no SIGHUP
-# handler (the block above just removed the only package that would), so
-# leaving ExecReload active would let `systemctl reload` reach the process
-# and hit SIGHUP's OS default (terminate) instead of the harmless
-# "Job type reload is not applicable" refusal systemd gives when no
-# ExecReload= is set at all. Comment the line out rather than delete it, so
-# it stays discoverable (and correct) for anyone who copies this unit
-# elsewhere. multi and multi-instance keep it active: they installed
-# internal/reload above, which does handle SIGHUP.
-if [ "$target_model" = single ]; then
-  svc=""
+# The systemd unit needs two per-target-model edits after rendering, for the
+# same reason internal/reload/ itself is conditional: what the generated
+# main.go does with SIGHUP, and whether it can start at all without
+# --config.file, are decided by the target model and not by the unit file.
+#
+#   ExecReload, commented out on single: a single-target build installs no
+#   SIGHUP handler (the block above just removed the only package that would),
+#   so leaving ExecReload active would let `systemctl reload` reach the
+#   process and hit SIGHUP's OS default (terminate) instead of the harmless
+#   "Job type reload is not applicable" refusal systemd gives when no
+#   ExecReload= is set at all. Comment the line out rather than delete it, so
+#   it stays discoverable (and correct) for anyone who copies this unit
+#   elsewhere. multi and multi-instance keep it active: they installed
+#   internal/reload above, which does handle SIGHUP.
+#
+#   ExecStart, extended on multi-instance: that model's main.go refuses to
+#   start without --config.file, because the file is what lists the instances
+#   to watch. A unit shipped without the flag is therefore not a unit missing
+#   an option, it is a service that cannot start, so append the flag with a
+#   conventional path the operator corrects exactly like the binary path
+#   already on that line. single and multi start without it and keep the
+#   ExecStart they rendered with.
+#
+# Both edits anchor on the start of the line, so the commented ExecStart and
+# ExecReload examples the unit ships alongside are never rewritten.
+#
+# multi rewrites neither line and therefore does not look the unit up at all:
+# what it renders is already correct for it, and running the lookup anyway
+# would newly impose the one-unit rule below on derived template trees that
+# ship several .service.tmpl files and need no edit to any of them.
+svc=""
+if [ "$target_model" = single ] || [ "$target_model" = multi-instance ]; then
   for f in "$dst"/systemd/*.service.tmpl; do
     [ -f "$f" ] || continue
     [ -z "$svc" ] || die "expected exactly one systemd/*.service.tmpl, found more than one"
     svc=$f
   done
-  # No unit at all is legitimate, not a fault: this engine also materializes
-  # reduced template trees (test/fixtures/mini-template is one), and a tree
-  # that ships no systemd/ has nothing to disable. Dying here would make every
-  # such caller fail on a step that does not apply to it.
-  if [ -n "$svc" ]; then
+fi
+# No unit at all is legitimate, not a fault: this engine also materializes
+# reduced template trees (test/fixtures/mini-template is one), and a tree
+# that ships no systemd/ has nothing to edit. Dying here would make every
+# such caller fail on a step that does not apply to it.
+if [ -n "$svc" ]; then
+  if [ "$target_model" = single ]; then
     sed -e 's/^ExecReload=/# ExecReload=/' "$svc" > "$svc.scaffoldtmp"
-    mv "$svc.scaffoldtmp" "$svc"
+  else
+    # @@EXPORTER_NAME@@ is left unexpanded on purpose: the substitution pass
+    # further down rewrites every file in $dst, this one included, so the path
+    # lands with the real name without hardcoding it twice. `&` re-emits the
+    # whole matched line, so the binary path and every flag already on it
+    # survive; the test asserts that, because a sed that dropped them would
+    # still leave a line carrying --config.file.
+    sed -e 's|^ExecStart=.*|& --config.file="/etc/@@EXPORTER_NAME@@/config.yml"|' "$svc" > "$svc.scaffoldtmp"
   fi
+  mv "$svc.scaffoldtmp" "$svc"
 fi
 
 # client_model is a direct dependency for a multi-target OR multi-instance

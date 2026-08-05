@@ -28,9 +28,11 @@ and exposes them at `/metrics` for scraping.
 - OpenMetrics exposition format on `/metrics`, with a liveness probe at `/healthz` for
   Kubernetes or systemd.
 - TLS and Basic Authentication available out of the box via `--web.config.file`.
-- An optional YAML configuration file, `--config.file`, for setting flags from a file and
-  for the authentication and TLS this exporter uses on its own outbound requests. The flag
-  defaults to empty, so nothing is read until you pass it. Start from
+- A YAML configuration file, `--config.file`, for setting flags from a file and for the
+  authentication and TLS this exporter uses on its own outbound requests. The flag defaults
+  to empty, so nothing is read until you pass it, except on a multi-instance build
+  (`--target-model multi-instance`), where the file lists the instances to watch and the
+  binary refuses to start without it. Start from
   [`config.example.yml`](config.example.yml) in this repository; the format is documented in
   [docs/configuration.md](docs/configuration.md).
 - Signal-aware shutdown: `SIGTERM`/`SIGINT` drain in-flight requests before exiting.
@@ -54,6 +56,9 @@ cd @@EXPORTER_NAME@@
 make build
 bin/@@EXPORTER_NAME@@ --web.listen-address=:@@DEFAULT_PORT@@
 ```
+
+On a multi-instance build, add `--config.file=config.yml`: that model reads the instances
+to watch from the file and exits without it, so the line above binds nothing.
 
 ```bash
 curl http://localhost:@@DEFAULT_PORT@@/metrics | head
