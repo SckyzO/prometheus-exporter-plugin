@@ -601,6 +601,27 @@ fi
 # multi-target binary, and the existence check above could not see it.
 # --help is enough: --config.file is read and validated before kingpin gets
 # its arguments, so a bad file fails here without binding a port.
+# --version and --help must answer with NO --config.file at all. This is the
+# assertion whose absence hid a real bug for weeks, and it is worth saying why
+# rather than just adding it: every other invocation in this script passes
+# --config.file, because every other one is STARTING the exporter rather than
+# INTERROGATING it. On multi-instance, where --config.file is mandatory, the
+# check for it ran before kingpin.Parse, so `--version` exited non-zero with
+# "requires --config.file" and so did `--help`. Packaging, CI and container
+# healthchecks all call --version on a binary they have no configuration for.
+#
+# The guardrail did not fail to cover the code path; it covered it in a way
+# that could not see the defect. When adding an assertion here, ask what it
+# cannot see.
+echo "== --version and --help answer without a config file ($flavor/$forge) =="
+for probe in --version --help; do
+  if ! ( cd "$work" && ./bin/demo_exporter "$probe" >/dev/null 2>&1 ); then
+    ( cd "$work" && ./bin/demo_exporter "$probe" >/dev/null ) || true
+    die "$probe FAILED with no --config.file for $flavor/$forge; it must answer without one on every target model"
+  fi
+done
+echo "confirmed: --version and --help answer with no config file ($flavor/$forge)"
+
 echo "== config.example.yml loads ($flavor/$forge) =="
 if ! ( cd "$work" && ./bin/demo_exporter --config.file=config.example.yml --help >/dev/null 2>&1 ); then
   ( cd "$work" && ./bin/demo_exporter --config.file=config.example.yml --help >/dev/null ) || true
