@@ -25,6 +25,22 @@ services:
     restart: unless-stopped
     ports:
       - "${HOST_PORT:-@@DEFAULT_PORT@@}:@@DEFAULT_PORT@@"
+    @@IF target-model=multi-instance@@
+    # This target model reads the list of instances it watches from
+    # --config.file and refuses to start without it, so the file is mounted
+    # rather than offered as an option. Create it before the first `up`:
+    #
+    #   cp config.example.yml config.yml   # then edit its instances: block
+    #
+    # If it does not exist, Docker creates a DIRECTORY at that path instead of
+    # failing, and the exporter then reports a confusing read error on
+    # something that is not a file. Point CONFIG_FILE elsewhere to override.
+    #
+    # Read-only because the exporter only ever reads it; reload in place with
+    # `docker compose kill -s HUP @@EXPORTER_NAME@@` after editing, no restart.
+    volumes:
+      - ${CONFIG_FILE:-./config.yml}:/etc/@@EXPORTER_NAME@@/config.yml:ro
+    @@ENDIF@@
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -34,4 +50,7 @@ services:
       - /tmp
     command:
       - --web.listen-address=:@@DEFAULT_PORT@@
+      @@IF target-model=multi-instance@@
+      - --config.file=/etc/@@EXPORTER_NAME@@/config.yml
+      @@ENDIF@@
       - --log.level=info

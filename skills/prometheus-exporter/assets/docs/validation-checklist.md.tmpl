@@ -177,16 +177,22 @@ grep -E "^@@NAMESPACE@@_exporter_collector_success" /tmp/scrape.txt | sort
 
 ### Expected
 
-One line per enabled collector, all ending with ` 1`. For a fresh scaffold, exactly two lines
-(names depend on the I/O flavor):
+One line per enabled collector, all ending with ` 1`. For a fresh scaffold, exactly two lines:
 
+@@IF flavor=http@@
 ```
 @@NAMESPACE@@_exporter_collector_success{collector="example"} 1
 @@NAMESPACE@@_exporter_collector_success{collector="http_client_requests"} 1
 ```
+@@ENDIF@@
+@@IF flavor!=http@@
+```
+@@NAMESPACE@@_exporter_collector_success{collector="example"} 1
+@@NAMESPACE@@_exporter_collector_success{collector="command_exec"} 1
+```
+@@ENDIF@@
 
-(the second line reads `collector="command_exec"` on the CLI flavor). Add one line here for
-every collector you've added since.
+Add one line here for every collector you've added since.
 
 **A `1` here does not mean a background-variant collector is healthy.** If any of your
 collectors was added with `--variant background`, this step cannot judge it and you must run

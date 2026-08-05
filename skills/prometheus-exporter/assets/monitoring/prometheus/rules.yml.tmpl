@@ -49,19 +49,21 @@ groups:
       # bucketed by `outcome` (see docs/metrics.md), shown here as the
       # worked example instead of a fabricated business metric:
       #
-      #   - record: job:@@NAMESPACE@@_exporter_request_error_rate:ratio5m   # HTTP flavor
+      # @@IF flavor=http@@
+      #   - record: job:@@NAMESPACE@@_exporter_request_error_rate:ratio5m
       #     expr: >
       #       rate(@@NAMESPACE@@_exporter_request_duration_seconds_count{outcome="error"}[5m])
       #       / (rate(@@NAMESPACE@@_exporter_request_duration_seconds_count[5m]) > 0)
-      #
-      #   - record: job:@@NAMESPACE@@_exporter_command_error_rate:ratio5m   # CLI flavor
+      # @@ENDIF@@
+      # @@IF flavor!=http@@
+      #   - record: job:@@NAMESPACE@@_exporter_command_error_rate:ratio5m
       #     expr: >
       #       rate(@@NAMESPACE@@_exporter_command_duration_seconds_count{outcome="error"}[5m])
       #       / (rate(@@NAMESPACE@@_exporter_command_duration_seconds_count[5m]) > 0)
+      # @@ENDIF@@
       #
       # Here the guard matters for the textbook reason: on a quiet exporter
       # with zero requests/commands in the last 5m, both rates are exactly
       # 0: 0/0 without the guard, "no data" with it, instead of a bogus
-      # 100%-error-rate-looking NaN. Only one of the two records above
-      # applies to your flavor; see docs/metrics.md's "Self-instrumentation"
-      # section to confirm which histogram your exporter actually emits.
+      # 100%-error-rate-looking NaN. See docs/metrics.md's
+      # "Self-instrumentation" section for the histogram this build emits.

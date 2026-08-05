@@ -15,15 +15,16 @@
 # ever compromised), at the cost of no in-container debugging (no exec, no
 # package manager to install a troubleshooting tool on the fly).
 #
-# CLI-flavor note: if this exporter's collectors shell out to an external CLI
-# tool instead of calling an HTTP API (see internal/collector's use of
-# Execute, if this scaffold picked the "cli" flavor), that tool cannot be
+# @@IF flavor!=http@@
+# If this exporter's collectors shell out to an external CLI
+# tool (see internal/collector's use of
+# Execute), that tool cannot be
 # installed here - distroless has no package manager and no shell to run one
 # with. Either bind-mount the tool (and any shared libraries it needs)
 # read-only from the host, or build your own minimal variant from a base
 # that still has a package manager (Dockerfile's own runtime stage is a
-# reasonable starting point) instead of this one. This file is a fine
-# default as-is for an HTTP-flavor exporter, which needs no external binary.
+# reasonable starting point) instead of this one.
+# @@ENDIF@@
 
 # ---- build stage -----------------------------------------------------------
 FROM golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS build
@@ -74,5 +75,18 @@ LABEL org.opencontainers.image.title="@@EXPORTER_NAME@@ (minimal)" \
 # distroless static:nonroot already runs as uid 65532. No USER directive
 # needed; the image enforces it.
 
+# @@IF target-model=multi-instance@@
+# This target model refuses to start without --config.file, and CMD below does
+# not carry it on purpose. An image's CMD is not an editable deployment
+# artifact the way a systemd unit's ExecStart is: baking a path in would make
+# every `docker run` of the published image fail on a file that is not in the
+# image, and overriding CMD means respecifying every other flag anyway. The
+# documented path, docker-compose.yml, passes the flag and mounts the file;
+# for a bare `docker run`, do both yourself:
+#
+#   docker run -v ./config.yml:/etc/@@EXPORTER_NAME@@/config.yml:ro <image> \
+#     --web.listen-address=:@@DEFAULT_PORT@@ \
+#     --config.file=/etc/@@EXPORTER_NAME@@/config.yml
+# @@ENDIF@@
 ENTRYPOINT ["/usr/local/bin/@@EXPORTER_NAME@@"]
 CMD ["--web.listen-address=:@@DEFAULT_PORT@@"]

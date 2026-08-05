@@ -53,6 +53,32 @@ an endpoint path, becomes a `@@VAR@@` substitution variable or an explicit,
 clearly-marked fill-in hole. Never bake a concrete, non-generic value into a
 shipped template.
 
+There is a second axis, and it is the one the field caught us on. A value that
+varies by exporter becomes a `@@VAR@@`; text that is **true of one target model
+or flavor and false of another** is not a variable at all, it is a conditional.
+`scaffold.sh` renders `@@IF target-model=multi-instance@@ ... @@ENDIF@@` blocks
+(also `!=`, and a comma between terms meaning AND) and deletes the marker lines.
+Use it rather than writing prose that enumerates every model: a generated
+repository that documents a route its binary never registers, or an example
+using a key the same file says is refused, is exactly as wrong as a hardcoded
+metric prefix, and reads as authoritative because the rest of the file is.
+
+Four rules the engine enforces, so a mistake is loud rather than silent:
+
+- A marker sits alone on its line, optionally indented and optionally behind a
+  `#` or `//`. Anything else on that line, including trailing prose, is not a
+  marker; the residual-sentinel guard then fails the scaffold rather than
+  shipping it.
+- No nesting and no `else`. Two adjacent blocks with opposite conditions say
+  the same thing without a parser that has to track state.
+- Values are validated against the same sets the flags are, so a typo fails at
+  the line it is on instead of producing a block that silently never matches.
+- Gating removes text, which means it can remove too much. Assert what must
+  **survive**, not only what must disappear: `test/scaffold_multitarget_test.sh`
+  checks that model-independent sections still reach every model and that no
+  heading lost its parent, because a first pass at this dropped six passages
+  with every other assertion, and golden-smoke, staying green.
+
 ## Testing this plugin
 
 Before committing a change to a command, agent, skill, or template, confirm:

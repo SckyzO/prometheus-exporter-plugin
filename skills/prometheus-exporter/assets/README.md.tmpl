@@ -80,6 +80,20 @@ make docker-build
 make docker-run   # starts the compose stack; override DOCKER_IMAGE=/DOCKER_TAG= for a different image/tag
 ```
 
+@@IF target-model=multi-instance@@
+Create the configuration file before the first `docker-run`: this target model
+reads the instances it watches from `--config.file` and exits without it, and
+the compose file mounts `./config.yml` read-only.
+
+```bash
+cp config.example.yml config.yml   # then uncomment and edit its instances: block
+```
+
+Skip that and Docker creates a *directory* named `config.yml` instead of
+failing, and the container crash-loops on a read error against something that
+is not a file.
+@@ENDIF@@
+
 A minimal, distroless variant (`Dockerfile.minimal` / `docker-compose.minimal.yml`, ~15MB,
 always non-root, no shell, no package manager) builds and runs the same way. Reach for it
 once you've confirmed the standard image works for your target, or whenever the smaller
@@ -112,22 +126,23 @@ Tagged releases publish signed, checksummed binaries with a CycloneDX SBOM attac
 | `/healthz` | Liveness probe: returns `200 OK` as long as the HTTP server is up, independently of whether `@@DATA_SOURCE@@` itself is reachable |
 | `/` | Landing page with a link to `/metrics` |
 
+@@IF target-model=multi@@
 Multi-target builds (`--target-model multi`, http flavor only) also expose:
 
 | Endpoint | Description |
 |---|---|
 | `/probe?target=<url>` | Probes one target on demand: a fresh registry and collector set scoped to `target`, plus `probe_success`/`probe_duration_seconds`, see [docs/configuration.md](docs/configuration.md) and [SECURITY.md](SECURITY.md) (SSRF posture) |
 
-Multi-target and multi-instance builds (`--target-model multi` or
-`multi-instance`) also expose:
+@@ENDIF@@
+@@IF target-model!=single@@
+This build also exposes:
 
 | Endpoint | Description |
 |---|---|
-| `POST /-/reload` | Reloads `--config.file` in place, no restart. Behind `--web.enable-lifecycle` (default off); `SIGHUP` always works and needs no flag. See [Configuration reload](docs/configuration.md#configuration-reload-multi-and-multi-instance-builds-only) |
+| `POST /-/reload` | Reloads `--config.file` in place, no restart. Behind `--web.enable-lifecycle` (default off); `SIGHUP` always works and needs no flag. See [Configuration reload](docs/configuration.md#configuration-reload) |
+@@ENDIF@@
 
-A single-target build (the default) has no `/-/reload`: see
-[docs/configuration.md](docs/configuration.md) for why.
-
+@@IF target-model=multi@@
 ```bash
 curl 'http://localhost:@@DEFAULT_PORT@@/probe?target=http://target-a:9100'
 ```
@@ -155,6 +170,7 @@ scrape_configs:
         replacement: exporter-host:@@DEFAULT_PORT@@   # this exporter's own address
 ```
 
+@@ENDIF@@
 ## Configuration & development
 
 | Topic | Where |

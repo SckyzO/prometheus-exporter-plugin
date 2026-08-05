@@ -64,13 +64,15 @@ RUN apt-get update && \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# CLI-flavor note: if this exporter's collectors shell out to an external CLI
-# tool instead of calling an HTTP API (see internal/collector's use of
-# Execute, if this scaffold picked the "cli" flavor), that tool is NOT
+# @@IF flavor!=http@@
+# If this exporter's collectors shell out to an external CLI
+# tool (see internal/collector's use of
+# Execute), that tool is NOT
 # bundled in this image - do not hardcode a specific vendor's client into
 # this generic template. Either install it above with apt-get (rebuild
 # afterwards) or bind-mount it read-only from the host via
 # docker-compose.yml and make sure it ends up on PATH.
+# @@ENDIF@@
 
 # Dedicated unprivileged user. --uid mirrors this exporter's own default
 # port (a stable, collision-resistant choice per exporter, same idea as
@@ -97,5 +99,18 @@ LABEL org.opencontainers.image.title="@@EXPORTER_NAME@@" \
       org.opencontainers.image.revision="${COMMIT}" \
       org.opencontainers.image.created="${BUILD_DATE}"
 
+# @@IF target-model=multi-instance@@
+# This target model refuses to start without --config.file, and CMD below does
+# not carry it on purpose. An image's CMD is not an editable deployment
+# artifact the way a systemd unit's ExecStart is: baking a path in would make
+# every `docker run` of the published image fail on a file that is not in the
+# image, and overriding CMD means respecifying every other flag anyway. The
+# documented path, docker-compose.yml, passes the flag and mounts the file;
+# for a bare `docker run`, do both yourself:
+#
+#   docker run -v ./config.yml:/etc/@@EXPORTER_NAME@@/config.yml:ro <image> \
+#     --web.listen-address=:@@DEFAULT_PORT@@ \
+#     --config.file=/etc/@@EXPORTER_NAME@@/config.yml
+# @@ENDIF@@
 ENTRYPOINT ["/usr/local/bin/@@EXPORTER_NAME@@"]
 CMD ["--web.listen-address=:@@DEFAULT_PORT@@"]

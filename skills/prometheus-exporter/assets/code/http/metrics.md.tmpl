@@ -9,14 +9,10 @@ listed below that the code cannot actually produce fails the build. A metric the
 code emits but this file doesn't document is only a warning: see
 `internal/collector/docs_check_test.go`.
 
-**Scope:** this file is shared by a `single`-target and a `multi`-target build
-(a `--target-model multi-instance` build ships its own separate copy, with its
-own reload and instance-label sections). A section or row below tagged
-*(multi-target builds only)* or *(opt-in builds only)* is not a flag a
-`single`-target binary could enable: the package backing it,
-`internal/reload` or `internal/probe`, is not compiled into that binary at
-all. If you scaffolded `single`, skip those sections entirely rather than
-reading them as "off by default".
+**Scope:** this file describes the build it was scaffolded for and no other.
+A section this build does not carry has been left out entirely rather than
+shown as "off by default": the package backing it is not compiled into this
+binary at all, so there is no flag that could enable it.
 
 <!--
 docs-check parses this file as a sequence of markdown tables, one metric per
@@ -63,11 +59,17 @@ you adapt `ExampleCollector` into your real collector.
 
 ## Self-instrumentation
 
-On a `single` build, each row below is gated by its own `--collector.<name>`
-flag (`--collector.http_client_requests`, `--collector.http_client_request_wait`;
+@@IF target-model!=multi@@
+Each row below is gated by its own `--collector.<name>` flag
+(`--collector.http_client_requests`, `--collector.http_client_request_wait`;
 both default `true`, negate with `--no-collector.<name>`), the same as any
-other collector. A `multi` build (which shares this file, see the `/probe`
-section below) registers both unconditionally instead, with no such flag.
+other collector.
+@@ENDIF@@
+@@IF target-model=multi@@
+This build registers the rows below unconditionally: it has no
+`--[no-]collector.<name>` toggle at all.
+@@ENDIF@@
+
 See [docs/configuration.md](configuration.md).
 
 | Metric | Type | Labels | Description |
@@ -77,6 +79,7 @@ See [docs/configuration.md](configuration.md).
 | `@@NAMESPACE@@_exporter_collector_success` | Gauge | `collector` | Whether the last scrape of the collector succeeded (1=success, 0=failure). Defined in `internal/collector/status_tracker.go`. |
 | `@@NAMESPACE@@_exporter_collector_duration_seconds` | Gauge | `collector` | Duration of the last scrape for the collector, in seconds. Defined in `internal/collector/status_tracker.go`. |
 
+@@IF target-model=multi@@
 ## Multi-target `/probe` metrics (opt-in builds only)
 
 Multi-target builds (scaffolded with `--target-model multi`) additionally
@@ -100,6 +103,8 @@ these two exact names, and every multi-target dashboard/alert in the wild
 queries them as-is. This scaffold matches that convention here instead of
 the `namespace_subsystem_name` rule the rest of this file's metrics follow.
 
+@@ENDIF@@
+@@IF target-model!=single@@
 ## Configuration reload metrics (multi-target builds only)
 
 Multi-target builds (scaffolded with `--target-model multi`) additionally
@@ -124,3 +129,5 @@ Reload is triggered by `SIGHUP` (always on) or `POST /-/reload` (behind
 `--web.enable-lifecycle`); see [docs/configuration.md](configuration.md) and
 `SECURITY.md`, which also explains why a single-target build has no
 equivalent metric: it has no reload at all.
+
+@@ENDIF@@

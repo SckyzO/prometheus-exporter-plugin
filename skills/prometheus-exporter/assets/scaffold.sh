@@ -111,7 +111,8 @@ license_choice=""
 sedscript=$(mktemp)
 pathlist=$(mktemp)
 sentinels=$(mktemp)
-trap 'rm -f "$sedscript" "$pathlist" "$sentinels"' EXIT
+condscript=$(mktemp)
+trap 'rm -f "$sedscript" "$pathlist" "$sentinels" "$condscript"' EXIT
 
 # Escape a literal string for safe use as the REPLACEMENT side of a sed
 # s/// command: backslash must be doubled first, then / (our delimiter) and
@@ -235,12 +236,17 @@ case "$flavor" in
 esac
 printf 's/@@FLAVOR@@/%s/g\n' "$(sed_escape_repl "$flavor")" >> "$sedscript"
 
+# Computed unconditionally, not only for the error message below: the
+# conditional-block pass further down validates an @@IF flavor=...@@ value
+# against this same list, so a typo there is a clear failure instead of a
+# block that silently never matches.
+avail=""
+for d in "$src"/code/*/; do
+  [ -d "$d" ] || continue
+  avail="$avail $(basename "$d")"
+done
+
 if [ -d "$src/code" ] && [ ! -d "$src/code/$flavor" ]; then
-  avail=""
-  for d in "$src"/code/*/; do
-    [ -d "$d" ] || continue
-    avail="$avail $(basename "$d")"
-  done
   die "unknown --flavor '$flavor'; available:$avail"
 fi
 
@@ -506,9 +512,128 @@ fi
 # (never a specific octal mode: that would require a non-POSIX
 # `stat`/`chmod --reference`, whose flag spelling differs between GNU and
 # BSD/macOS: see the header comment's POSIX-utilities constraint).
+# Conditional blocks. The selectors above (--target-model, --flavor, --forge)
+# decide which CODE a scaffold ships, by moving and deleting whole directories.
+# They decided nothing at all about prose, example configuration, or docs,
+# which every model and every flavor received identically: that is why a
+# multi-instance repository documented a /probe route it does not serve, and
+# why its config.example.yml had no instances: section, the one section that
+# model requires. Those are not six independent defects, they are one missing
+# seam, and this is it.
+#
+# Grammar, deliberately small:
+#
+#   @@IF target-model=multi-instance@@   keep the block on that model only
+#   @@IF flavor!=cli@@                   keep the block on every other flavor
+#   @@IF target-model=single,flavor=http@@   both must hold (comma is AND)
+#   @@ENDIF@@
+#
+# A marker must be alone on its line, optionally indented and optionally
+# behind a `#` or `//` comment marker, so the same syntax works in YAML,
+# Markdown and Go without any of them rendering it. Marker lines are always
+# removed. Keys are target-model and flavor; values are validated
+# against the same sets this script validates its own flags against, so a
+# typo is a loud failure rather than a block that silently never matches.
+# forge is deliberately NOT a key: no template needs one, and an unexercised
+# branch is the kind of thing this repository refuses to carry. Add it with
+# its first real user, not before.
+#
+# No nesting and no else, on purpose: both are rejected rather than
+# half-supported, and two adjacent blocks with opposite conditions say the
+# same thing without a parser that has to track state. A file containing no
+# marker at all is passed through byte for byte, which is what keeps every
+# template that predates this pass rendering exactly as it did before.
+cat > "$condscript" <<'CONDAWK'
+function fail(msg) {
+  printf("scaffold.sh: %s:%d: %s\n", FILENAME, FNR, msg) > "/dev/stderr"
+  exit 3
+}
+function valid(key, val,   set, n, i, parts) {
+  selected_flavor = flavor
+  if (key == "target-model") set = "single multi multi-instance"
+  else if (key == "flavor") {
+    # A reduced template tree may ship no code/ at all, so the caller-supplied
+    # list is empty. Fall back to the selected flavor itself rather than
+    # rejecting the value --flavor was just accepted with: this pass validates
+    # against the tree it can see, and a tree with no flavors to choose between
+    # has nothing to typo against.
+    set = (flavors == "" ? selected_flavor : flavors)
+  }
+  else return 0
+  n = split(set, parts, " ")
+  for (i = 1; i <= n; i++) if (parts[i] == val) return 1
+  return 0
+}
+BEGIN { depth = 0; keep = 1 }
+{
+  t = $0
+  sub(/^[ \t]+/, "", t)
+  sub(/^(#|\/\/)[ \t]*/, "", t)
+  sub(/[ \t]+$/, "", t)
+
+  if (t == "@@ENDIF@@") {
+    if (depth == 0) fail("@@ENDIF@@ with no matching @@IF@@")
+    depth = 0
+    keep = 1
+    next
+  }
+  if (t ~ /^@@IF[ \t]/) {
+    if (depth != 0) fail("nested @@IF@@ is not supported")
+    if (t !~ /@@$/) fail("malformed @@IF@@: missing closing @@")
+    body = t
+    sub(/^@@IF[ \t]+/, "", body)
+    sub(/@@$/, "", body)
+    # Comma-separated terms are ANDed. This is the whole of the composition
+    # story, deliberately: nesting stays rejected, so a block's condition is
+    # always readable on its one opening line and the pass never needs a
+    # stack. There is no OR, because two adjacent blocks already say it.
+    nterms = split(body, terms, ",")
+    keep = 1
+    for (ti = 1; ti <= nterms; ti++) {
+      term = terms[ti]
+      sub(/^[ \t]+/, "", term)
+      sub(/[ \t]+$/, "", term)
+      neg = 0
+      p = index(term, "!=")
+      if (p > 0) {
+        neg = 1
+        key = substr(term, 1, p - 1)
+        val = substr(term, p + 2)
+      } else {
+        p = index(term, "=")
+        if (p == 0) fail("malformed @@IF@@ " body ": expected key=value or key!=value")
+        key = substr(term, 1, p - 1)
+        val = substr(term, p + 1)
+      }
+      if (key == "target-model") actual = target_model
+      else if (key == "flavor")  actual = flavor
+      else fail("unknown @@IF@@ key " key "; expected target-model or flavor")
+      if (!valid(key, val)) fail("unknown value " val " for @@IF@@ key " key)
+      match_ = (actual == val)
+      if (neg) match_ = !match_
+      if (!match_) keep = 0
+    }
+    depth = 1
+    openline = FNR
+    next
+  }
+  if (keep) print
+}
+END {
+  if (depth != 0) {
+    printf("scaffold.sh: %s:%d: @@IF@@ never closed by @@ENDIF@@\n", FILENAME, openline) > "/dev/stderr"
+    exit 3
+  }
+}
+CONDAWK
+
 find "$dst" -type f -print > "$pathlist"
 while IFS= read -r file; do
   if [ -x "$file" ]; then was_exec=yes; else was_exec=no; fi
+  awk -v target_model="$target_model" -v flavor="$flavor" \
+      -v flavors="$avail" -f "$condscript" "$file" > "$file.scaffoldtmp" ||
+    die "conditional-block pass failed on $file"
+  mv "$file.scaffoldtmp" "$file"
   sed -f "$sedscript" "$file" > "$file.scaffoldtmp"
   mv "$file.scaffoldtmp" "$file"
   [ "$was_exec" = yes ] && chmod +x "$file"
@@ -647,7 +772,15 @@ fi
 # plain `if grep ...; then` does) silently turns a failed scan into a false
 # success. Capture the real code and branch on all three cases explicitly.
 grep_rc=0
-grep -rn '@@[A-Z_]*@@' "$dst" > "$sentinels" || grep_rc=$?
+# @@IF ... @@ is matched explicitly and not by the @@[A-Z_]*@@ shape: a
+# conditional marker carries spaces, hyphens and an `=`, so the broad pattern
+# structurally cannot see it. Left out, a marker the conditional pass failed to
+# recognise (one not alone on its line, one wrapped in <!-- -->, one spliced in
+# by a --var value after that pass had already run) would reach a generated
+# repository silently, which is the one thing this guard exists to prevent.
+# @@ENDIF@@ alone was already caught, which made the hole asymmetric and
+# therefore easy to miss: an unrecognised IF leaked whenever no ENDIF followed.
+grep -rn '@@[A-Z_]*@@\|@@IF[[:space:]]\|@@ENDIF@@' "$dst" > "$sentinels" || grep_rc=$?
 case "$grep_rc" in
   0|1) ;;
   *) die "residual-sentinel scan of $dst failed (grep exit $grep_rc)" ;;
