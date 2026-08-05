@@ -251,6 +251,61 @@ legitimately repeat a key means aggregating or deduplicating before
 returning, or adding a further label to disambiguate: never letting two
 `ConstMetric`s reach the same label set.
 
+## A documented state table is a floor, not a ceiling
+
+When a target reports a state as an enumerated string (`ready`, `degraded`,
+`offline`) the usual mapping is one series per documented state, set to 1 for
+the current one and 0 for the rest, carried by a single `Desc` with a `state`
+variable label. That mapping has a failure mode worth designing against: a
+value the documentation never listed.
+
+Real targets emit undocumented states. Firmware adds one in a minor release, a
+transitional state appears only under load, a state is documented for one model
+and not another. Map only the documented list and an unknown value sets every
+series to 0, so nothing on the dashboard says which state the target is
+actually in, at the moment it is in one nobody anticipated. The series are
+still present at 0, so this is distinguishable from a target that vanished
+(which produces no series at all), and the cheapest possible guard against the
+whole failure mode is an alert on `sum by (...) (<metric>) == 0`. Write that
+rule whether or not you do anything else here.
+
+**The ecosystem is split on doing more, so this is a recommendation and not a
+norm.** `node_exporter`'s systemd collector iterates a fixed five-value list
+while systemd itself defines eight, so a unit in `reloading`, `maintenance` or
+`refreshing` renders as all-zeros, and has for years. `ipmi_exporter` writes
+`NaN` into the existing series and logs at error level. `snmp_exporter` goes
+the other way: when a value is missing from a metric's `EnumValues`, it falls
+back to using the value itself as the label. That last one is the precedent for
+what follows, and note what it actually emits, since SNMP enums are integers:
+the raw numeric value, not a human-readable word.
+
+If you do take snmp_exporter's route:
+
+- Emit the unknown value through the **same** `Desc` and the same `state`
+  label. Only the label value is new. Never build a `prometheus.Desc` at
+  `Collect` time: the descriptor set is fixed at construction (see "The five
+  pieces" above), and a metric carrying an unregistered descriptor is a hard
+  failure under `testutil.CollectAndCompare`, which registers collectors on a
+  `prometheus.NewPedanticRegistry`, not merely a style violation.
+- Bound the label value before it becomes a cardinality problem. "Whatever the
+  target returned" is a label value not known in advance, which is exactly what
+  `prometheus-principles.md`'s low-cardinality rule refuses, and firmware does
+  return things like `unknown (0x7f)`. Unless the field's full vocabulary is
+  known and small, collapse to a single `state="unknown"` bucket and keep the
+  real word in the log, where it costs no series at all.
+- Log it naming the **field** as well as the value: "unknown <field_name> %q",
+  not "unknown state %q". The next person reads that log without the code in
+  front of them, and the field name is what makes it actionable. Log it from
+  the `<name>GetMetrics` layer or the collector, never from `parse<Name>`,
+  which this document requires to stay pure. If you want it once per distinct
+  value rather than once per scrape, that needs somewhere to remember what has
+  been seen; a `sync.Map` on the collector is enough, and skipping the
+  deduplication entirely is a reasonable trade when the refresh interval is
+  long.
+- Do not fail the scrape over it. An unrecognized state is information, not an
+  error, and the collector's outcome should stay success. `ipmi_exporter`
+  agrees on this point even while disagreeing on the rest.
+
 ## The test triad (plus the StatusTracker pair)
 
 Four tests, per collector, are the baseline:
@@ -416,6 +471,10 @@ that count instead of bounding it once.
 - [ ] `parse<Name>` is pure: no I/O, no logging, deterministic on its input
       alone.
 - [ ] `Describe` sends a fixed descriptor set.
+- [ ] Any state mapped from an enumerated field has an answer for a value the
+      documentation never listed: at minimum an alert on the all-zeros case,
+      and if the unknown value is emitted, through the existing `Desc` and a
+      bounded label value, never a descriptor built at `Collect` time.
 - [ ] The collector implements `OutcomeCollector`, `Collect` delegates to
       `CollectWithOutcome`, and `var _ OutcomeCollector = (*X)(nil)` is
       present so a signature typo fails the build.
