@@ -658,8 +658,40 @@ repository, not a regression: the whole repository predates this feature.
 Never paste a reference to `maxRequestsPerTarget` or `collector.Limiters`
 into a repository that declares neither.
 
-**`has-limiter`**: follow the three-step http blocks below exactly as
-written.
+**`has-limiter`**: one last layer, for the same reason again —
+`--exporter.max-request-wait` (the queue budget that sizes the wait for a
+slot independently of the request) arrived after the ceiling did, so a
+`has-limiter` repository can still predate it:
+
+```sh
+grep -q 'maxRequestWait' cmd/*/main.go && echo has-wait-budget || echo pre-wait-budget-layer
+```
+
+**`pre-wait-budget-layer`**: this repository was scaffolded before
+`--exporter.max-request-wait` existed, so no `maxRequestWait` variable is
+declared in `cmd/*/main.go`. Never paste a reference to `maxRequestWait` into
+a repository that does not declare it. Paste the `// @@CLIENT_BUILD@@` block
+below with **two** changes, and make both:
+
+- Drop the `.WithAcquireTimeout(*maxRequestWait)` continuation **and the
+  trailing `.` on the line above it**, so the wiring reads
+  `<name>Client = <name>Client.WithLimiter(collector.Limiters.For(*<name>Target))`
+  as a single statement. Dropping only the continuation leaves a dangling
+  selector and does not compile.
+- Restore the pre-flag wording in the refusal message, whose parenthetical
+  otherwise names a flag this binary does not register: use `(the limiter
+  wait would otherwise be unbounded)` in place of `(it bounds the request
+  itself; ...)`. That is also what every collector already in this repository
+  prints, so one binary keeps one message for one condition.
+
+This collector's wait stays bounded by its own `--collector.<name>.timeout`,
+symmetric with every other collector already in that repository.
+
+**`has-wait-budget`**: follow the three-step http blocks below exactly as
+written. The budget is a single global flag on purpose, so every collector
+sharing a queue waits under the same one; a collector wired without it would
+sit on the same `Limiter` as its siblings under a different budget, which is
+precisely the divergence the flag is global to avoid.
 
 **Synchronous variant (default): http**. After the last existing flag line
 under `// @@CLIENT_INIT@@`:
@@ -703,7 +735,7 @@ if collector.Limiters == nil {
 // naming the collector, the same way instance.Handle.ClientFor already
 // refuses a non-positive NewClientOn timeout.
 if *maxRequestsPerTarget > 0 && *<name>Timeout <= 0 {
-	fmt.Fprintln(os.Stderr, fmt.Errorf("collector %q: a positive --collector.<name>.timeout is required when --exporter.max-requests-per-target is set, got %v (the limiter wait would otherwise be unbounded)", "<name>", *<name>Timeout))
+	fmt.Fprintln(os.Stderr, fmt.Errorf("collector %q: a positive --collector.<name>.timeout is required when --exporter.max-requests-per-target is set, got %v (it bounds the request itself; --exporter.max-request-wait bounds only the wait for a slot)", "<name>", *<name>Timeout))
 	stop()     // release the signal handler explicitly before bypassing defer via os.Exit
 	os.Exit(1) //nolint:gocritic // stop() called explicitly above
 }
@@ -721,7 +753,10 @@ if cfg.HTTPClientConfig != nil {
 	<name>Client = collector.NewClient(*<name>Target, *<name>Timeout)
 }
 // A nil limiter (the default ceiling of 0) leaves this a no-op.
-<name>Client = <name>Client.WithLimiter(collector.Limiters.For(*<name>Target))
+// WithAcquireTimeout is likewise a no-op at the default 0, which keeps the
+// wait bounded by the collector's own timeout exactly as before.
+<name>Client = <name>Client.WithLimiter(collector.Limiters.For(*<name>Target)).
+	WithAcquireTimeout(*maxRequestWait)
 ```
 
 then after the last existing `register(...)` call under `//
@@ -794,7 +829,7 @@ if collector.Limiters == nil {
 // naming the collector, the same way instance.Handle.ClientFor already
 // refuses a non-positive NewClientOn timeout.
 if *maxRequestsPerTarget > 0 && *<name>Timeout <= 0 {
-	fmt.Fprintln(os.Stderr, fmt.Errorf("collector %q: a positive --collector.<name>.timeout is required when --exporter.max-requests-per-target is set, got %v (the limiter wait would otherwise be unbounded)", "<name>", *<name>Timeout))
+	fmt.Fprintln(os.Stderr, fmt.Errorf("collector %q: a positive --collector.<name>.timeout is required when --exporter.max-requests-per-target is set, got %v (it bounds the request itself; --exporter.max-request-wait bounds only the wait for a slot)", "<name>", *<name>Timeout))
 	stop()     // release the signal handler explicitly before bypassing defer via os.Exit
 	os.Exit(1) //nolint:gocritic // stop() called explicitly above
 }
@@ -812,7 +847,10 @@ if cfg.HTTPClientConfig != nil {
 	<name>Client = collector.NewClient(*<name>Target, *<name>Timeout)
 }
 // A nil limiter (the default ceiling of 0) leaves this a no-op.
-<name>Client = <name>Client.WithLimiter(collector.Limiters.For(*<name>Target))
+// WithAcquireTimeout is likewise a no-op at the default 0, which keeps the
+// wait bounded by the collector's own timeout exactly as before.
+<name>Client = <name>Client.WithLimiter(collector.Limiters.For(*<name>Target)).
+	WithAcquireTimeout(*maxRequestWait)
 ```
 
 then after the last existing `register(...)` call under `//

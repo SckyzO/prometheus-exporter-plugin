@@ -64,6 +64,37 @@ var (
 		"exporter.max-requests-per-target",
 		"Maximum concurrent requests this exporter issues to one target. 0 (default) means unlimited.",
 	).Default("0").Int()
+	// @@IF flavor!=cli@@
+
+	// maxRequestWait budgets the WAIT for a slot separately from the request
+	// that follows it. 0, the default, keeps the wait bounded by the
+	// collector's own --collector.<name>.timeout, which is what every build
+	// before this flag existed did, so nothing moves under an operator who
+	// sets nothing.
+	//
+	// Set it whenever the ceiling is low enough that queueing is the normal
+	// state rather than an anomaly. Tied to the request timeout, one ceiling
+	// serves only as many collectors as the ratio between that timeout and a
+	// single request's duration, and the rest starve on every sweep: with a
+	// ceiling of 1, nineteen collectors firing together and each taking a
+	// fifth of their timeout, five are served and fourteen starve, every
+	// time, because same-interval tickers align and that alignment does not
+	// break up on its own. The value that fixes it is roughly the number of
+	// collectors sharing the queue times how long one of them holds a slot,
+	// which is why it has no non-arbitrary default: this process cannot see
+	// that count at the point the Client is built.
+	//
+	// Declared only on the http flavor. The cli flavor has the same defect
+	// (its per-command deadline arrives already applied to ctx, so the wait
+	// is charged against the command's own budget) but not the same fix: it
+	// needs the remaining budget read off ctx.Deadline() and re-armed on a
+	// context stripped of that deadline, which is a separate change. A flag
+	// declared there would be inert, and an inert flag in --help is a lie.
+	maxRequestWait = kingpin.Flag(
+		"exporter.max-request-wait",
+		"Maximum time a request waits for a concurrency slot before giving up, budgeted separately from the request itself. 0 (default) bounds the wait by the collector's own timeout instead. Only meaningful with --exporter.max-requests-per-target set.",
+	).Default("0").Duration()
+	// @@ENDIF@@
 
 	// configFile is declared like any other flag so kingpin accepts it on the
 	// command line and lists it in --help. Its VALUE is read straight from

@@ -33,8 +33,21 @@
 	// the thing that must happen here, at flag-parse time). Reject at boot,
 	// naming the collector, the same way instance.Handle.ClientFor already
 	// refuses a non-positive NewClientOn timeout.
+	//
+	// --exporter.max-request-wait does NOT relax this, and the condition
+	// deliberately does not mention it. A collector timeout bounds two
+	// distinct things: the wait for a slot, and the request that follows it.
+	// A wait budget replaces the first and nothing else. So with
+	// --collector.example.timeout=0s the request would run under no deadline
+	// at all (NewClient leaves http.Client.Timeout zero and the collector
+	// hands Fetch an undeadlined context) while holding the very slot the
+	// ceiling exists to ration: at a ceiling of 1, one request pinning the
+	// queue forever, which is strictly worse than the unbounded wait this
+	// check was written for. Refusing on the timeout alone is also what keeps
+	// this model aligned with instance.Handle.ClientFor, which refuses a
+	// non-positive timeout without consulting its own wait budget either.
 	if *maxRequestsPerTarget > 0 && *exampleTimeout <= 0 {
-		fmt.Fprintln(os.Stderr, fmt.Errorf("collector %q: a positive --collector.example.timeout is required when --exporter.max-requests-per-target is set, got %v (the limiter wait would otherwise be unbounded)", "example", *exampleTimeout))
+		fmt.Fprintln(os.Stderr, fmt.Errorf("collector %q: a positive --collector.example.timeout is required when --exporter.max-requests-per-target is set, got %v (it bounds the request itself; --exporter.max-request-wait bounds only the wait for a slot)", "example", *exampleTimeout))
 		stop()     // release the signal handler explicitly before bypassing defer via os.Exit
 		os.Exit(1) //nolint:gocritic // stop() called explicitly above
 	}
@@ -52,4 +65,7 @@
 		exampleClient = collector.NewClient(*exampleTarget, *exampleTimeout)
 	}
 	// A nil limiter (the default ceiling of 0) leaves this a no-op.
-	exampleClient = exampleClient.WithLimiter(collector.Limiters.For(*exampleTarget))
+	// WithAcquireTimeout is likewise a no-op at the default 0, which keeps the
+	// wait bounded by the collector's own timeout exactly as before.
+	exampleClient = exampleClient.WithLimiter(collector.Limiters.For(*exampleTarget)).
+		WithAcquireTimeout(*maxRequestWait)

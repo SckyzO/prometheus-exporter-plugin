@@ -742,6 +742,101 @@ if [ "$flavor" = http ] && [ "$target_model" = single ]; then
   grep -q 'a positive --collector.example.timeout is required' "$refuse_log" \
     || die "boot-time guard: refusal message does not name the collector/timeout as expected ($flavor/$forge), see $refuse_log"
   echo "confirmed: --collector.example.timeout=0s with a configured ceiling refuses to boot, naming the collector ($flavor/$forge)"
+
+  # The guard must survive --exporter.max-request-wait, which is the half a
+  # first cut at the wait budget got wrong. A wait budget replaces the WAIT
+  # half of what the collector timeout bounds and nothing else, so a 0s
+  # timeout still leaves the REQUEST undeadlined while it holds a slot; at a
+  # ceiling of 1 that is one request pinning the queue forever. A guard made
+  # conditional on the new flag therefore stops being sufficient, and it fails
+  # in the direction that hangs rather than the direction that shouts: the
+  # binary boots and then never answers a scrape at all, because the default
+  # single-target collector does its I/O inline in Collect. Same shape
+  # as above, so a regression is rc=124 and not a wedged harness.
+  echo "== the boot-time guard survives --exporter.max-request-wait ($flavor/$forge) =="
+  refuse_wait_log="$work/.golden-smoke-max-requests-refusal-with-wait.log"
+  refuse_wait_rc=0
+  ( cd "$work" && timeout -k 2 5 ./bin/demo_exporter --collector.example.timeout=0s --exporter.max-requests-per-target=1 --exporter.max-request-wait=30s --web.listen-address="127.0.0.1:$refuse_port" >"$refuse_wait_log" 2>&1 ) || refuse_wait_rc=$?
+  if [ "$refuse_wait_rc" -eq 124 ]; then
+    die "boot-time guard: --exporter.max-request-wait=30s made the exporter ACCEPT --collector.example.timeout=0s under a ceiling (it kept running and had to be killed) ($flavor/$forge); a wait budget does not bound the request, see $refuse_wait_log"
+  fi
+  if [ "$refuse_wait_rc" -eq 0 ]; then
+    die "boot-time guard: exporter exited 0 with --collector.example.timeout=0s and --exporter.max-request-wait=30s under a ceiling ($flavor/$forge), see $refuse_wait_log"
+  fi
+  grep -q 'a positive --collector.example.timeout is required' "$refuse_wait_log" \
+    || die "boot-time guard: refusal message changed when --exporter.max-request-wait is set ($flavor/$forge), see $refuse_wait_log"
+  echo "confirmed: a set --exporter.max-request-wait does NOT relax the timeout requirement ($flavor/$forge)"
+
+  # --exporter.max-request-wait is WIRED, not merely declared. Asserted on the
+  # rendered source and anchored on the exact expression, because no runtime
+  # check available here can see it: a single-target scaffold has one
+  # collector, so nothing ever contends for the slot the budget applies to,
+  # and the default target is a closed port that answers instantly either way.
+  # An earlier version of this check started the binary with the flag and
+  # scraped /metrics; it passed in under a millisecond against a build where
+  # the flag was wired to nothing at all. Anchoring on the literal argument is
+  # what also catches a moved default (WithAcquireTimeout(max(*maxRequestWait,
+  # 5*time.Minute)) and friends), which every Go test in the tree stays green
+  # through.
+  # Comment lines are stripped before matching: grep -qF cannot tell code from
+  # a comment, and a mutation that removed the wiring while leaving the same
+  # text behind in a TODO comment satisfied this check.
+  wiring_main=$(ls "$work"/cmd/*/main.go)
+  grep -v '^[[:space:]]*//' "$wiring_main" | grep -qF 'WithAcquireTimeout(*maxRequestWait)' \
+    || die "--exporter.max-request-wait is declared but not wired verbatim into the client build ($flavor/$forge): expected WithAcquireTimeout(*maxRequestWait) in $wiring_main"
+  echo "confirmed: --exporter.max-request-wait reaches the client build verbatim ($flavor/$forge)"
+
+  # And it is a REGISTERED flag on a configuration the guard accepts, with the
+  # process actually serving: an unregistered flag makes kingpin exit before
+  # anything binds, which a source grep cannot see. The body assertion is the
+  # point, not the 200 — a 200 alone would also come from a leftover listener
+  # on this port.
+  echo "== --exporter.max-request-wait is accepted and served ($flavor/$forge) =="
+  wait_log="$work/.golden-smoke-max-request-wait.log"
+  wait_body="$work/.golden-smoke-max-request-wait.body"
+  wait_port=9988
+  ( cd "$work" && ./bin/demo_exporter --collector.example.timeout=5s --exporter.max-requests-per-target=1 --exporter.max-request-wait=30s --web.listen-address="127.0.0.1:$wait_port" >"$wait_log" 2>&1 ) &
+  wait_pid=$!
+  # shellcheck disable=SC2064
+  trap "kill $wait_pid 2>/dev/null || true" EXIT
+  wait_ok=no
+  i=0
+  while [ "$i" -lt 50 ]; do
+    # kill -0 first, so a process that died on boot is reported as itself
+    # rather than as a ten-second timeout.
+    kill -0 "$wait_pid" 2>/dev/null \
+      || die "--exporter.max-request-wait: exporter exited instead of accepting the flag ($flavor/$forge), see $wait_log"
+    if curl -fsS "http://127.0.0.1:$wait_port/metrics" >"$wait_body" 2>/dev/null; then wait_ok=yes; break; fi
+    i=$((i + 1))
+    sleep 0.2
+  done
+  kill "$wait_pid" 2>/dev/null || true
+  wait "$wait_pid" 2>/dev/null || true
+  trap - EXIT
+  [ "$wait_ok" = yes ] \
+    || die "--exporter.max-request-wait: exporter never served /metrics with the flag set ($flavor/$forge), see $wait_log"
+  # The histogram is pre-initialised at package init, so its presence proves
+  # the 200 came from THIS binary rather than a leftover listener on the port.
+  # It does not prove the wiring; the source anchor above is what does.
+  grep -q '_exporter_request_wait_seconds' "$wait_body" \
+    || die "--exporter.max-request-wait: /metrics answered 200 but carries no _exporter_request_wait_seconds ($flavor/$forge); the 200 did not come from this exporter"
+  echo "confirmed: --exporter.max-request-wait is registered, boots and serves the wait histogram ($flavor/$forge)"
+fi
+
+# The same wiring assertion for the other target model that carries the flag.
+# multi-instance reaches its Client through instance.Registry rather than
+# through client_build.frag, so the chain has two more links and each one was
+# mutable with the whole suite staying green: the Registry dropping the budget
+# it was built with, and main.go passing a zero instead of the flag. Anchored
+# on the adjacency, which is what those two mutations break.
+if [ "$flavor" = http ] && [ "$target_model" = multi-instance ]; then
+  echo "== --exporter.max-request-wait wiring ($flavor/$forge) =="
+  wiring_main=$(ls "$work"/cmd/*/main.go)
+  grep -v '^[[:space:]]*//' "$wiring_main" | grep -qF '*maxRequestsPerTarget, *maxRequestWait)' \
+    || die "--exporter.max-request-wait is declared but not handed to instance.NewRegistry ($flavor/$forge): expected the ceiling and the wait budget adjacent in $wiring_main"
+  grep -v '^[[:space:]]*//' "$work/internal/instance/instance.go" | grep -qF 'r.limit, r.wait, labels' \
+    || die "instance.Registry does not hand its wait budget to the Handles it builds ($flavor/$forge): expected NewHandle(..., r.limit, r.wait, labels) in internal/instance/instance.go"
+  echo "confirmed: --exporter.max-request-wait reaches every Handle through the Registry ($flavor/$forge)"
 fi
 
 # promtool check rules (Task 12): monitoring/prometheus/{alerts,rules}.yml must

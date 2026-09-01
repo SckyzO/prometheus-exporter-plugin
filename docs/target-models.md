@@ -36,6 +36,7 @@ flowchart TB
 | `--config.file` | optional | optional | required |
 | Reload without restart | not shipped | `SIGHUP`, `POST /-/reload` | `SIGHUP`, `POST /-/reload` |
 | `--exporter.max-requests-per-target` | available | absent | available |
+| `--exporter.max-request-wait` | available (HTTP flavor) | absent | available |
 
 ## `multi`
 

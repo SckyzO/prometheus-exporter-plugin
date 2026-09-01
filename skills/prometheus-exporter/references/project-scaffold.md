@@ -176,8 +176,10 @@ if collector.Limiters == nil {
 // A limiter with no bound on its own wait would be exactly the silent-
 // queueing failure mode a concurrency ceiling exists to prevent: refuse at
 // boot, naming the collector, once a ceiling is actually configured.
+// --exporter.max-request-wait does not relax this: it bounds the wait, and
+// the collector timeout is what bounds the request that holds the slot.
 if *maxRequestsPerTarget > 0 && *exampleTimeout <= 0 {
-	fmt.Fprintln(os.Stderr, fmt.Errorf("collector %q: a positive --collector.example.timeout is required when --exporter.max-requests-per-target is set, got %v (the limiter wait would otherwise be unbounded)", "example", *exampleTimeout))
+	fmt.Fprintln(os.Stderr, fmt.Errorf("collector %q: a positive --collector.example.timeout is required when --exporter.max-requests-per-target is set, got %v (it bounds the request itself; --exporter.max-request-wait bounds only the wait for a slot)", "example", *exampleTimeout))
 	stop()
 	os.Exit(1)
 }
@@ -188,8 +190,11 @@ if cfg.HTTPClientConfig != nil {
 } else {
 	exampleClient = collector.NewClient(*exampleTarget, *exampleTimeout)
 }
-// A nil limiter (the default ceiling of 0) leaves this a no-op.
-exampleClient = exampleClient.WithLimiter(collector.Limiters.For(*exampleTarget))
+// A nil limiter (the default ceiling of 0) leaves this a no-op, and so is
+// WithAcquireTimeout at the default 0: the wait then stays bounded by the
+// collector's own timeout, exactly as before the wait budget existed.
+exampleClient = exampleClient.WithLimiter(collector.Limiters.For(*exampleTarget)).
+	WithAcquireTimeout(*maxRequestWait)
 ```
 
 `NewClientWithConfig(target string, timeout time.Duration, httpCfg

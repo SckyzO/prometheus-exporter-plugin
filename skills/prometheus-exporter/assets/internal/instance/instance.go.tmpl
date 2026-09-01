@@ -79,6 +79,14 @@ type Handle struct {
 	tr      *collector.Transport
 	limiter *collector.Limiter
 
+	// wait is --exporter.max-request-wait: the budget for the queue in front
+	// of limiter, sized independently of any collector's request timeout. 0
+	// keeps the wait bounded by that timeout, which is the pre-flag default.
+	// It sits beside limiter rather than inside Client because it budgets the
+	// same queue the limiter creates, and that queue belongs to the machine,
+	// not to whichever collector happens to be waiting in it.
+	wait time.Duration
+
 	// labels are the identifying and extra labels this machine's series
 	// carry. Applied by prometheus.WrapRegistererWith at REGISTRATION, with
 	// the wrapper adding them at Collect time, so the collectors and their
@@ -107,12 +115,13 @@ type Handle struct {
 // NewHandle builds a handle for one machine. hc is the client its collectors
 // share, built once from the instance's resolved module. limit is
 // --exporter.max-requests-per-target; 0 means unlimited.
-func NewHandle(name, address string, hc *http.Client, limit int, labels prometheus.Labels) *Handle {
+func NewHandle(name, address string, hc *http.Client, limit int, wait time.Duration, labels prometheus.Labels) *Handle {
 	return &Handle{
 		Name:    name,
 		Address: address,
 		tr:      collector.NewTransport(hc),
 		limiter: collector.NewLimiter(limit),
+		wait:    wait,
 		labels:  labels,
 	}
 }
@@ -129,7 +138,7 @@ func (h *Handle) ClientFor(timeout time.Duration) (*collector.Client, error) {
 	if timeout <= 0 {
 		return nil, fmt.Errorf("instance %q: a collector timeout must be positive, got %v (the shared transport carries no timeout of its own)", h.Name, timeout)
 	}
-	return collector.NewClientOn(h.tr, h.Address, timeout).WithLimiter(h.limiter), nil
+	return collector.NewClientOn(h.tr, h.Address, timeout).WithLimiter(h.limiter).WithAcquireTimeout(h.wait), nil
 }
 
 // SetTransport installs a new shared client and returns the one it replaced, so
@@ -168,8 +177,9 @@ type Registry struct {
 	log           *logger.Logger
 	root          prometheus.Registerer
 	instanceLabel string
-	factories     []Factory // already filtered to the globally-enabled ones
-	limit         int       // --exporter.max-requests-per-target
+	factories     []Factory     // already filtered to the globally-enabled ones
+	limit         int           // --exporter.max-requests-per-target
+	wait          time.Duration // --exporter.max-request-wait
 
 	handles map[string]*Handle // live, by instance name
 
@@ -189,13 +199,14 @@ type Registry struct {
 // NewRegistry builds an empty registry. root is the exporter's own registry;
 // each instance's collectors are registered on a wrapper of it carrying that
 // instance's labels.
-func NewRegistry(log *logger.Logger, root prometheus.Registerer, instanceLabel string, factories []Factory, limit int) *Registry {
+func NewRegistry(log *logger.Logger, root prometheus.Registerer, instanceLabel string, factories []Factory, limit int, wait time.Duration) *Registry {
 	return &Registry{
 		log:           log,
 		root:          root,
 		instanceLabel: instanceLabel,
 		factories:     factories,
 		limit:         limit,
+		wait:          wait,
 		handles:       make(map[string]*Handle),
 	}
 }
@@ -289,7 +300,7 @@ func (r *Registry) Prepare(instances []config.ResolvedInstance) (*Plan, error) {
 			if err != nil {
 				return nil, fmt.Errorf("instance %q: %w", inst.Name, err)
 			}
-			h := NewHandle(inst.Name, inst.Address, hc, r.limit, labels)
+			h := NewHandle(inst.Name, inst.Address, hc, r.limit, r.wait, labels)
 			h.clientConfig = inst.ClientConfig
 
 			tracker := collector.NewStatusTracker(r.log)

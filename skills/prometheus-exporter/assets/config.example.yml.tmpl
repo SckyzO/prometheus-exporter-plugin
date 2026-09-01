@@ -87,6 +87,21 @@ flags:
   # exporter.max-requests-per-target: 4
   # @@ENDIF@@
 
+  # @@IF target-model=single,flavor=http@@
+  # Budgets the wait for one of those slots separately from the request that
+  # follows it. Leave it unset and the wait is bounded by the collector's own
+  # timeout, which caps how many collectors one ceiling can serve. Set it and
+  # a ceiling of 1 becomes usable. See the same section.
+  # exporter.max-request-wait: 5m
+  # @@ENDIF@@
+  # @@IF target-model=multi-instance@@
+  # Budgets the wait for one of those slots separately from the request that
+  # follows it. Leave it unset and the wait is bounded by the collector's own
+  # timeout, which caps how many collectors one ceiling can serve. Set it and
+  # a ceiling of 1 becomes usable. See the same section.
+  # exporter.max-request-wait: 5m
+  # @@ENDIF@@
+
 # @@IF flavor=http@@
 # http_client_config carries the authentication and TLS settings no flag can
 # express, and applies to this exporter's outbound requests.

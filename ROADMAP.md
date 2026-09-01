@@ -323,7 +323,10 @@ missing knowledge are tracked together because the first item is both.
   sized independently of the request budget, minutes against seconds, and
   decide whether its default should stop tracking the request timeout. That
   is a configuration-surface change and a default move, so it is its own
-  release under the two-phase rule.
+  release under the two-phase rule. **Delivered in v0.11** as
+  `--exporter.max-request-wait`, with the default deliberately left where it
+  was: the same sweep goes from 5 served to 19 with the flag set, and stays
+  at 5 with it unset. See `CHANGELOG.md`.
 - **The CLI flavor shares one budget the same way the HTTP one did**, found
   while fixing the HTTP client and not by the field: `Execute` receives a
   `ctx` whose per-command deadline the caller has already applied, so the wait
@@ -379,6 +382,15 @@ missing knowledge are tracked together because the first item is both.
   is a floor, not a measurement, and it changes what an averaging rule means.
 
 ## v0.11
+
+- **The queue budget, phase 2, delivered**: `--exporter.max-request-wait`
+  sizes the wait for a concurrency slot independently of the request that
+  follows it, which is what makes a ceiling of `1` usable at all. The default
+  does not move, so nothing already scaffolded changes. The acceptance
+  criterion was a number rather than an intention, and it is now a rerunnable
+  harness (`test/queue-budget-sweep.sh`) instead of the one-off measurement
+  that produced v0.10's figures and was then lost. See `CHANGELOG.md` for the
+  three columns and for the two properties this could not break.
 
 - **A Prometheus alerting command, the counterpart to
   `/prometheus-exporter:generate-dashboard`.**
