@@ -75,6 +75,17 @@ What it caps differs by build, which matters before you pick a number:
 | `multi-instance` | watched instance |
 | `multi` | not available |
 
+`--exporter.max-request-wait` (HTTP flavor, `single` and `multi-instance`)
+budgets that wait independently of the request that follows it, which is what
+makes a low ceiling usable: under the default the wait is bounded by the
+collector's own timeout, and one ceiling then serves only as many collectors
+as the ratio between that timeout and a single request's duration. The
+default does not move, so a build that sets nothing behaves as it always did.
+A positive `--collector.<name>.timeout` stays required either way: it bounds
+the request that holds the slot, which the wait budget does not. A
+single-target build refuses a non-positive one once a ceiling is configured;
+a multi-instance build refuses it whether or not one is.
+
 `..._exporter_request_wait_seconds` records how long a request waited for a
 slot, by `outcome`, so queuing shows up in monitoring instead of quietly
 lengthening scrape times.

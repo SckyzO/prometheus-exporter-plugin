@@ -233,6 +233,28 @@ func requestWaitSampleSum(t *testing.T, outcome string) float64 {
 // which nothing asserted before: its sibling above counts samples by outcome
 // and would stay green if the histogram bracketed the wait AND the request.
 //
+// WithAcquireTimeout ignores a non-positive argument, which is the property
+// that lets main pass an unset --exporter.max-request-wait straight through
+// without a conditional: the wait then stays bounded by the collector's own
+// timeout, exactly as it was before that flag existed. Every deployment that
+// configures nothing depends on this, so it is asserted here rather than
+// inferred from the three-line guard that implements it. Drop that guard and
+// an unset flag becomes an UNBOUNDED wait, which is the silent queueing the
+// ceiling exists to prevent, reachable by not setting a flag.
+func TestWithAcquireTimeoutIgnoresNonPositive(t *testing.T) {
+	base := NewClientOn(NewTransport(&http.Client{}), "http://example.invalid", 7*time.Second)
+
+	for _, d := range []time.Duration{0, -1 * time.Second} {
+		if got := base.WithAcquireTimeout(d).acquireTimeout; got != 7*time.Second {
+			t.Fatalf("WithAcquireTimeout(%v) changed the wait budget to %v, want the constructor's %v left in place", d, got, 7*time.Second)
+		}
+	}
+
+	if got := base.WithAcquireTimeout(90 * time.Second).acquireTimeout; got != 90*time.Second {
+		t.Fatalf("WithAcquireTimeout(90s) = %v, want it applied", got)
+	}
+}
+
 // This matters more now that the wait has a budget of its own and can be far
 // longer than a request: an operator sizing --exporter.max-request-wait reads
 // this histogram to decide, so a value that quietly included request time

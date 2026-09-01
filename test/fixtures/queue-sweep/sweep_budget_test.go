@@ -41,22 +41,12 @@ func TestQueueBudgetSweepWithWaitBudget(t *testing.T) {
 	}
 }
 
-// TestWithAcquireTimeoutIgnoresNonPositive pins the default-preserving half of
-// the contract, which is what keeps every already-scaffolded exporter on the
-// behaviour it has today. An unset flag is 0, and the wiring passes it through
-// unconditionally rather than testing it first, so 0 MUST leave the seeded
-// per-request deadline in place.
-//
-// Without this, a WithAcquireTimeout that assigned unconditionally would set
-// acquireTimeout to 0, acquire would skip its WithTimeout entirely, and the
-// wait would become unbounded: the exact silent-queueing failure the ceiling
-// exists to prevent, reachable by not setting a flag.
-func TestWithAcquireTimeoutIgnoresNonPositive(t *testing.T) {
-	for _, d := range []time.Duration{0, -1 * time.Second} {
-		c := NewClientOn(NewTransport(nil), "http://example.invalid", 5*time.Second).
-			WithAcquireTimeout(d)
-		if c.acquireTimeout != 5*time.Second {
-			t.Errorf("WithAcquireTimeout(%v): acquireTimeout = %v, want the seeded 5s left untouched", d, c.acquireTimeout)
-		}
-	}
-}
+// The default-preserving half of the contract -- that an unset flag leaves the
+// wait bounded by the collector's own timeout -- is asserted by
+// TestWithAcquireTimeoutIgnoresNonPositive in limiter_test.go, which SHIPS in
+// every scaffolded http exporter. It lived here first, when nothing else
+// covered it; a copy in this fixture would now collide with the shipped one at
+// compile time, since this file is dropped into the same package. It belongs
+// downstream anyway: every generated exporter depends on that property, so
+// every generated exporter should carry its own guard rather than trusting a
+// test that only ever runs in this plugin's repository.

@@ -170,6 +170,27 @@ jobs:
       - name: dashboard backbone unit tests (no Go, no network)
         run: sh test/generate-dashboard-backbone.sh
 
+  # The concurrency ceiling's measurement, run rather than quoted. It
+  # scaffolds a real multi-instance exporter and sweeps nineteen collectors
+  # through it, so the figures CHANGELOG.md states are about the rendered
+  # templates and get re-derived on every push instead of aging into folklore
+  # the way the one-off bench behind the v0.10 numbers did. It also carries
+  # the assertion that the wait budget's default is a no-op, which is the
+  # property every already-scaffolded exporter depends on.
+  queue-budget-sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The script SKIPs when no Go toolchain is present, which is right on a
+      # contributor's machine and wrong here: a silent skip in CI is
+      # indistinguishable from a pass. Fail loudly instead.
+      - name: queue budget sweep (scaffolds and measures the rendered templates)
+        run: |
+          command -v go >/dev/null 2>&1 || { echo "::error::no Go toolchain on this runner; the sweep would SKIP silently instead of measuring"; exit 1; }
+          sh test/queue-budget-sweep.sh
+
   golden-smoke:
     needs: scaffold-unit-tests
     runs-on: ubuntu-latest

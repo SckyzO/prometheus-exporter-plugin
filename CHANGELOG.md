@@ -44,13 +44,22 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   depends on how many collectors share that queue, not on what any one of them
   does.
 
-  Two properties were held rather than assumed, both mutation-tested. The
-  boot-time refusal in `client_build.frag` had to be **relaxed** to stay
-  necessary: a wait budget bounds the wait on its own, so a non-positive
-  collector timeout is no longer an unbounded wait, and golden-smoke now
-  asserts both halves, that the refusal still fires without the flag and that
-  the same flags boot and serve with it. And
-  `..._exporter_request_wait_seconds` still brackets the wait alone, now
+  Two properties were held rather than assumed, both mutation-tested. **The
+  boot-time refusal is untouched**: a positive `--collector.<name>.timeout` is
+  still required once a ceiling is configured, and setting a wait budget does
+  not excuse it. A first cut relaxed it, on the true observation that a wait
+  budget bounds the wait on its own; that missed what else the collector
+  timeout bounds. It also bounds the **request**, and a request with no
+  deadline holds the slot the ceiling exists to ration — at a ceiling of `1`,
+  one scrape pins the queue and `/metrics` never answers again, which is worse
+  than the unbounded wait the refusal was written for. golden-smoke now
+  asserts the refusal fires **with** the flag set, and asserts on the rendered
+  source that the flag reaches the client build verbatim, because a runtime
+  check cannot see that: a single-target scaffold has one collector, so
+  nothing contends for the slot, and the earlier check passed in under a
+  millisecond against a build where the flag was wired to nothing.
+
+  And `..._exporter_request_wait_seconds` still brackets the wait alone, now
   asserted on the observed value rather than only on sample counts, since a
   wait budget far longer than a request is exactly the condition under which a
   histogram quietly measuring both would mislead whoever is sizing the flag.

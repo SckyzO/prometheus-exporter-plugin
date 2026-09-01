@@ -36,7 +36,7 @@ import (
 // 1000ms puts the boundary 160ms clear of both neighbours, so the counts are
 // stable across repetitions rather than stable-in-practice.
 const (
-	sweepCollectors   = 19
+	sweepCollectors     = 19
 	sweepRequestTimeout = 1000 * time.Millisecond
 	sweepWork           = 210 * time.Millisecond
 )

@@ -54,5 +54,27 @@ fi
 cd "$work/out"
 go mod tidy >/dev/null 2>&1 || true
 
+# No -run filter, deliberately. This ran as -run 'TestQueueBudgetSweep', which
+# silently excluded TestWithAcquireTimeoutIgnoresNonPositive -- the one
+# assertion in the fixture that guards the unset-flag default, i.e. the very
+# column this harness prints. It was never executed by anything, here or in
+# the generated suite, so the defect it names mutated green. A name filter is
+# how that happens; running the package is how it stops happening, and it
+# picks up the scaffolded collector's own tests for free.
+#
 # -count=1 defeats the test cache: a cached PASS is not a measurement either.
-go test ./internal/collector/ -run 'TestQueueBudgetSweep' -v -count=1 2>&1 | grep -E 'SWEEP|FAIL|ok |--- '
+#
+# The output is filtered for readability, but the STATUS must come from go
+# test, not from the filter. Written as a pipeline this script exited with
+# grep's status, and grep matches the word FAIL it was asked to display: a
+# failing sweep printed "--- FAIL" and exited 0. Capture first, filter second.
+sweep_log="$work/sweep.log"
+sweep_rc=0
+go test ./internal/collector/ -v -count=1 >"$sweep_log" 2>&1 || sweep_rc=$?
+grep -E 'SWEEP|FAIL|ok |--- FAIL' "$sweep_log" || true
+if [ "$sweep_rc" -ne 0 ]; then
+  echo >&2
+  echo "FAIL: the sweep did not pass (go test exited $sweep_rc). Full output:" >&2
+  cat "$sweep_log" >&2
+  exit "$sweep_rc"
+fi
