@@ -8,6 +8,30 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- Bumped the scaffold's Go toolchain to **1.26.8**, which carries the fixes
+  for GO-2026-5026, GO-2026-5972, GO-2026-6089, GO-2026-6090, GO-2026-6091
+  and GO-2026-6218 (all fixed upstream in 1.26.6; 1.26.8 is the current patch
+  of that line). Every scaffolded exporter reaches the affected packages
+  through `web.ListenAndServe` and its own HTTP client, so govulncheck
+  reported all six against the previous pin and `make check` failed on them.
+
+  The version moves in **six** places, not the one the generated `README.md`
+  claims: three `FROM golang:` lines (both Dockerfiles and the dev-tooling
+  image), `go.mod`'s `toolchain` directive, and the `go-version:` input of
+  both release workflows. The language floor, `go 1.26.0`, is deliberately
+  left alone: raising it would be a breaking change for anyone building a
+  generated exporter with an older toolchain.
+
+  Two of those six are invisible to Dependabot, which is why this needed a
+  template fix rather than an automated bump: its gomod updater does not
+  manage the `toolchain` directive, and its github-actions updater bumps
+  `uses:` references, not the value of a `go-version:` input. A generated
+  exporter whose image was refreshed automatically would therefore go green
+  on `make check` while its release workflows kept building the published
+  binaries with the vulnerable toolchain.
+
 ## [0.10.0] - 2026-08-05
 
 Almost everything below came from running a scaffolded exporter against real
