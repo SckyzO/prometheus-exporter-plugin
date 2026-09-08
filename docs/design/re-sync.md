@@ -530,7 +530,7 @@ in `assets/go.mod.tmpl` and
 
 | Pin | Value at v0.1 | Source in the reference | Note for the next re-sync |
 |---|---|---|---|
-| Go toolchain | `1.26.4` (`golang:1.26.4-alpine@sha256:3ad57304ad93bbec8548a0437ad9e06a455660655d9af011d58b993f6f615648`) | `scripts/docker/tools/Dockerfile`, `go.mod`'s `toolchain` directive | Bumped to `1.26.5` (`sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2`) on 2026-07-11 for GO-2026-5856 (`crypto/tls` ECH). Re-verify the digest resolves live (`docker pull`) before reusing; don't copy a digest without pulling it |
+| Go toolchain | `1.26.4` (`golang:1.26.4-alpine@sha256:3ad57304ad93bbec8548a0437ad9e06a455660655d9af011d58b993f6f615648`) | `scripts/docker/tools/Dockerfile`, `go.mod`'s `toolchain` directive | Bumped to `1.26.5` (`sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2`) on 2026-07-11 for GO-2026-5856 (`crypto/tls` ECH), then to `1.26.8` (`sha256:ce864e7223ac17b1775e6fd0b4c0db580c2eb50e7953a427916379e4b92a1628`) on 2026-09-08 for six stdlib advisories (GO-2026-5026/5972/6089/6090/6091/6218). Note the "one place" claim in the row above is false: the version also lives in `Dockerfile`, `Dockerfile.minimal` and the `go-version:` input of both release workflows, six sites in all. Re-verify the digest resolves live (`docker pull`) before reusing; don't copy a digest without pulling it |
 | `prometheus/client_golang` | v1.23.2 | `go.mod` | — |
 | `prometheus/exporter-toolkit` | v0.16.0 | `go.mod` | Not context7-indexed — re-verify `webflag.AddFlags`/`web.ListenAndServe`/`web.FlagConfig` field names against the tagged source directly if this version changes, not from memory |
 | `prometheus/common` | v0.68.1 | `go.mod` | — |
